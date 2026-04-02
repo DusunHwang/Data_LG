@@ -278,7 +278,7 @@ def _persist_artifacts(
                         df_tmp = pd.read_parquet(dest)
                     else:
                         df_tmp = pd.read_csv(dest)
-                    preview_data = dataframe_to_preview(df_tmp)
+                    preview_data = dataframe_to_preview(df_tmp, max_rows=len(df_tmp))
                     label = f"서브 데이터셋 ({df_tmp.shape[0]}행 × {df_tmp.shape[1]}열)"
                 except Exception:
                     preview_data = None
