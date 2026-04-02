@@ -1,0 +1,28 @@
+version: "3.9"
+
+# 개발 환경 오버라이드
+services:
+  backend:
+    volumes:
+      - ./backend:/app
+      - artifacts:/data/app/artifacts
+      - ./datasets_builtin:/app/datasets_builtin
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    environment:
+      APP_ENV: development
+      LOG_LEVEL: DEBUG
+
+  worker:
+    volumes:
+      - ./backend:/app
+      - artifacts:/data/app/artifacts
+      - ./datasets_builtin:/app/datasets_builtin
+    environment:
+      APP_ENV: development
+      LOG_LEVEL: DEBUG
+
+  frontend:
+    volumes:
+      - ./frontend:/app
+    environment:
+      APP_ENV: development

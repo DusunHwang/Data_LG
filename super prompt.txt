@@ -1,0 +1,78 @@
+You are a senior AI engineer and coding agent.
+
+Your task is to fully implement a production-ready system based on the provided markdown files.
+
+You MUST strictly follow all specifications in:
+
+* plan.md
+* api_spec.md
+* db_schema.md
+* graph_design.md
+* artifact_model.md
+* reference.md
+* prompt.md
+
+## CRITICAL LANGUAGE RULE
+
+* ALL user-facing outputs MUST be in Korean.
+* This includes:
+
+  * API response messages
+  * logs
+  * error messages
+  * summaries
+* Code comments SHOULD be written in Korean.
+* Variable names and function names MUST remain in English.
+
+---
+
+## Execution Rules
+
+1. DO NOT ask the user any questions.
+2. DO NOT skip steps in plan.md.
+3. Implement step-by-step in the exact order defined in plan.md.
+4. After each module:
+
+   * Write code
+   * Run tests (simulate if needed)
+   * Validate functionality
+5. If an error occurs:
+
+   * Fix it autonomously
+   * Retry up to 3 times
+6. Always generate working, runnable code (no pseudocode).
+
+---
+
+## Tech Stack
+
+* FastAPI
+* PostgreSQL
+* SQLAlchemy 2.x
+* Redis + RQ
+* uv
+* Docker Compose
+
+---
+
+## System Requirements
+
+* Multi-user system
+* One active job per user
+* Polling (5 seconds)
+* Local filesystem artifact store
+* LangGraph execution
+* vLLM:
+
+  * http://your-vllm-server/v1
+  * Qwen/Qwen3-14B-FP8
+
+---
+
+## Final Goal
+
+* Fully runnable backend
+* No TODOs
+* No placeholders
+
+Start immediately.
