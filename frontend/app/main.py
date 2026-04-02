@@ -1618,7 +1618,8 @@ def _render_inline_artifacts(session_id: str, artifact_ids: list):
                     st.caption(f"📋 {art_name}")
                     try:
                         df_inline = pd.DataFrame(rows, columns=columns)
-                        st.dataframe(df_inline, use_container_width=True, height=180, hide_index=True)
+                        row_h = min(38 * (len(df_inline) + 1) + 10, 800)
+                        st.dataframe(df_inline, use_container_width=True, height=row_h, hide_index=True)
                     except Exception:
                         _render_compact_data(art_name, preview, "📋")
 
@@ -1672,7 +1673,8 @@ def _render_single_artifact(session_id: str, artifact_id: str):
                 if columns and rows:
                     try:
                         df = pd.DataFrame(rows, columns=columns)
-                        st.dataframe(df, use_container_width=True, height=180, hide_index=True)
+                        row_h = min(38 * (len(df) + 1) + 10, 800)
+                        st.dataframe(df, use_container_width=True, height=row_h, hide_index=True)
                     except Exception:
                         _render_compact_data(art_name, preview)
                 else:
