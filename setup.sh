@@ -47,10 +47,8 @@ OS=$(detect_os)
 info "OS: $OS"
 
 # ── systemd/service 추상화 헬퍼 ──────────────────────────────────────────────
-# WSL, 컨테이너 등 systemd 없는 환경에서도 동작
+# PID 1 이 실제로 systemd 인지만 확인 (설치 여부와 무관)
 is_systemd() {
-  systemctl --version &>/dev/null 2>&1 && \
-  systemctl status &>/dev/null 2>&1 && \
   [[ "$(cat /proc/1/comm 2>/dev/null)" == "systemd" ]]
 }
 
@@ -59,9 +57,11 @@ start_service() {
   if is_systemd; then
     sudo systemctl start "$svc"
   elif command -v service &>/dev/null; then
-    sudo service "$svc" start
+    sudo service "$svc" start 2>/dev/null || true
   else
-    warn "서비스 관리자를 찾을 수 없습니다. '$svc'를 수동으로 시작해주세요."
+    warn "서비스 관리자를 찾을 수 없습니다. dockerd를 직접 시작합니다."
+    sudo dockerd &>/tmp/dockerd.log &
+    sleep 5
   fi
 }
 
@@ -70,7 +70,10 @@ enable_service() {
   if is_systemd; then
     sudo systemctl enable --now "$svc"
   elif command -v service &>/dev/null; then
-    sudo service "$svc" start
+    sudo service "$svc" start 2>/dev/null || true
+    # 부팅 시 자동 시작 등록 시도 (실패해도 무시)
+    sudo update-rc.d "$svc" defaults 2>/dev/null || \
+    sudo chkconfig "$svc" on 2>/dev/null || true
   else
     warn "systemd 없음 — '$svc' 자동 시작 설정 생략"
   fi
@@ -173,15 +176,21 @@ fi
 # Docker 데몬 실행 확인
 if ! docker info &>/dev/null; then
   warn "Docker 데몬이 실행 중이 아닙니다. 시작을 시도합니다..."
+  # 1차: 서비스 관리자로 시도
   start_service docker
   sleep 3
-  # WSL에서는 dockerd를 직접 백그라운드 실행
+  # 2차: 여전히 안 되면 dockerd 직접 실행
   if ! docker info &>/dev/null; then
     warn "서비스 관리자로 시작 실패. dockerd 직접 실행 시도..."
     sudo dockerd &>/tmp/dockerd.log &
-    sleep 5
+    sleep 6
   fi
-  docker info &>/dev/null || error "Docker 데몬 시작 실패. 수동으로 시작해주세요: sudo dockerd &"
+  # 최종 확인
+  if ! docker info &>/dev/null; then
+    error "Docker 데몬 시작 실패. 아래 명령으로 수동 시작 후 재실행해주세요:
+    sudo dockerd &
+    또는: sudo service docker start"
+  fi
 fi
 
 # ── 3. vLLM 설정 입력 ────────────────────────────────────────────────────────
