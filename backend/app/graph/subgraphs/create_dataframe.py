@@ -31,21 +31,29 @@ You are a Python data expert. Generate Python code that filters or transforms a 
 
 STRICT RULES:
 1. Load data: df = pd.read_parquet('data.parquet')
-2. Apply the user's filter/transformation to produce result_df
-3. ALWAYS save the result as: result_df.to_parquet('result_1.parquet', index=False)
-4. Also print a summary: print(f"Result shape: {result_df.shape}")
-5. If the user requests a new column/feature, add it and save the entire modified df
-6. Handle edge cases: if result is empty, still save it
-7. Use only: pandas, numpy — no plots needed
-8. Output code only (no markdown fences, no explanations)
+2. Use only: pandas, numpy — no plots needed
+3. Output code only (no markdown fences, no explanations)
+4. Handle edge cases: if result is empty, still save it
 
-Example for "quality > 6인 데이터 추출":
-import pandas as pd
-df = pd.read_parquet('data.parquet')
-result_df = df[df['quality'] > 6].copy()
-result_df.to_parquet('result_1.parquet', index=False)
-print(f"Result shape: {result_df.shape}")
-print(result_df.describe())
+SAVING RULES — choose based on the request type:
+
+[Case A] groupby → save EACH group as a separate file:
+  for i, (key, group_df) in enumerate(df.groupby('COLUMN'), 1):
+      group_df.to_parquet(f'result_{i}.parquet', index=False)
+      print(f"Group {key}: {group_df.shape}")
+
+[Case B] filter / transform → save ONE file:
+  result_df = df[df['col'] > value].copy()
+  result_df.to_parquet('result_1.parquet', index=False)
+  print(f"Result shape: {result_df.shape}")
+
+[Case C] aggregation (mean/sum/count per group) → save ONE summary file:
+  result_df = df.groupby('COLUMN').agg(...).reset_index()
+  result_df.to_parquet('result_1.parquet', index=False)
+  print(result_df)
+
+IMPORTANT: For groupby splits, ALWAYS use Case A (one file per group).
+For aggregation/statistics, use Case C (one summary file).
 """
 
 
@@ -264,35 +272,42 @@ def _persist_artifacts(
             created_artifact_ids.append(code_artifact_id)
 
         # 출력 파일 수집 - parquet/csv만 dataframe 아티팩트로 저장
+        # result_1, result_2, ... 순서로 정렬해서 저장
         output_files = sandbox_result.get("output_files", {})
-        for fname, fpath in output_files.items():
-            if not os.path.exists(fpath):
-                continue
+        sorted_files = sorted(
+            [(fname, fpath) for fname, fpath in output_files.items()
+             if (fname.endswith(".parquet") or fname.endswith(".csv")) and os.path.exists(fpath)],
+            key=lambda x: x[0],
+        )
+        total_files = len(sorted_files)
+        for file_idx, (fname, fpath) in enumerate(sorted_files, 1):
+            dest = os.path.join(df_dir, f"create_df_{step_id or 'default'}_{fname}")
+            shutil.copy2(fpath, dest)
 
-            if fname.endswith(".parquet") or fname.endswith(".csv"):
-                dest = os.path.join(df_dir, f"create_df_{step_id or 'default'}_{fname}")
-                shutil.copy2(fpath, dest)
-
-                try:
-                    if fname.endswith(".parquet"):
-                        df_tmp = pd.read_parquet(dest)
-                    else:
-                        df_tmp = pd.read_csv(dest)
-                    preview_data = dataframe_to_preview(df_tmp, max_rows=len(df_tmp))
+            try:
+                if fname.endswith(".parquet"):
+                    df_tmp = pd.read_parquet(dest)
+                else:
+                    df_tmp = pd.read_csv(dest)
+                preview_data = dataframe_to_preview(df_tmp, max_rows=len(df_tmp))
+                # 여러 파일이면 "그룹 N/전체" 표시, 하나면 일반 레이블
+                if total_files > 1:
+                    label = f"그룹 {file_idx}/{total_files} ({df_tmp.shape[0]}행 × {df_tmp.shape[1]}열)"
+                else:
                     label = f"서브 데이터셋 ({df_tmp.shape[0]}행 × {df_tmp.shape[1]}열)"
-                except Exception:
-                    preview_data = None
-                    label = f"서브 데이터셋: {fname}"
+            except Exception:
+                preview_data = None
+                label = f"서브 데이터셋: {fname}"
 
-                artifact_id = save_artifact_to_db(
-                    conn, step_id, session_id,
-                    "dataframe", label,
-                    dest, "application/parquet",
-                    os.path.getsize(dest),
-                    preview_data,
-                    {"type": "create_dataframe", "original_request": user_message[:200]},
-                )
-                created_artifact_ids.append(artifact_id)
+            artifact_id = save_artifact_to_db(
+                conn, step_id, session_id,
+                "dataframe", label,
+                dest, "application/parquet",
+                os.path.getsize(dest),
+                preview_data,
+                {"type": "create_dataframe", "original_request": user_message[:200], "file_index": file_idx},
+            )
+            created_artifact_ids.append(artifact_id)
 
         conn.commit()
         logger.info("create_dataframe 아티팩트 저장 완료", step_id=step_id, count=len(created_artifact_ids))
