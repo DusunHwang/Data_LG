@@ -46,6 +46,36 @@ detect_os() {
 OS=$(detect_os)
 info "OS: $OS"
 
+# ── systemd/service 추상화 헬퍼 ──────────────────────────────────────────────
+# WSL, 컨테이너 등 systemd 없는 환경에서도 동작
+is_systemd() {
+  systemctl --version &>/dev/null 2>&1 && \
+  systemctl status &>/dev/null 2>&1 && \
+  [[ "$(cat /proc/1/comm 2>/dev/null)" == "systemd" ]]
+}
+
+start_service() {
+  local svc="$1"
+  if is_systemd; then
+    sudo systemctl start "$svc"
+  elif command -v service &>/dev/null; then
+    sudo service "$svc" start
+  else
+    warn "서비스 관리자를 찾을 수 없습니다. '$svc'를 수동으로 시작해주세요."
+  fi
+}
+
+enable_service() {
+  local svc="$1"
+  if is_systemd; then
+    sudo systemctl enable --now "$svc"
+  elif command -v service &>/dev/null; then
+    sudo service "$svc" start
+  else
+    warn "systemd 없음 — '$svc' 자동 시작 설정 생략"
+  fi
+}
+
 # ── 2. Docker 설치 확인 및 설치 ───────────────────────────────────────────────
 install_docker() {
   info "Docker 설치 중..."
@@ -61,15 +91,14 @@ install_docker() {
         sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
       sudo apt-get update -qq
       sudo apt-get install -y -qq docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
-      sudo systemctl enable --now docker
-      # 현재 유저를 docker 그룹에 추가
+      enable_service docker
       sudo usermod -aG docker "$USER" 2>/dev/null || true
       ;;
     centos|rhel|fedora|rocky|almalinux)
       sudo yum install -y yum-utils
       sudo yum-config-manager --add-repo https://download.docker.com/linux/centos/docker-ce.repo
       sudo yum install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
-      sudo systemctl enable --now docker
+      enable_service docker
       sudo usermod -aG docker "$USER" 2>/dev/null || true
       ;;
     darwin)
@@ -144,11 +173,15 @@ fi
 # Docker 데몬 실행 확인
 if ! docker info &>/dev/null; then
   warn "Docker 데몬이 실행 중이 아닙니다. 시작을 시도합니다..."
-  if command -v systemctl &>/dev/null; then
-    sudo systemctl start docker
-    sleep 3
+  start_service docker
+  sleep 3
+  # WSL에서는 dockerd를 직접 백그라운드 실행
+  if ! docker info &>/dev/null; then
+    warn "서비스 관리자로 시작 실패. dockerd 직접 실행 시도..."
+    sudo dockerd &>/tmp/dockerd.log &
+    sleep 5
   fi
-  docker info &>/dev/null || error "Docker 데몬 시작 실패. 수동으로 시작해주세요: sudo systemctl start docker"
+  docker info &>/dev/null || error "Docker 데몬 시작 실패. 수동으로 시작해주세요: sudo dockerd &"
 fi
 
 # ── 3. vLLM 설정 입력 ────────────────────────────────────────────────────────
