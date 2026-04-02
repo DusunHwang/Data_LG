@@ -22,7 +22,7 @@ done
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
-COMPOSE_CMD="docker compose"
+COMPOSE_CMD=""  # Docker 설치 후 결정됨
 $DEV_MODE && COMPOSE_OPTS="-f docker-compose.yml -f docker-compose.override.yml" || COMPOSE_OPTS="-f docker-compose.yml"
 
 echo ""
@@ -89,11 +89,57 @@ else
   success "Docker 이미 설치됨: $DOCKER_VER"
 fi
 
-# docker compose (plugin) 확인
-if ! docker compose version &>/dev/null; then
-  error "docker compose 플러그인이 없습니다. Docker 20.10+ 또는 docker-compose-plugin을 설치해주세요."
+# ── docker compose 플러그인 확인 및 설치 ──────────────────────────────────────
+install_compose_plugin() {
+  info "docker compose 플러그인 설치 중..."
+  case "$OS" in
+    ubuntu|debian)
+      sudo apt-get update -qq
+      sudo apt-get install -y -qq docker-compose-plugin || true
+      ;;
+    centos|rhel|fedora|rocky|almalinux)
+      sudo yum install -y docker-compose-plugin || true
+      ;;
+  esac
+}
+
+install_compose_standalone() {
+  info "docker-compose standalone 설치 중 (fallback)..."
+  COMPOSE_VER="v2.27.0"
+  COMPOSE_BIN="/usr/local/bin/docker-compose"
+  ARCH=$(uname -m)
+  [[ "$ARCH" == "x86_64" ]] && ARCH="x86_64"
+  [[ "$ARCH" == "aarch64" ]] && ARCH="aarch64"
+  sudo curl -fsSL \
+    "https://github.com/docker/compose/releases/download/${COMPOSE_VER}/docker-compose-linux-${ARCH}" \
+    -o "$COMPOSE_BIN"
+  sudo chmod +x "$COMPOSE_BIN"
+  success "docker-compose ${COMPOSE_VER} 설치 완료: $COMPOSE_BIN"
+}
+
+# compose 명령어 결정 (plugin 우선 → standalone fallback)
+if docker compose version &>/dev/null 2>&1; then
+  COMPOSE_CMD="docker compose"
+  success "docker compose (plugin): $(docker compose version --short 2>/dev/null || echo 'ok')"
+elif command -v docker-compose &>/dev/null; then
+  COMPOSE_CMD="docker-compose"
+  success "docker-compose (standalone): $(docker-compose --version)"
+else
+  warn "docker compose를 찾을 수 없습니다. 설치를 시도합니다..."
+  install_compose_plugin
+  if docker compose version &>/dev/null 2>&1; then
+    COMPOSE_CMD="docker compose"
+    success "docker compose (plugin) 설치 완료"
+  else
+    install_compose_standalone
+    if command -v docker-compose &>/dev/null; then
+      COMPOSE_CMD="docker-compose"
+      success "docker-compose (standalone) 설치 완료"
+    else
+      error "docker compose 설치에 실패했습니다. 수동으로 설치해주세요: https://docs.docker.com/compose/install/"
+    fi
+  fi
 fi
-success "docker compose: $(docker compose version --short 2>/dev/null || echo 'ok')"
 
 # Docker 데몬 실행 확인
 if ! docker info &>/dev/null; then
