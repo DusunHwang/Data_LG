@@ -1,5 +1,6 @@
 """SQLAlchemy 비동기 엔진 및 세션 팩토리 (SQLite)"""
 
+import os
 from collections.abc import AsyncGenerator
 
 from sqlalchemy.ext.asyncio import (
@@ -7,19 +8,22 @@ from sqlalchemy.ext.asyncio import (
     async_sessionmaker,
     create_async_engine,
 )
-from sqlalchemy.pool import StaticPool
+from sqlalchemy.pool import NullPool
 
 from app.core.config import settings
 from app.core.logging import get_logger
 
 logger = get_logger(__name__)
 
-# SQLite: StaticPool 사용 (멀티스레드 접근 허용)
+# SQLite: 절대 경로 + NullPool 사용
+_db_abs = os.path.abspath(settings.database_path)
+_db_url = f"sqlite+aiosqlite:///{_db_abs}"
+
 engine = create_async_engine(
-    settings.database_url,
+    _db_url,
     echo=False,
     connect_args={"check_same_thread": False},
-    poolclass=StaticPool,
+    poolclass=NullPool,
 )
 
 AsyncSessionLocal = async_sessionmaker(

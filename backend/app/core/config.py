@@ -36,7 +36,7 @@ class Settings(BaseSettings):
 
     # vLLM
     vllm_endpoint_small: str = "http://your-vllm-server/v1"
-    vllm_model_small: str = "Qwen3/Qwen3-Next-80B-A3B-Instruct-FP8"
+    vllm_model_small: str = "Qwen/Qwen3-30B-A3B-FP8"
     vllm_temperature: float = 0.1
     vllm_max_tokens: int = 4096
 

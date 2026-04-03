@@ -12,7 +12,7 @@ from app.graph.state import GraphState
 
 logger = get_logger(__name__)
 
-# 유효한 인텐트 목록
+# LLM 자동 분류 가능 인텐트 (followup_* 은 명시적 mode 설정 시에만 사용)
 VALID_INTENTS = [
     "dataset_profile",
     "eda",
@@ -22,12 +22,18 @@ VALID_INTENTS = [
     "shap_analysis",
     "simplify_model",
     "optimization",
+    "general_question",
+]
+
+# mode 명시 시에만 허용되는 인텐트 (자동 분류 제외)
+EXPLICIT_ONLY_INTENTS = [
     "followup_dataframe",
     "followup_plot",
     "followup_model",
     "branch_replay",
-    "general_question",
 ]
+
+ALL_INTENTS = VALID_INTENTS + EXPLICIT_ONLY_INTENTS
 
 # mode → intent 직접 매핑
 MODE_TO_INTENT = {
@@ -59,28 +65,25 @@ class IntentClassification(BaseModel):
 
 INTENT_SYSTEM_PROMPT = """/no_think
 당신은 데이터 분석 플랫폼의 인텐트 분류기입니다.
-사용자 메시지와 컨텍스트를 분석하여 다음 인텐트 중 하나를 선택하세요:
+사용자 메시지와 현재 데이터셋 정보만 보고 다음 인텐트 중 하나를 선택하세요.
+과거 분석 이력은 무시하고, 현재 질문만으로 판단하세요.
 
 - dataset_profile: 데이터셋 프로파일/개요 요청 (컬럼 정보, 결측값, 데이터 요약 등)
-- eda: 탐색적 데이터 분석 (분포, 상관관계, 시각화, 새 플롯 생성 등)
-- create_dataframe: 조건/필터로 서브 데이터셋 생성 (예: "quality > 6인 데이터 만들어줘", "상위 10% 추출", "결측 제거한 데이터셋", "파생 변수 추가해줘")
+- eda: 탐색적 데이터 분석 (분포, 상관관계, 시각화, 새 플롯 생성, 통계값 계산 등)
+- create_dataframe: 조건/필터로 서브 데이터셋 생성 또는 전체 데이터 출력 (예: "quality > 6인 데이터 만들어줘", "상위 10% 추출", "결측 제거한 데이터셋", "파생 변수 추가해줘", "데이터 출력해줘", "데이터 보여줘", "전체 데이터 보여줘")
 - subset_discovery: 밀집 서브셋 탐색 (결측 구조 기반 부분집합 찾기)
 - baseline_modeling: 기본 LightGBM 모델 훈련 및 평가
 - shap_analysis: SHAP 피처 중요도 분석
 - simplify_model: 모델 단순화 (적은 피처로 비슷한 성능)
 - optimization: 하이퍼파라미터 최적화 (Grid Search 또는 Optuna)
-- followup_dataframe: 이전 데이터프레임 결과에 대한 후속 질문 (숫자/통계 설명 요청)
-- followup_plot: 이전 시각화 결과에 대한 설명/해석 요청 (새 플롯 생성 아님)
-- followup_model: 이전 모델 결과에 대한 후속 질문
-- branch_replay: 다른 브랜치 또는 설정으로 재분석 요청
 - general_question: 일반 질문 또는 위 인텐트에 해당하지 않는 경우
 
 중요 구분 규칙:
-- 사용자가 "그려줘", "plot", "차트", "scatter", "histogram", "시각화해줘" 등 새 그래프 생성을 요청하면 → 반드시 eda
-- 이전 결과를 참조하더라도 새로운 플롯을 요청하는 경우 → eda (followup_plot 아님)
-- followup_plot은 기존 플롯에 대해 "이게 뭔지 설명해줘", "이 차트의 의미는?" 처럼 해석만 요청할 때만 사용
+- 사용자가 "그려줘", "plot", "차트", "scatter", "histogram", "시각화해줘" 등 새 그래프 생성을 요청하면 → eda
+- 데이터의 통계값, 개수, 합계, 평균 등 수치 계산 요청도 → eda
 - "데이터셋 만들어줘", "필터링해줘", "추출해줘", "서브셋", "조건에 맞는 행", "파생 변수", "새 컬럼 추가" 등 데이터프레임 결과물을 요청하면 → create_dataframe
 - create_dataframe은 시각화 없이 데이터프레임 자체가 결과물인 경우
+- 이전 결과를 "이게 뭔지 설명해줘", "이 차트의 의미는?" 처럼 해석만 요청해도 → eda 또는 general_question으로 처리
 """
 
 
@@ -133,26 +136,22 @@ def classify_intent(state: GraphState) -> GraphState:
 
 async def _classify_with_llm(state: GraphState, user_message: str) -> GraphState:
     """vLLM으로 비동기 인텐트 분류"""
-    session = state.get("session", {})
     dataset = state.get("dataset", {})
-    recent_steps = session.get("recent_steps", [])
 
-    # 컨텍스트 구성
+    # 현재 데이터셋 정보만 컨텍스트로 사용 (과거 이력 제외)
     context_parts = []
 
     if dataset:
+        schema = dataset.get("schema_profile", {})
+        col_names = list(schema.keys())[:20] if schema else []
         context_parts.append(
             f"현재 데이터셋: {dataset.get('name', '없음')} "
             f"({dataset.get('row_count', '?')}행 x {dataset.get('col_count', '?')}열)"
         )
+        if col_names:
+            context_parts.append(f"컬럼 목록: {', '.join(col_names)}")
 
-    if recent_steps:
-        step_summary = ", ".join(
-            [f"{s.get('step_type', '?')}({s.get('status', '?')})" for s in recent_steps[:5]]
-        )
-        context_parts.append(f"최근 분석 이력: {step_summary}")
-
-    context_str = "\n".join(context_parts) if context_parts else "컨텍스트 없음"
+    context_str = "\n".join(context_parts) if context_parts else "데이터셋 없음"
 
     messages = [
         {"role": "system", "content": INTENT_SYSTEM_PROMPT},
@@ -219,7 +218,7 @@ def _keyword_classify(message: str) -> str:
     msg = message.lower()
     if any(w in msg for w in ["프로파일", "요약", "profile", "overview", "컬럼"]):
         return "dataset_profile"
-    if any(w in msg for w in ["만들어", "생성", "추출", "필터", "filter", "조건", "파생", "서브 데이터", "sub data", "새 컬럼", "제거한"]):
+    if any(w in msg for w in ["만들어", "생성", "추출", "필터", "filter", "조건", "파생", "서브 데이터", "sub data", "새 컬럼", "제거한", "출력", "보여줘", "보여 줘", "전체 데이터", "데이터 출력", "데이터 보여"]):
         return "create_dataframe"
     if any(w in msg for w in ["eda", "탐색", "분포", "상관", "시각화", "분석"]):
         return "eda"

@@ -372,7 +372,7 @@ def _save_inverse_optimize_artifact(result: dict, session_id: str, branch_id: st
             """
             INSERT INTO steps (id, branch_id, step_type, status, sequence_no, title,
                                input_data, output_data, created_at, updated_at)
-            VALUES (%s, %s, 'optimization', 'completed', 0, %s, %s, %s, %s, %s)
+            VALUES (?, ?, 'optimization', 'completed', 0, ?, ?, ?, ?, ?)
             """,
             (
                 step_id, branch_id,
