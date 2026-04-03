@@ -4,7 +4,8 @@ import enum
 import uuid
 
 from sqlalchemy import BigInteger, Enum, ForeignKey, String, Text
-from sqlalchemy.dialects.postgresql import JSONB, UUID
+from sqlalchemy import JSON
+from app.db.models.base import UUIDString
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.models.base import BaseModel
@@ -29,13 +30,13 @@ class Artifact(BaseModel):
 
     # 소유권 (step 또는 dataset에 속함)
     step_id: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True),
+        UUIDString,
         ForeignKey("steps.id", ondelete="CASCADE"),
         nullable=True,
         index=True,
     )
     dataset_id: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True),
+        UUIDString,
         ForeignKey("datasets.id", ondelete="CASCADE"),
         nullable=True,
         index=True,
@@ -51,10 +52,10 @@ class Artifact(BaseModel):
     file_size_bytes: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
 
     # 미리보기 데이터 (JSON으로 직렬화된 미리보기)
-    preview_json: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    preview_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
 
     # 메타데이터
-    meta: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    meta: Mapped[dict | None] = mapped_column(JSON, nullable=True)
 
     # 관계
     step = relationship("Step", back_populates="artifacts")
@@ -82,13 +83,13 @@ class ArtifactLineage(BaseModel):
     __tablename__ = "artifact_lineages"
 
     source_artifact_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True),
+        UUIDString,
         ForeignKey("artifacts.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
     )
     target_artifact_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True),
+        UUIDString,
         ForeignKey("artifacts.id", ondelete="CASCADE"),
         nullable=False,
         index=True,

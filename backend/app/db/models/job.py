@@ -5,7 +5,8 @@ import uuid
 from datetime import datetime
 
 from sqlalchemy import DateTime, Enum, ForeignKey, Integer, String, Text
-from sqlalchemy.dialects.postgresql import JSONB, UUID
+from sqlalchemy import JSON
+from app.db.models.base import UUIDString
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.models.base import BaseModel
@@ -37,19 +38,19 @@ class JobRun(BaseModel):
     __tablename__ = "job_runs"
 
     session_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True),
+        UUIDString,
         ForeignKey("sessions.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
     )
     user_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True),
+        UUIDString,
         ForeignKey("users.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
     )
     step_id: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True),
+        UUIDString,
         ForeignKey("steps.id", ondelete="SET NULL"),
         nullable=True,
     )
@@ -73,10 +74,10 @@ class JobRun(BaseModel):
     progress_message: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     # 입력 파라미터
-    params: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    params: Mapped[dict | None] = mapped_column(JSON, nullable=True)
 
     # 결과
-    result: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    result: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     # 시간 추적

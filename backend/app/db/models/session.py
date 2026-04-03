@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime
 
 from sqlalchemy import DateTime, ForeignKey, Integer, String, Text
-from sqlalchemy.dialects.postgresql import UUID
+from app.db.models.base import UUIDString
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.models.base import BaseModel
@@ -16,7 +16,7 @@ class Session(BaseModel):
     __tablename__ = "sessions"
 
     user_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True),
+        UUIDString,
         ForeignKey("users.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
@@ -28,7 +28,7 @@ class Session(BaseModel):
 
     # 현재 활성 데이터셋 (FK는 dataset 테이블이 생성된 후 설정)
     active_dataset_id: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True),
+        UUIDString,
         ForeignKey("datasets.id", ondelete="SET NULL"),
         nullable=True,
     )

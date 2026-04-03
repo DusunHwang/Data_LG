@@ -97,15 +97,15 @@ async def cancel_job(
             ),
         )
 
-    # RQ 작업 취소 시도
+    # 스레드 풀 작업 취소 시도 (협력적)
     if job_run.rq_job_id:
         try:
-            from rq.job import Job
-            from app.worker.queue import redis_conn
-            rq_job = Job.fetch(job_run.rq_job_id, connection=redis_conn)
-            rq_job.cancel()
+            from app.worker.queue import get_job
+            job = get_job(job_run.rq_job_id)
+            if job:
+                job.future.cancel()
         except Exception as e:
-            logger.warning("RQ 작업 직접 취소 실패, 협력적 취소 시도", error=str(e))
+            logger.warning("작업 직접 취소 실패, 협력적 취소 시도", error=str(e))
 
     # 협력적 취소 요청
     request_cancellation(str(job_id))

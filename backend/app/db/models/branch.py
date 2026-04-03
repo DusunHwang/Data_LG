@@ -3,7 +3,8 @@
 import uuid
 
 from sqlalchemy import Boolean, ForeignKey, String, Text
-from sqlalchemy.dialects.postgresql import JSONB, UUID
+from sqlalchemy import JSON
+from app.db.models.base import UUIDString
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.models.base import BaseModel
@@ -15,13 +16,13 @@ class Branch(BaseModel):
     __tablename__ = "branches"
 
     session_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True),
+        UUIDString,
         ForeignKey("sessions.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
     )
     parent_branch_id: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True),
+        UUIDString,
         ForeignKey("branches.id", ondelete="SET NULL"),
         nullable=True,
     )
@@ -30,7 +31,7 @@ class Branch(BaseModel):
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
 
     # 브랜치 설정 (target column, feature list 등)
-    config: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    config: Mapped[dict | None] = mapped_column(JSON, nullable=True)
 
     # 관계
     session = relationship("Session", back_populates="branches")

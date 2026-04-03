@@ -1,4 +1,4 @@
-"""SQLAlchemy 비동기 엔진 및 세션 팩토리"""
+"""SQLAlchemy 비동기 엔진 및 세션 팩토리 (SQLite)"""
 
 from collections.abc import AsyncGenerator
 
@@ -7,23 +7,21 @@ from sqlalchemy.ext.asyncio import (
     async_sessionmaker,
     create_async_engine,
 )
+from sqlalchemy.pool import StaticPool
 
 from app.core.config import settings
 from app.core.logging import get_logger
 
 logger = get_logger(__name__)
 
-# 비동기 엔진 생성
+# SQLite: StaticPool 사용 (멀티스레드 접근 허용)
 engine = create_async_engine(
     settings.database_url,
-    echo=settings.is_development,
-    pool_size=10,
-    max_overflow=20,
-    pool_pre_ping=True,
-    pool_recycle=3600,
+    echo=False,
+    connect_args={"check_same_thread": False},
+    poolclass=StaticPool,
 )
 
-# 세션 팩토리
 AsyncSessionLocal = async_sessionmaker(
     bind=engine,
     class_=AsyncSession,
@@ -34,7 +32,6 @@ AsyncSessionLocal = async_sessionmaker(
 
 
 async def get_db_session() -> AsyncGenerator[AsyncSession, None]:
-    """DB 세션 의존성 제공자"""
     async with AsyncSessionLocal() as session:
         try:
             yield session
