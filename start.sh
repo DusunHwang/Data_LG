@@ -47,18 +47,25 @@ if [[ ! -f .env ]]; then
   info ".env.simple → .env 복사됨"
 fi
 
-# 대화형 입력 (인자 없을 때만)
+# 대화형 입력 (.env에 이미 값이 있으면 그대로 사용, 터미널이 없으면 건너뜀)
+CURRENT_EP=$(grep -E '^VLLM_ENDPOINT_SMALL=' .env 2>/dev/null | cut -d'=' -f2- || echo "$DEFAULT_ENDPOINT")
+CURRENT_MODEL=$(grep -E '^VLLM_MODEL_SMALL=' .env 2>/dev/null | cut -d'=' -f2- || echo "$DEFAULT_MODEL")
+
 if [[ -z "$VLLM_ENDPOINT" && -z "$VLLM_MODEL" ]]; then
-  CURRENT_EP=$(grep -E '^VLLM_ENDPOINT_SMALL=' .env 2>/dev/null | cut -d'=' -f2- || echo "$DEFAULT_ENDPOINT")
-  CURRENT_MODEL=$(grep -E '^VLLM_MODEL_SMALL=' .env 2>/dev/null | cut -d'=' -f2- || echo "$DEFAULT_MODEL")
-  echo ""
-  echo "──────────────────────────────────────────────────────"
-  echo "  vLLM 서버 설정"
-  echo "──────────────────────────────────────────────────────"
-  read -rp "  엔드포인트 [${CURRENT_EP}]: " INPUT_EP
-  read -rp "  모델명     [${CURRENT_MODEL}]: " INPUT_MODEL
-  VLLM_ENDPOINT="${INPUT_EP:-$CURRENT_EP}"
-  VLLM_MODEL="${INPUT_MODEL:-$CURRENT_MODEL}"
+  if [[ -t 0 ]]; then
+    echo ""
+    echo "──────────────────────────────────────────────────────"
+    echo "  vLLM 서버 설정 (Enter = 현재값 유지)"
+    echo "──────────────────────────────────────────────────────"
+    read -rp "  엔드포인트 [${CURRENT_EP}]: " INPUT_EP
+    read -rp "  모델명     [${CURRENT_MODEL}]: " INPUT_MODEL
+    VLLM_ENDPOINT="${INPUT_EP:-$CURRENT_EP}"
+    VLLM_MODEL="${INPUT_MODEL:-$CURRENT_MODEL}"
+  else
+    # 비대화형 터미널 — .env 현재값 그대로 사용
+    VLLM_ENDPOINT="$CURRENT_EP"
+    VLLM_MODEL="$CURRENT_MODEL"
+  fi
 fi
 
 sed -i "s|^VLLM_ENDPOINT_SMALL=.*|VLLM_ENDPOINT_SMALL=${VLLM_ENDPOINT}|" .env
