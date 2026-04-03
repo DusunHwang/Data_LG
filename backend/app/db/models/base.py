@@ -32,18 +32,22 @@ class Base(DeclarativeBase):
     pass
 
 
+def _now():
+    return datetime.now(timezone.utc)
+
+
 class TimestampMixin:
-    """생성/수정 타임스탬프 믹스인"""
+    """생성/수정 타임스탬프 믹스인 (SQLite: Python-level default)"""
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
-        server_default=func.now(),
+        default=_now,
         nullable=False,
     )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
-        server_default=func.now(),
-        onupdate=func.now(),
+        default=_now,
+        onupdate=_now,
         nullable=False,
     )
 

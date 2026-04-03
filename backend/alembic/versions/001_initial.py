@@ -23,8 +23,8 @@ def upgrade() -> None:
         sa.Column("hashed_password", sa.String(256), nullable=False),
         sa.Column("role", sa.String(16), nullable=False, default="user"),
         sa.Column("is_active", sa.Boolean, nullable=False, default=True),
-        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
-        sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
+        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
+        sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
     )
     op.create_index("ix_users_username", "users", ["username"])
 
@@ -35,8 +35,8 @@ def upgrade() -> None:
         sa.Column("token_hash", sa.String(256), nullable=False, unique=True),
         sa.Column("expires_at", sa.DateTime(timezone=True), nullable=False),
         sa.Column("is_revoked", sa.Boolean, nullable=False, default=False),
-        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
-        sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
+        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
+        sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
     )
     op.create_index("ix_auth_refresh_tokens_user_id", "auth_refresh_tokens", ["user_id"])
 
@@ -47,8 +47,8 @@ def upgrade() -> None:
         sa.Column("active_dataset_id", sa.String(36), nullable=True),
         sa.Column("name", sa.String(256), nullable=True),
         sa.Column("ttl_days", sa.Integer, nullable=False, default=7),
-        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
-        sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
+        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
+        sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
     )
     op.create_index("ix_sessions_user_id", "sessions", ["user_id"])
 
@@ -66,8 +66,8 @@ def upgrade() -> None:
         sa.Column("schema_profile", sa.JSON, nullable=True),
         sa.Column("missing_profile", sa.JSON, nullable=True),
         sa.Column("target_candidates", sa.JSON, nullable=True),
-        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
-        sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
+        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
+        sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
     )
     op.create_index("ix_datasets_session_id", "datasets", ["session_id"])
 
@@ -79,8 +79,8 @@ def upgrade() -> None:
         sa.Column("name", sa.String(256), nullable=False),
         sa.Column("is_active", sa.Boolean, nullable=False, default=True),
         sa.Column("config", sa.JSON, nullable=True),
-        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
-        sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
+        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
+        sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
     )
     op.create_index("ix_branches_session_id", "branches", ["session_id"])
 
@@ -94,8 +94,8 @@ def upgrade() -> None:
         sa.Column("title", sa.String(512), nullable=True),
         sa.Column("input_data", sa.JSON, nullable=True),
         sa.Column("output_data", sa.JSON, nullable=True),
-        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
-        sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
+        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
+        sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
     )
     op.create_index("ix_steps_branch_id", "steps", ["branch_id"])
 
@@ -111,8 +111,8 @@ def upgrade() -> None:
         sa.Column("file_size_bytes", sa.Integer, nullable=True),
         sa.Column("preview_json", sa.JSON, nullable=True),
         sa.Column("meta", sa.JSON, nullable=True),
-        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
-        sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
+        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
+        sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
     )
     op.create_index("ix_artifacts_step_id", "artifacts", ["step_id"])
 
@@ -121,8 +121,8 @@ def upgrade() -> None:
         sa.Column("id", sa.String(36), primary_key=True),
         sa.Column("source_artifact_id", sa.String(36), sa.ForeignKey("artifacts.id", ondelete="CASCADE"), nullable=False),
         sa.Column("target_artifact_id", sa.String(36), sa.ForeignKey("artifacts.id", ondelete="CASCADE"), nullable=False),
-        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
-        sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
+        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
+        sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
     )
 
     op.create_table(
@@ -141,8 +141,8 @@ def upgrade() -> None:
         sa.Column("error_message", sa.Text, nullable=True),
         sa.Column("started_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("finished_at", sa.DateTime(timezone=True), nullable=True),
-        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
-        sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
+        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
+        sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
     )
     op.create_index("ix_job_runs_session_id", "job_runs", ["session_id"])
     op.create_index("ix_job_runs_user_id", "job_runs", ["user_id"])
@@ -170,8 +170,8 @@ def upgrade() -> None:
         sa.Column("test_r2", sa.Float, nullable=True),
         sa.Column("hyperparams", sa.JSON, nullable=True),
         sa.Column("feature_importances", sa.JSON, nullable=True),
-        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
-        sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
+        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
+        sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
     )
     op.create_index("ix_model_runs_branch_id", "model_runs", ["branch_id"])
 
@@ -188,8 +188,8 @@ def upgrade() -> None:
         sa.Column("study_name", sa.String(256), nullable=True),
         sa.Column("best_params", sa.JSON, nullable=True),
         sa.Column("trials_history", sa.JSON, nullable=True),
-        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
-        sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
+        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
+        sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
     )
 
     op.create_table(
@@ -201,8 +201,8 @@ def upgrade() -> None:
         sa.Column("resource_type", sa.String(64), nullable=True),
         sa.Column("resource_id", sa.String(36), nullable=True),
         sa.Column("details", sa.JSON, nullable=True),
-        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
-        sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
+        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
+        sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
     )
 
 
