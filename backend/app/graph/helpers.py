@@ -66,8 +66,8 @@ def update_progress(
                 cur.execute(
                     """
                     UPDATE job_runs
-                    SET progress = %s, progress_message = %s, updated_at = %s
-                    WHERE id = %s
+                    SET progress = ?, progress_message = ?, updated_at = ?
+                    WHERE id = ?
                     """,
                     (percent, message, datetime.now(timezone.utc), job_run_id),
                 )
@@ -185,7 +185,7 @@ def save_artifact_to_db(
         INSERT INTO artifacts (
             id, step_id, dataset_id, artifact_type, name, file_path,
             mime_type, file_size_bytes, preview_json, meta, created_at, updated_at
-        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             artifact_id,
@@ -226,7 +226,7 @@ def create_step_in_db(
         INSERT INTO steps (
             id, branch_id, step_type, status, sequence_no, title,
             input_data, output_data, created_at, updated_at
-        ) VALUES (%s, %s, %s, 'completed', %s, %s, %s, %s, %s, %s)
+        ) VALUES (?, ?, ?, 'completed', ?, ?, ?, ?, ?, ?)
         """,
         (
             step_id,

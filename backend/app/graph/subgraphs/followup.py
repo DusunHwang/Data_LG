@@ -207,7 +207,7 @@ def _handle_plot_followup(state: GraphState) -> GraphState:
                 INSERT INTO steps (
                     id, branch_id, step_type, status, sequence_no, title,
                     input_data, output_data, created_at, updated_at
-                ) VALUES (%s, %s, 'assistant_message', 'completed', 0, %s, %s, %s, %s, %s)
+                ) VALUES (?, ?, 'assistant_message', 'completed', 0, ?, ?, ?, ?, ?)
                 """,
                 (
                     step_id_str,
@@ -336,7 +336,7 @@ def _load_latest_dataframe_artifact(
                 """
                 SELECT id, file_path, name, meta
                 FROM artifacts
-                WHERE id = ANY(%s) AND artifact_type = 'dataframe'
+                WHERE id = ANY(?) AND artifact_type = 'dataframe'
                   AND file_path IS NOT NULL
                 LIMIT 1
                 """,
@@ -353,7 +353,7 @@ def _load_latest_dataframe_artifact(
                 SELECT a.id, a.file_path, a.name, a.meta
                 FROM artifacts a
                 JOIN steps s ON a.step_id = s.id
-                WHERE s.branch_id = %s
+                WHERE s.branch_id = ?
                   AND a.artifact_type = 'dataframe'
                   AND a.file_path IS NOT NULL
                 ORDER BY s.created_at DESC, a.created_at DESC
@@ -393,7 +393,7 @@ def _load_plot_artifact_meta(
                 SELECT a.name, a.meta, s.title, s.output_data
                 FROM artifacts a
                 LEFT JOIN steps s ON a.step_id = s.id
-                WHERE a.id = ANY(%s)
+                WHERE a.id = ANY(?)
                   AND a.artifact_type IN ('plot', 'shap')
                 LIMIT 3
                 """,
@@ -405,7 +405,7 @@ def _load_plot_artifact_meta(
                 SELECT a.name, a.meta, s.title, s.output_data
                 FROM artifacts a
                 JOIN steps s ON a.step_id = s.id
-                WHERE s.branch_id = %s
+                WHERE s.branch_id = ?
                   AND a.artifact_type IN ('plot', 'shap')
                 ORDER BY s.created_at DESC, a.created_at DESC
                 LIMIT 3
@@ -456,7 +456,7 @@ def _load_model_context(
                        n_train, n_test, n_features, target_column,
                        feature_importances, is_champion
                 FROM model_runs
-                WHERE branch_id = %s AND status = 'completed'
+                WHERE branch_id = ? AND status = 'completed'
                 ORDER BY created_at DESC
                 LIMIT 5
                 """,
@@ -483,7 +483,7 @@ def _load_model_context(
                 """
                 SELECT status, best_score, best_params, completed_trials
                 FROM optimization_runs
-                WHERE branch_id = %s
+                WHERE branch_id = ?
                 ORDER BY created_at DESC
                 LIMIT 1
                 """,
@@ -614,7 +614,7 @@ def _save_followup_artifacts(
                 INSERT INTO steps (
                     id, branch_id, step_type, status, sequence_no, title,
                     input_data, output_data, created_at, updated_at
-                ) VALUES (%s, %s, 'assistant_message', 'completed', 0, %s, %s, %s, %s, %s)
+                ) VALUES (?, ?, 'assistant_message', 'completed', 0, ?, ?, ?, ?, ?)
                 """,
                 (
                     step_id,

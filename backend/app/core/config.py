@@ -35,8 +35,8 @@ class Settings(BaseSettings):
     algorithm: str = "HS256"
 
     # vLLM
-    vllm_endpoint_small: str = "http://10.36.114.31:30081/v1"
-    vllm_model_small: str = "Qwen3/Qwen3-Next-80B-A3B-Instruct-FP8"
+    vllm_endpoint_small: str = "http://dusun.iptime.org:27800/v1"
+    vllm_model_small: str = "Qwen/Qwen3-30B-A3B-FP8"
     vllm_temperature: float = 0.1
     vllm_max_tokens: int = 4096
 

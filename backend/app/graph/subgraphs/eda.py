@@ -458,7 +458,7 @@ def _save_eda_artifacts(
                 INSERT INTO steps (
                     id, branch_id, step_type, status, sequence_no, title,
                     input_data, output_data, created_at, updated_at
-                ) VALUES (%s, %s, 'analysis', 'completed', 0, %s, %s, %s, %s, %s)
+                ) VALUES (?, ?, 'analysis', 'completed', 0, ?, ?, ?, ?, ?)
                 """,
                 (
                     step_id,

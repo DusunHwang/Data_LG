@@ -120,7 +120,7 @@ def resolve_user_reference(state: GraphState) -> GraphState:
                         """
                         SELECT s.id
                         FROM steps s
-                        WHERE s.branch_id = %s
+                        WHERE s.branch_id = ?
                           AND s.step_type = 'modeling'
                           AND s.status = 'completed'
                         ORDER BY s.sequence_no DESC, s.created_at DESC
@@ -139,7 +139,7 @@ def resolve_user_reference(state: GraphState) -> GraphState:
                         """
                         SELECT id
                         FROM steps
-                        WHERE branch_id = %s AND status = 'completed'
+                        WHERE branch_id = ? AND status = 'completed'
                         ORDER BY sequence_no DESC, created_at DESC
                         LIMIT 1
                         """,
@@ -156,7 +156,7 @@ def resolve_user_reference(state: GraphState) -> GraphState:
                         """
                         SELECT id, output_data
                         FROM steps
-                        WHERE branch_id = %s
+                        WHERE branch_id = ?
                           AND step_type = 'analysis'
                           AND status = 'completed'
                           AND output_data IS NOT NULL

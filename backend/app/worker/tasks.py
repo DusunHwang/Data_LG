@@ -39,7 +39,7 @@ def run_analysis_task(
             conn = get_sync_db_connection()
             try:
                 cur = conn.cursor()
-                cur.execute("SELECT user_id FROM job_runs WHERE id = %s", (job_run_id,))
+                cur.execute("SELECT user_id FROM job_runs WHERE id = ?", (job_run_id,))
                 row = cur.fetchone()
                 if row:
                     user_id = str(row[0])
@@ -313,10 +313,10 @@ def _save_model_results_sync(
                     n_train, n_test, n_features, target_column,
                     feature_importances, is_champion, created_at, updated_at
                 ) VALUES (
-                    %s, %s, %s, %s, %s, 'completed',
-                    %s, %s, %s, %s, %s, %s,
-                    %s, %s, %s, %s,
-                    %s, %s, %s, %s
+                    ?, ?, ?, ?, ?, 'completed',
+                    ?, ?, ?, ?, ?, ?,
+                    ?, ?, ?, ?,
+                    ?, ?, ?, ?
                 )
             """, (
                 model_id, branch_id, job_run_id,
@@ -512,27 +512,27 @@ def _update_optimization_sync(
     try:
         cur = conn.cursor()
         now = datetime.now(timezone.utc)
-        fields = ["updated_at = %s"]
+        fields = ["updated_at = ?"]
         params = [now]
 
         if completed_trials is not None:
-            fields.append("completed_trials = %s")
+            fields.append("completed_trials = ?")
             params.append(completed_trials)
         if best_score is not None:
-            fields.append("best_score = %s")
+            fields.append("best_score = ?")
             params.append(best_score)
         if best_params is not None:
-            fields.append("best_params = %s")
+            fields.append("best_params = ?")
             params.append(json.dumps(best_params))
         if trials_history is not None:
-            fields.append("trials_history = %s")
+            fields.append("trials_history = ?")
             params.append(json.dumps(trials_history))
         if status is not None:
-            fields.append("status = %s")
+            fields.append("status = ?")
             params.append(status)
 
         params.append(optimization_run_id)
-        query = f"UPDATE optimization_runs SET {', '.join(fields)} WHERE id = %s"
+        query = f"UPDATE optimization_runs SET {', '.join(fields)} WHERE id = ?"
         cur.execute(query, params)
         conn.commit()
     except Exception as e:

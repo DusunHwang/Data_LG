@@ -172,7 +172,7 @@ def _load_champion_model(branch_id: Optional[str]) -> Optional[dict]:
             SELECT mr.id, a.file_path, a.meta
             FROM model_runs mr
             JOIN artifacts a ON mr.model_artifact_id = a.id
-            WHERE mr.branch_id = %s
+            WHERE mr.branch_id = ?
               AND mr.is_champion = true
               AND mr.status = 'completed'
             ORDER BY mr.created_at DESC
@@ -189,7 +189,7 @@ def _load_champion_model(branch_id: Optional[str]) -> Optional[dict]:
                 SELECT mr.id, a.file_path, a.meta
                 FROM model_runs mr
                 JOIN artifacts a ON mr.model_artifact_id = a.id
-                WHERE mr.branch_id = %s
+                WHERE mr.branch_id = ?
                   AND mr.status = 'completed'
                 ORDER BY mr.test_rmse ASC, mr.created_at DESC
                 LIMIT 1
@@ -376,7 +376,7 @@ def _save_shap_artifacts(
                 INSERT INTO steps (
                     id, branch_id, step_type, status, sequence_no, title,
                     input_data, output_data, created_at, updated_at
-                ) VALUES (%s, %s, 'analysis', 'completed', 0, %s, %s, %s, %s, %s)
+                ) VALUES (?, ?, 'analysis', 'completed', 0, ?, ?, ?, ?, ?)
                 """,
                 (
                     step_id,

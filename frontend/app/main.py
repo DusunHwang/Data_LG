@@ -1279,6 +1279,7 @@ def _submit_analysis(session_id: str, message: str):
     if result and result.get("success"):
         job_id = result["data"]["job_id"]
         st.session_state.active_job_id = job_id
+        st.session_state.last_job_error = None
         # 세션별 채팅 히스토리에 추가
         if "chat_histories" not in st.session_state:
             st.session_state.chat_histories = {}
@@ -1377,6 +1378,14 @@ def _render_job_progress(session_id: str):
     """활성 작업 진행 상황 폴링 및 표시"""
     job_id = st.session_state.get("active_job_id")
 
+    # 이전 작업의 에러/취소 메시지 표시 (rerun 후에도 유지)
+    last_error = st.session_state.get("last_job_error")
+    if last_error and not job_id:
+        if last_error.startswith("⚠️"):
+            st.warning(last_error)
+        else:
+            st.error(last_error)
+
     if not job_id:
         # 활성 작업 확인
         result = api_call("get", f"/jobs/session/{session_id}/active")
@@ -1457,12 +1466,11 @@ def _render_job_progress(session_id: str):
                 st.session_state.selected_branch_id = branch_id
         elif status == "failed":
             err_msg = job.get("error_message", "알 수 없는 오류가 발생했습니다.")
-            st.error(f"❌ 분석 실패: {err_msg}")
+            st.session_state.last_job_error = f"❌ 분석 실패: {err_msg}"
         elif status == "cancelled":
-            st.warning("⚠️ 작업이 취소되었습니다.")
+            st.session_state.last_job_error = "⚠️ 작업이 취소되었습니다."
 
         st.session_state.active_job_id = None
-        time.sleep(1)
         st.rerun()
     else:
         # 아직 실행 중 - 5초 후 재실행
