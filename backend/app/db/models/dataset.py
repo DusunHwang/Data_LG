@@ -4,7 +4,8 @@ import enum
 import uuid
 
 from sqlalchemy import BigInteger, Enum, ForeignKey, Integer, String, Text
-from sqlalchemy.dialects.postgresql import JSONB, UUID
+from sqlalchemy import JSON
+from app.db.models.base import UUIDString
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.models.base import BaseModel
@@ -22,7 +23,7 @@ class Dataset(BaseModel):
     __tablename__ = "datasets"
 
     session_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True),
+        UUIDString,
         ForeignKey("sessions.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
@@ -42,9 +43,9 @@ class Dataset(BaseModel):
     file_size_bytes: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
 
     # 프로파일 정보 (JSON)
-    schema_profile: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
-    missing_profile: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
-    target_candidates: Mapped[list | None] = mapped_column(JSONB, nullable=True)
+    schema_profile: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    missing_profile: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    target_candidates: Mapped[list | None] = mapped_column(JSON, nullable=True)
 
     # 관계
     session = relationship("Session", back_populates="datasets", foreign_keys=[session_id])

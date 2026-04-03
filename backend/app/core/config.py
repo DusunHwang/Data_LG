@@ -1,5 +1,6 @@
-"""애플리케이션 설정 모듈"""
+"""애플리케이션 설정 모듈 (SQLite + 파일시스템 기반)"""
 
+import os
 from functools import lru_cache
 from typing import Literal
 
@@ -7,8 +8,6 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    """환경 변수 기반 설정 클래스"""
-
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
@@ -16,53 +15,34 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
-    # PostgreSQL 설정
-    postgres_host: str = "localhost"
-    postgres_port: int = 5432
-    postgres_db: str = "regression_platform"
-    postgres_user: str = "app"
-    postgres_password: str = "changeme"
+    # SQLite 데이터베이스
+    database_path: str = "./data/app.db"
 
     @property
     def database_url(self) -> str:
-        """비동기 DB URL"""
-        return (
-            f"postgresql+asyncpg://{self.postgres_user}:{self.postgres_password}"
-            f"@{self.postgres_host}:{self.postgres_port}/{self.postgres_db}"
-        )
+        """비동기 SQLite URL"""
+        return f"sqlite+aiosqlite:///{self.database_path}"
 
     @property
     def sync_database_url(self) -> str:
-        """동기 DB URL (Alembic용)"""
-        return (
-            f"postgresql+psycopg2://{self.postgres_user}:{self.postgres_password}"
-            f"@{self.postgres_host}:{self.postgres_port}/{self.postgres_db}"
-        )
+        """동기 SQLite URL (Alembic, 워커용)"""
+        return f"sqlite:///{self.database_path}"
 
-    # Redis 설정
-    redis_host: str = "localhost"
-    redis_port: int = 6379
-
-    @property
-    def redis_url(self) -> str:
-        """Redis URL"""
-        return f"redis://{self.redis_host}:{self.redis_port}/0"
-
-    # JWT 설정
+    # JWT
     secret_key: str = "your-secret-key-change-in-production"
     access_token_expire_minutes: int = 60
     refresh_token_expire_days: int = 7
     algorithm: str = "HS256"
 
-    # vLLM 설정
-    vllm_endpoint_small: str = "http://dusun.iptime.org:27800/v1"
-    vllm_model_small: str = "Qwen/Qwen3-14B-FP8"
+    # vLLM
+    vllm_endpoint_small: str = "http://10.36.114.31:30081/v1"
+    vllm_model_small: str = "Qwen3/Qwen3-Next-80B-A3B-Instruct-FP8"
     vllm_temperature: float = 0.1
-    vllm_max_tokens: int = 4000
+    vllm_max_tokens: int = 4096
 
-    # 아티팩트 저장소 설정
-    artifact_store_root: str = "/data/app/artifacts"
-    builtin_dataset_path: str = "/app/datasets_builtin"
+    # 아티팩트 / 데이터셋 경로
+    artifact_store_root: str = "./data/artifacts"
+    builtin_dataset_path: str = "./datasets_builtin"
 
     # 앱 설정
     app_env: Literal["development", "production", "test"] = "development"
@@ -76,20 +56,21 @@ class Settings(BaseSettings):
 
     @property
     def max_upload_bytes(self) -> int:
-        """최대 업로드 크기 (바이트)"""
         return self.max_upload_mb * 1024 * 1024
 
     @property
     def is_development(self) -> bool:
-        """개발 환경 여부"""
         return self.app_env == "development"
+
+    def ensure_dirs(self):
+        """필요한 디렉토리 생성"""
+        os.makedirs(os.path.dirname(os.path.abspath(self.database_path)), exist_ok=True)
+        os.makedirs(self.artifact_store_root, exist_ok=True)
 
 
 @lru_cache()
 def get_settings() -> Settings:
-    """설정 싱글톤 반환"""
     return Settings()
 
 
-# 전역 설정 인스턴스
 settings = get_settings()
