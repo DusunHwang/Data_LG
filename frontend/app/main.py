@@ -59,7 +59,7 @@ def _get_vllm_metrics() -> dict:
 
 @st.fragment(run_every=1)
 def _render_vllm_monitor():
-    """vLLM 서버 모니터 — KV-Cache 및 토큰 생성 속도 실시간 차트"""
+    """vLLM 서버 모니터 — KV-Cache 및 토큰 생성 속도 실시간 차트 (3열 가로 배치)"""
     if "vllm_history" not in st.session_state:
         st.session_state.vllm_history = pd.DataFrame(
             columns=["time", "gpu", "run", "wait", "gen"]
@@ -72,22 +72,29 @@ def _render_vllm_monitor():
     ).tail(120)
     hist = st.session_state.vllm_history
 
-    st.caption("⚡ GPU MEM TREND")
-    st.line_chart(hist.set_index("time")[["gpu"]], height=130, color=["#76b900"])
+    # 좌측 2/3에 그래프+지표, 우측 1/3은 deploy 바 공간
+    col_gpu, col_gen, col_metrics, _spacer = st.columns([2, 2, 2, 3])
 
-    st.caption("🚀 GEN TOKENS / SEC")
-    gen_data = hist.copy().set_index("time")[["gen"]]
-    if len(gen_data) > 1:
-        gen_data["gen"] = gen_data["gen"].diff().fillna(0).clip(lower=0)
-    else:
-        gen_data["gen"] = 0
-    st.line_chart(gen_data, height=130, color=["#00aaff"])
+    with col_gpu:
+        st.caption("⚡ GPU MEM TREND")
+        st.line_chart(hist.set_index("time")[["gpu"]], height=160, color=["#76b900"])
 
-    gpu_display = f"{current['gpu']:.1f}%"
-    c1, c2, c3 = st.columns(3)
-    c1.metric("KV-Cache", gpu_display)
-    c2.metric("실행중", int(current["run"]))
-    c3.metric("대기중", int(current["wait"]))
+    with col_gen:
+        st.caption("🚀 GEN TOKENS / SEC")
+        gen_data = hist.copy().set_index("time")[["gen"]]
+        if len(gen_data) > 1:
+            gen_data["gen"] = gen_data["gen"].diff().fillna(0).clip(lower=0)
+        else:
+            gen_data["gen"] = 0
+        st.line_chart(gen_data, height=160, color=["#00aaff"])
+
+    with col_metrics:
+        st.caption("📊 vLLM")
+        gpu_display = f"{current['gpu']:.1f}%"
+        c1, c2, c3 = st.columns(3)
+        c1.metric("KV", gpu_display)
+        c2.metric("실행", int(current["run"]))
+        c3.metric("대기", int(current["wait"]))
 
 st.set_page_config(
     page_title="회귀 분석 플랫폼",
@@ -149,11 +156,30 @@ section[data-testid="stSidebar"] .block-container {
     padding: 0.5rem 0.6rem !important;
 }
 
-/* 메인 영역 패딩 축소 */
+/* 메인 영역 — vLLM 모니터 고정 높이만큼 padding-top */
 .main .block-container {
-    padding-top: 0.5rem !important;
+    padding-top: 200px !important;
     padding-bottom: 0.5rem !important;
     max-width: 100% !important;
+}
+
+/* 상단 deploy 바를 우측 1/3로 축소 */
+header[data-testid="stHeader"] {
+    width: 33.33% !important;
+    left: auto !important;
+    right: 0 !important;
+}
+
+/* vLLM 모니터 fragment를 Streamlit 헤더 위치에 고정 */
+div[data-testid="stFragment"] {
+    position: fixed !important;
+    top: 0 !important;
+    left: 260px !important;   /* 사이드바 너비 이후 */
+    right: 33.33% !important; /* deploy 바 앞까지 */
+    z-index: 990 !important;
+    background-color: var(--background-color, #0e1117) !important;
+    padding: 2px 6px 4px 6px !important;
+    border-bottom: 1px solid rgba(250, 250, 250, 0.08) !important;
 }
 
 /* 구분선 마진 축소 */
@@ -339,10 +365,6 @@ def login_page():
 def render_sidebar():
     """사이드바 렌더링"""
     with st.sidebar:
-        # ── vLLM 모니터 (최상단) ───────────────
-        _render_vllm_monitor()
-        st.divider()
-
         # 사용자 정보 + 로그아웃
         col_user, col_logout = st.columns([3, 1])
         with col_user:
@@ -584,6 +606,10 @@ def _refresh_session_dataset(session_id: str):
 
 def _restore_session(session_id: str):
     """세션 복원: 데이터셋 + 목표변수 + 채팅 히스토리"""
+    # 세션 변경 시 선택된 스텝/아티팩트 초기화 (404 방지)
+    st.session_state.selected_step_id = None
+    st.session_state.selected_artifact_id = None
+
     # 1. 히스토리 API 한 번에 호출 (target_column + chat_history + active_dataset_id 포함)
     history_result = api_call("get", f"/sessions/{session_id}/history")
 
@@ -618,10 +644,14 @@ def _restore_session(session_id: str):
         if chat_history:
             if "chat_histories" not in st.session_state:
                 st.session_state.chat_histories = {}
-            # 기존 인메모리 히스토리가 없으면 DB에서 복원
-            existing = st.session_state.chat_histories.get(session_id, [])
+            # 기존 인메모리 히스토리가 없으면 DB에서 복원 (브랜치별로 분류)
+            existing = st.session_state.chat_histories.get(session_id, {})
             if not existing:
-                st.session_state.chat_histories[session_id] = chat_history
+                by_branch: dict = {}
+                for msg in chat_history:
+                    bid = msg.get("branch_id") or "_default"
+                    by_branch.setdefault(bid, []).append(msg)
+                st.session_state.chat_histories[session_id] = by_branch
                 # 마지막 어시스턴트 메시지의 step 자동 선택
                 for msg in reversed(chat_history):
                     if msg.get("role") == "assistant" and msg.get("step_id"):
@@ -742,6 +772,7 @@ def _render_step_tree(session_id: str | None):
                              use_container_width=True, type="primary"):
                     st.session_state.selected_branch_id = branch_id
                     st.session_state.selected_step_id = None
+                    st.session_state[f"_branch_info_{branch_id}"] = branch
                     st.rerun()
             else:
                 st.success("현재 분석 브랜치", icon="✅")
@@ -785,6 +816,9 @@ def render_main_panel():
         3. 세션을 선택하면 데이터셋을 업로드하거나 내장 데이터셋을 선택할 수 있습니다.
         """)
         return
+
+    # ── vLLM 모니터 (position:fixed — 헤더 바 위치에 고정) ──
+    _render_vllm_monitor()
 
     session_name = st.session_state.get("current_session_name", session_id)
     st.title(f"📊 {session_name}")
@@ -917,8 +951,8 @@ def _render_branch_switcher_panel(session_id: str):
                     if st.button("전환", key=f"switch_{bid}", use_container_width=True, type="primary"):
                         st.session_state.selected_branch_id = bid
                         st.session_state.selected_step_id = None
-                        # 브랜치별 branch_info 캐시 무효화
-                        st.session_state.pop(f"_branch_info_{bid}", None)
+                        # 브랜치 info 캐시 갱신
+                        st.session_state[f"_branch_info_{bid}"] = b
                         st.session_state["_show_branch_switcher"] = False
                         st.rerun()
                 else:
@@ -1280,15 +1314,17 @@ def _submit_analysis(session_id: str, message: str):
         job_id = result["data"]["job_id"]
         st.session_state.active_job_id = job_id
         st.session_state.last_job_error = None
-        # 세션별 채팅 히스토리에 추가
+        # 요청 시점에 step 선택 해제 → 이전 대화가 즉시 접힘
+        st.session_state.selected_step_id = None
+        # 브랜치별 채팅 히스토리에 추가
         if "chat_histories" not in st.session_state:
             st.session_state.chat_histories = {}
         if session_id not in st.session_state.chat_histories:
-            st.session_state.chat_histories[session_id] = []
-        st.session_state.chat_histories[session_id].append(
-            {"role": "user", "content": message, "timestamp": datetime.now().isoformat()}
+            st.session_state.chat_histories[session_id] = {}
+        bkey = branch_id or "_default"
+        st.session_state.chat_histories[session_id].setdefault(bkey, []).append(
+            {"role": "user", "content": message, "branch_id": branch_id, "timestamp": datetime.now().isoformat()}
         )
-        st.success(f"분석 요청 접수 (작업 ID: {job_id[:8]}...)")
         st.rerun()
     else:
         if result:
@@ -1300,10 +1336,25 @@ def _submit_analysis(session_id: str, message: str):
 
 def _render_chat_interface(session_id: str, dataset_id: str, target_col: str):
     """채팅 인터페이스"""
-    st.subheader("분석 채팅")
+    branch_id = st.session_state.get("selected_branch_id")
+    bkey = branch_id or "_default"
+
+    # 현재 브랜치 이름 조회
+    branch_name = "기본 브랜치"
+    if branch_id:
+        b_info = st.session_state.get(f"_branch_info_{branch_id}")
+        if b_info:
+            branch_name = b_info.get("name", branch_name)
+
+    st.subheader(f"분석 채팅  🌿 {branch_name}")
 
     histories = st.session_state.get("chat_histories", {})
-    history = histories.get(session_id, [])
+    session_hist = histories.get(session_id, {})
+    # 구 포맷(list) 호환: dict가 아니면 빈 dict로 초기화
+    if isinstance(session_hist, list):
+        session_hist = {}
+        histories[session_id] = session_hist
+    history = session_hist.get(bkey, [])
     selected_step_id = st.session_state.get("selected_step_id")
 
     # 단계 선택 시 해당 단계의 대화만 필터링
@@ -1320,26 +1371,50 @@ def _render_chat_interface(session_id: str, dataset_id: str, target_col: str):
                     st.session_state.selected_step_id = None
                     st.rerun()
 
-    for msg in display_history[-20:]:
-        role = msg.get("role", "user")
-        content = msg.get("content", "")
-        if role == "user":
-            with st.chat_message("user"):
-                st.write(content)
+    # 메시지를 (user, assistant?) turn 단위로 묶기
+    turns: list[list[dict]] = []
+    for msg in display_history[-40:]:
+        if msg.get("role") == "user":
+            turns.append([msg])
+        elif turns:
+            turns[-1].append(msg)
         else:
-            with st.chat_message("assistant"):
-                st.markdown(content)
-                # 아티팩트 인라인 표시:
-                # - 단계 선택 중: 해당 단계 메시지에만
-                # - 단계 미선택(전체 보기): 모든 어시스턴트 메시지에 표시
-                show_artifacts = (
-                    not selected_step_id  # 전체 보기
-                    or msg.get("step_id") == selected_step_id  # 선택된 단계
-                )
-                if show_artifacts:
-                    artifact_ids = msg.get("artifact_ids", [])
-                    if artifact_ids:
+            turns.append([msg])
+
+    for turn_idx, turn in enumerate(turns):
+        is_last = turn_idx == len(turns) - 1
+
+        # 사용자 메시지
+        user_msg = next((m for m in turn if m.get("role") == "user"), None)
+        asst_msgs = [m for m in turn if m.get("role") == "assistant"]
+
+        if user_msg:
+            with st.chat_message("user"):
+                st.write(user_msg.get("content", ""))
+
+        for asst_msg in asst_msgs:
+            content = asst_msg.get("content", "")
+            artifact_ids = asst_msg.get("artifact_ids", [])
+            show_artifacts = (
+                not selected_step_id
+                or asst_msg.get("step_id") == selected_step_id
+            )
+
+            if is_last:
+                # 최신 턴: 완전히 펼쳐서 표시
+                with st.chat_message("assistant"):
+                    st.markdown(content)
+                    if show_artifacts and artifact_ids:
                         _render_inline_artifacts(session_id, artifact_ids)
+            else:
+                # 이전 턴: 답변을 expander로 접기
+                with st.chat_message("assistant"):
+                    summary = content[:60].replace("\n", " ")
+                    label = f"{summary}{'...' if len(content) > 60 else ''}"
+                    with st.expander(label, expanded=False):
+                        st.markdown(content)
+                        if show_artifacts and artifact_ids:
+                            _render_inline_artifacts(session_id, artifact_ids)
 
     # 진행 중인 작업 표시 (채팅 하단에 append)
     _render_job_progress(session_id)
@@ -1430,11 +1505,11 @@ def _render_job_progress(session_id: str):
     if status in ("completed", "failed", "cancelled"):
         if status == "completed":
             st.success("✅ 분석 완료!")
-            # 세션별 채팅 히스토리에 추가
+            # 브랜치별 채팅 히스토리에 추가
             if "chat_histories" not in st.session_state:
                 st.session_state.chat_histories = {}
             if session_id not in st.session_state.chat_histories:
-                st.session_state.chat_histories[session_id] = []
+                st.session_state.chat_histories[session_id] = {}
             # result 필드에서 message, step_id, artifact_ids 추출
             result_data = job.get("result") or {}
             summary = (
@@ -1453,7 +1528,8 @@ def _render_job_progress(session_id: str):
                     branches = branches_result["data"]
                     if branches:
                         branch_id = str(branches[0]["id"])
-            st.session_state.chat_histories[session_id].append({
+            bkey = branch_id or "_default"
+            st.session_state.chat_histories[session_id].setdefault(bkey, []).append({
                 "role": "assistant",
                 "content": str(summary),
                 "step_id": step_id,
@@ -1778,8 +1854,15 @@ def _render_single_artifact(session_id: str, artifact_id: str):
                         new_branch = result["data"]
                         new_bid = str(new_branch["id"])
                         st.session_state.selected_branch_id = new_bid
+                        st.session_state.selected_step_id = None
                         # 새 브랜치 캐시 저장
                         st.session_state[f"_branch_info_{new_bid}"] = new_branch
+                        # 새 브랜치의 빈 채팅 스레드 초기화
+                        if "chat_histories" not in st.session_state:
+                            st.session_state.chat_histories = {}
+                        if session_id not in st.session_state.chat_histories:
+                            st.session_state.chat_histories[session_id] = {}
+                        st.session_state.chat_histories[session_id][new_bid] = []
                         st.success(f"새 브랜치 생성: {new_branch['name']}")
                         st.rerun()
                     else:
