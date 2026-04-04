@@ -13,6 +13,27 @@ from app.worker.job_runner import get_sync_db_connection
 logger = get_logger(__name__)
 
 
+def _to_iso(value) -> Optional[str]:
+    """datetime 또는 문자열을 ISO 형식 문자열로 반환"""
+    if value is None:
+        return None
+    if isinstance(value, str):
+        return value
+    return value.isoformat()
+
+
+def _parse_json(value, default):
+    """SQLite JSON 컬럼(문자열)을 파이썬 객체로 변환"""
+    if value is None:
+        return default
+    if isinstance(value, str):
+        try:
+            return json.loads(value)
+        except (json.JSONDecodeError, ValueError):
+            return default
+    return value
+
+
 def load_session_context(state: GraphState) -> GraphState:
     """
     세션 컨텍스트 로드 노드:
@@ -39,7 +60,7 @@ def load_session_context(state: GraphState) -> GraphState:
             SELECT id, user_id, name, description, active_dataset_id,
                    ttl_days, expires_at, created_at, updated_at
             FROM sessions
-            WHERE id = %s
+            WHERE id = ?
             """,
             (session_id,),
         )
@@ -59,9 +80,9 @@ def load_session_context(state: GraphState) -> GraphState:
             "description": row[3],
             "active_dataset_id": str(row[4]) if row[4] else None,
             "ttl_days": row[5],
-            "expires_at": row[6].isoformat() if row[6] else None,
-            "created_at": row[7].isoformat() if row[7] else None,
-            "updated_at": row[8].isoformat() if row[8] else None,
+            "expires_at": _to_iso(row[6]),
+            "created_at": _to_iso(row[7]),
+            "updated_at": _to_iso(row[8]),
         }
 
         # user_id를 state에도 설정 (없는 경우)
@@ -80,7 +101,7 @@ def load_session_context(state: GraphState) -> GraphState:
                        schema_profile, missing_profile, target_candidates,
                        created_at, updated_at
                 FROM datasets
-                WHERE id = %s
+                WHERE id = ?
                 """,
                 (session_data["active_dataset_id"],),
             )
@@ -95,11 +116,11 @@ def load_session_context(state: GraphState) -> GraphState:
                     "row_count": ds_row[5],
                     "col_count": ds_row[6],
                     "file_size_bytes": ds_row[7],
-                    "schema_profile": ds_row[8] if ds_row[8] else {},
-                    "missing_profile": ds_row[9] if ds_row[9] else {},
-                    "target_candidates": ds_row[10] if ds_row[10] else [],
-                    "created_at": ds_row[11].isoformat() if ds_row[11] else None,
-                    "updated_at": ds_row[12].isoformat() if ds_row[12] else None,
+                    "schema_profile": _parse_json(ds_row[8], {}),
+                    "missing_profile": _parse_json(ds_row[9], {}),
+                    "target_candidates": _parse_json(ds_row[10], []),
+                    "created_at": _to_iso(ds_row[11]),
+                    "updated_at": _to_iso(ds_row[12]),
                 }
                 dataset_path = ds_row[4]  # file_path가 파케이 경로
 
@@ -110,7 +131,7 @@ def load_session_context(state: GraphState) -> GraphState:
             SELECT id, name, description, is_active, config, parent_branch_id,
                    created_at, updated_at
             FROM branches
-            WHERE session_id = %s AND is_active = true
+            WHERE session_id = ? AND is_active = true
             ORDER BY created_at DESC
             LIMIT 1
             """,
@@ -123,10 +144,10 @@ def load_session_context(state: GraphState) -> GraphState:
                 "name": br_row[1],
                 "description": br_row[2],
                 "is_active": br_row[3],
-                "config": br_row[4] if br_row[4] else {},
+                "config": _parse_json(br_row[4], {}),
                 "parent_branch_id": str(br_row[5]) if br_row[5] else None,
-                "created_at": br_row[6].isoformat() if br_row[6] else None,
-                "updated_at": br_row[7].isoformat() if br_row[7] else None,
+                "created_at": _to_iso(br_row[6]),
+                "updated_at": _to_iso(br_row[7]),
             }
 
         # 4. 현재 스텝 (가장 최근 completed 스텝)
@@ -137,7 +158,7 @@ def load_session_context(state: GraphState) -> GraphState:
                 SELECT id, step_type, status, sequence_no, title,
                        input_data, output_data, created_at
                 FROM steps
-                WHERE branch_id = %s AND status = 'completed'
+                WHERE branch_id = ? AND status = 'completed'
                 ORDER BY sequence_no DESC, created_at DESC
                 LIMIT 1
                 """,
@@ -151,9 +172,9 @@ def load_session_context(state: GraphState) -> GraphState:
                     "status": st_row[2],
                     "sequence_no": st_row[3],
                     "title": st_row[4],
-                    "input_data": st_row[5] if st_row[5] else {},
-                    "output_data": st_row[6] if st_row[6] else {},
-                    "created_at": st_row[7].isoformat() if st_row[7] else None,
+                    "input_data": _parse_json(st_row[5], {}),
+                    "output_data": _parse_json(st_row[6], {}),
+                    "created_at": _to_iso(st_row[7]),
                 }
 
         # 5. 최근 스텝 10개 로드
@@ -163,7 +184,7 @@ def load_session_context(state: GraphState) -> GraphState:
                 """
                 SELECT id, step_type, status, sequence_no, title, created_at
                 FROM steps
-                WHERE branch_id = %s
+                WHERE branch_id = ?
                 ORDER BY sequence_no DESC, created_at DESC
                 LIMIT 10
                 """,
@@ -176,7 +197,7 @@ def load_session_context(state: GraphState) -> GraphState:
                     "status": row[2],
                     "sequence_no": row[3],
                     "title": row[4],
-                    "created_at": row[5].isoformat() if row[5] else None,
+                    "created_at": _to_iso(row[5]),
                 })
 
         # conversation_summary를 session_data에 포함
@@ -185,7 +206,7 @@ def load_session_context(state: GraphState) -> GraphState:
 
         # job_run에서 user_id 가져오기
         cur.execute(
-            "SELECT user_id FROM job_runs WHERE id = %s",
+            "SELECT user_id FROM job_runs WHERE id = ?",
             (job_run_id,),
         )
         job_row = cur.fetchone()
@@ -216,7 +237,8 @@ def load_session_context(state: GraphState) -> GraphState:
         }
 
     except Exception as e:
-        logger.error("세션 컨텍스트 로드 실패", error=str(e), session_id=session_id)
+        import traceback
+        logger.error("세션 컨텍스트 로드 실패", error=str(e), traceback=traceback.format_exc(), session_id=session_id)
         return {
             **state,
             "error_code": "CONTEXT_LOAD_ERROR",

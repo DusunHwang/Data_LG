@@ -4,7 +4,8 @@ import enum
 import uuid
 
 from sqlalchemy import Enum, ForeignKey, Integer, String, Text
-from sqlalchemy.dialects.postgresql import JSONB, UUID
+from sqlalchemy import JSON
+from app.db.models.base import UUIDString
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.models.base import BaseModel
@@ -34,7 +35,7 @@ class Step(BaseModel):
     __tablename__ = "steps"
 
     branch_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True),
+        UUIDString,
         ForeignKey("branches.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
@@ -52,8 +53,8 @@ class Step(BaseModel):
     title: Mapped[str | None] = mapped_column(String(512), nullable=True)
 
     # 입력/출력 데이터
-    input_data: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
-    output_data: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    input_data: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    output_data: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     # 관계

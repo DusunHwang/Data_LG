@@ -4,7 +4,8 @@ import enum
 import uuid
 
 from sqlalchemy import Enum, Float, ForeignKey, Integer, String
-from sqlalchemy.dialects.postgresql import JSONB, UUID
+from sqlalchemy import JSON
+from app.db.models.base import UUIDString
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.models.base import BaseModel
@@ -24,18 +25,18 @@ class OptimizationRun(BaseModel):
     __tablename__ = "optimization_runs"
 
     branch_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True),
+        UUIDString,
         ForeignKey("branches.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
     )
     job_run_id: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True),
+        UUIDString,
         ForeignKey("job_runs.id", ondelete="SET NULL"),
         nullable=True,
     )
     base_model_run_id: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True),
+        UUIDString,
         ForeignKey("model_runs.id", ondelete="SET NULL"),
         nullable=True,
     )
@@ -53,10 +54,10 @@ class OptimizationRun(BaseModel):
 
     # 최적 결과
     best_score: Mapped[float | None] = mapped_column(Float, nullable=True)
-    best_params: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    best_params: Mapped[dict | None] = mapped_column(JSON, nullable=True)
 
     # 전체 시도 이력
-    trials_history: Mapped[list | None] = mapped_column(JSONB, nullable=True)
+    trials_history: Mapped[list | None] = mapped_column(JSON, nullable=True)
 
     # Optuna study name
     study_name: Mapped[str | None] = mapped_column(String(256), nullable=True)

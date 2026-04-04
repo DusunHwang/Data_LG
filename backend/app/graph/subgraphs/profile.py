@@ -124,7 +124,7 @@ def run_profile_subgraph(state: GraphState) -> GraphState:
                     INSERT INTO steps (
                         id, branch_id, step_type, status, sequence_no, title,
                         input_data, output_data, created_at, updated_at
-                    ) VALUES (%s, %s, 'analysis', 'completed', 0, %s, %s, %s, %s, %s)
+                    ) VALUES (?, ?, 'analysis', 'completed', 0, ?, ?, ?, ?, ?)
                     """,
                     (
                         step_id,
@@ -210,13 +210,13 @@ def run_profile_subgraph(state: GraphState) -> GraphState:
                 cur.execute(
                     """
                     UPDATE datasets
-                    SET schema_profile = %s,
-                        missing_profile = %s,
-                        target_candidates = %s,
-                        row_count = %s,
-                        col_count = %s,
-                        updated_at = %s
-                    WHERE id = %s
+                    SET schema_profile = ?,
+                        missing_profile = ?,
+                        target_candidates = ?,
+                        row_count = ?,
+                        col_count = ?,
+                        updated_at = ?
+                    WHERE id = ?
                     """,
                     (
                         json.dumps(_sanitize_json({"columns": schema_profile})),

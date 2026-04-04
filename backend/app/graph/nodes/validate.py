@@ -59,9 +59,9 @@ def validate_preconditions(state: GraphState) -> GraphState:
         cur.execute(
             """
             SELECT id, status FROM job_runs
-            WHERE session_id = %s
+            WHERE session_id = ?
               AND status = 'running'
-              AND id != %s
+              AND id != ?
             LIMIT 1
             """,
             (session_id, job_run_id),
@@ -144,7 +144,7 @@ def _update_branch_config(conn, branch_id: str, config: dict) -> None:
         return
     cur = conn.cursor()
     cur.execute(
-        "UPDATE branches SET config = %s, updated_at = %s WHERE id = %s",
+        "UPDATE branches SET config = ?, updated_at = ? WHERE id = ?",
         (json.dumps(config), datetime.now(timezone.utc), branch_id),
     )
     conn.commit()

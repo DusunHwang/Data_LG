@@ -47,7 +47,7 @@ def persist_outputs(state: GraphState) -> GraphState:
         if created_step_id and job_run_id:
             try:
                 cur.execute(
-                    "UPDATE job_runs SET step_id = %s, updated_at = %s WHERE id = %s",
+                    "UPDATE job_runs SET step_id = ?, updated_at = ? WHERE id = ?",
                     (created_step_id, now, job_run_id),
                 )
                 conn.commit()
@@ -68,7 +68,7 @@ def persist_outputs(state: GraphState) -> GraphState:
                 INSERT INTO steps (
                     id, branch_id, step_type, status, sequence_no, title,
                     input_data, output_data, created_at, updated_at
-                ) VALUES (%s, %s, 'analysis', 'completed', 0, %s, %s, %s, %s, %s)
+                ) VALUES (?, ?, 'analysis', 'completed', 0, ?, ?, ?, ?, ?)
                 """,
                 (
                     step_id,
