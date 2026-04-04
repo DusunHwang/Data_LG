@@ -76,25 +76,26 @@ def _render_vllm_monitor():
     col_gpu, col_gen, col_metrics, _spacer = st.columns([2, 2, 2, 3])
 
     with col_gpu:
-        st.caption("⚡ GPU MEM TREND")
-        st.line_chart(hist.set_index("time")[["gpu"]], height=160, color=["#76b900"])
+        st.caption("⚡ GPU MEM")
+        st.line_chart(hist.set_index("time")[["gpu"]], height=110, color=["#76b900"])
 
     with col_gen:
-        st.caption("🚀 GEN TOKENS / SEC")
+        st.caption("🚀 GEN/SEC")
         gen_data = hist.copy().set_index("time")[["gen"]]
         if len(gen_data) > 1:
             gen_data["gen"] = gen_data["gen"].diff().fillna(0).clip(lower=0)
         else:
             gen_data["gen"] = 0
-        st.line_chart(gen_data, height=160, color=["#00aaff"])
+        st.line_chart(gen_data, height=110, color=["#00aaff"])
 
     with col_metrics:
-        st.caption("📊 vLLM")
-        gpu_display = f"{current['gpu']:.1f}%"
-        c1, c2, c3 = st.columns(3)
-        c1.metric("KV", gpu_display)
-        c2.metric("실행", int(current["run"]))
-        c3.metric("대기", int(current["wait"]))
+        st.caption("📊 vLLM 상태")
+        st.markdown(
+            f"KV-Cache &nbsp;**{current['gpu']:.1f}%**  \n"
+            f"실행중 &nbsp;&nbsp;&nbsp;&nbsp;**{int(current['run'])}**  \n"
+            f"대기중 &nbsp;&nbsp;&nbsp;&nbsp;**{int(current['wait'])}**",
+            unsafe_allow_html=True,
+        )
 
 st.set_page_config(
     page_title="회귀 분석 플랫폼",
@@ -109,7 +110,7 @@ st.set_page_config(
 st.markdown("""
 <style>
 /* 전체 폰트 80% */
-html, body, [class*="css"] {
+html, body {
     font-size: 12.8px !important;
 }
 
@@ -158,7 +159,7 @@ section[data-testid="stSidebar"] .block-container {
 
 /* 메인 영역 — vLLM 모니터 고정 높이만큼 padding-top */
 .main .block-container {
-    padding-top: 200px !important;
+    padding-top: 155px !important;
     padding-bottom: 0.5rem !important;
     max-width: 100% !important;
 }
@@ -376,7 +377,7 @@ def render_sidebar():
         st.divider()
 
         # ── 세션 관리 ──────────────────────────
-        st.markdown("### 📁 세션 관리")
+        st.caption("📁 **세션 관리**")
         if st.button("+ 새 세션 만들기", use_container_width=True, key="new_session_btn"):
             st.session_state.show_create_session = True
 
@@ -451,7 +452,7 @@ def render_sidebar():
 
         # ── 데이터셋 ──────────────────────────
         session_id = st.session_state.get("current_session_id")
-        st.markdown("### 📂 데이터셋")
+        st.caption("📂 **데이터셋**")
 
         if not session_id:
             st.caption("세션을 선택하세요.")
@@ -499,13 +500,13 @@ def render_sidebar():
         st.divider()
 
         # ── 분석 단계 트리 ──────────────────────
-        st.markdown("### 📊 분석 단계")
+        st.caption("📊 **분석 단계**")
         _render_step_tree(session_id)
 
 
 def _render_sidebar_target_selector(session_id: str | None, dataset_id: str | None):
     """사이드바 타겟 컬럼 선택기 — 항상 표시, 언제든 변경 가능"""
-    st.markdown("### 🎯 타겟 컬럼")
+    st.caption("🎯 **타겟 컬럼**")
 
     current_target = st.session_state.get("target_column")
 
@@ -597,11 +598,6 @@ def _render_create_session_form():
                     st.rerun()
                 else:
                     st.error("세션 생성에 실패했습니다.")
-
-
-def _refresh_session_dataset(session_id: str):
-    """세션의 활성 데이터셋 정보 갱신 (하위 호환 유지)"""
-    _restore_session(session_id)
 
 
 def _restore_session(session_id: str):
@@ -821,7 +817,7 @@ def render_main_panel():
     _render_vllm_monitor()
 
     session_name = st.session_state.get("current_session_name", session_id)
-    st.title(f"📊 {session_name}")
+    st.markdown(f"### 📊 {session_name}")
 
     if not dataset_id:
         st.warning("📂 데이터셋을 선택하거나 업로드해주세요.")
@@ -852,7 +848,7 @@ def render_main_panel():
     st.divider()
 
     # 채팅 인터페이스 + 진행 상황
-    col_chat, col_artifact = st.columns([2, 1])
+    col_chat, col_artifact = st.columns([3, 1])
 
     with col_chat:
         _render_chat_interface(session_id, dataset_id, target_col)
@@ -896,19 +892,18 @@ def _render_context_bar(session_id: str):
 
     target_label = f"🎯 {target_col}" if target_col else "🎯 타겟 미설정"
 
-    # 컨텍스트 바 렌더링
-    with st.container(border=True):
-        cols = st.columns([3, 3, 2, 1])
-        with cols[0]:
-            st.markdown(f"**🌿 {branch_label}**")
-        with cols[1]:
-            st.markdown(dataset_label)
-        with cols[2]:
-            st.markdown(f"**{target_label}**")
-        with cols[3]:
-            if st.button("브랜치 전환", key="ctx_switch_branch", use_container_width=True):
-                st.session_state["_show_branch_switcher"] = not st.session_state.get("_show_branch_switcher", False)
-                st.rerun()
+    # 컨텍스트 바 렌더링 (border 없이 인라인)
+    cols = st.columns([3, 3, 2, 1])
+    with cols[0]:
+        st.caption(f"🌿 **{branch_label}**")
+    with cols[1]:
+        st.caption(dataset_label)
+    with cols[2]:
+        st.caption(f"**{target_label}**")
+    with cols[3]:
+        if st.button("브랜치 전환", key="ctx_switch_branch", use_container_width=True):
+            st.session_state["_show_branch_switcher"] = not st.session_state.get("_show_branch_switcher", False)
+            st.rerun()
 
     # 브랜치 전환 패널 (토글)
     if st.session_state.get("_show_branch_switcher"):
@@ -926,7 +921,7 @@ def _render_branch_switcher_panel(session_id: str):
     active_branch_id = st.session_state.get("selected_branch_id")
 
     with st.container(border=True):
-        st.markdown("#### 브랜치 전환")
+        st.caption("**브랜치 전환**")
         for b in branches:
             bid = str(b["id"])
             bname = b.get("name", "브랜치")
@@ -963,56 +958,6 @@ def _render_branch_switcher_panel(session_id: str):
             st.rerun()
 
 
-def _render_target_selection(session_id: str, dataset_id: str):
-    """타겟 컬럼 선택"""
-    st.subheader("분석 목표 변수(Target) 선택")
-    st.caption("회귀 분석할 목표 변수를 선택하거나 직접 입력하세요.")
-
-    # 타겟 후보 조회
-    with st.spinner("타겟 후보 분석 중..."):
-        result = api_call(
-            "get",
-            f"/sessions/{session_id}/datasets/{dataset_id}/target-candidates",
-        )
-
-    candidates = []
-    if result and result.get("success"):
-        candidates = result["data"].get("candidates", [])
-
-    tab1, tab2 = st.tabs(["추천 후보", "직접 입력"])
-
-    with tab1:
-        if candidates:
-            st.markdown("**분석 결과 추천 타겟 후보:**")
-            for cand in candidates[:8]:
-                col_name = cand.get("column", cand.get("name", ""))
-                score = cand.get("score", 0.0)
-                reason = cand.get("reason", "")
-                label = f"**{col_name}** (점수: {score:.3f})"
-                if st.button(label, key=f"target_{col_name}", use_container_width=True):
-                    st.session_state.target_column = col_name
-                    st.session_state.target_dataset_id = dataset_id
-                    st.success(f"타겟 선택: {col_name}")
-                    st.rerun()
-                if reason:
-                    st.caption(f"  {reason}")
-        else:
-            st.caption("타겟 후보를 분석할 수 없습니다.")
-
-    with tab2:
-        custom_target = st.text_input(
-            "타겟 컬럼명 직접 입력", placeholder="예: quality_score"
-        )
-        if st.button("타겟 설정", key="set_custom_target"):
-            if custom_target.strip():
-                st.session_state.target_column = custom_target.strip()
-                st.session_state.target_dataset_id = dataset_id
-                st.success(f"타겟 설정: {custom_target.strip()}")
-                st.rerun()
-            else:
-                st.error("타겟 컬럼명을 입력하세요.")
-
-
 def _render_quick_actions(session_id: str, dataset_id: str):
     """빠른 액션 버튼"""
     cols = st.columns(5)
@@ -1038,7 +983,7 @@ def _render_quick_actions(session_id: str, dataset_id: str):
 
 def _render_optimization_form(session_id: str):
     """역최적화 위저드 (3단계)"""
-    st.subheader("🔍 역최적화 설정")
+    st.markdown("#### 🔍 역최적화 설정")
     st.caption("학습된 모델이 예측하는 값을 최대화/최소화하는 최적 피처 조합을 탐색합니다.")
 
     # 닫기 버튼
@@ -1070,7 +1015,7 @@ def _render_optimization_form(session_id: str):
     st.divider()
 
     # ── 단계 1: Null Importance 분석 ──────────────────────
-    st.markdown("### 단계 1 · 피처 유의성 분석 (Null Importance)")
+    st.markdown("#### 단계 1 · 피처 유의성 분석 (Null Importance)")
 
     ni_job_id = st.session_state.get("ni_job_id")
     ni_result = st.session_state.get("ni_result")
@@ -1130,7 +1075,7 @@ def _render_optimization_form(session_id: str):
             "Null p90": f"{p90:.4f}",
             "유의": significant,
         })
-    st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True, height=220)
+    st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
     st.caption(f"추천 피처 수: **{recommended_n}개** (Null p90 초과 기준)")
 
     col_reset, _ = st.columns([1, 3])
@@ -1143,7 +1088,7 @@ def _render_optimization_form(session_id: str):
     st.divider()
 
     # ── 단계 2: 피처 선택 및 설정 ─────────────────────────
-    st.markdown("### 단계 2 · 최적화 피처 선택 및 제약 설정")
+    st.markdown("#### 단계 2 · 최적화 피처 선택 및 제약 설정")
 
     n_feat = st.slider(
         "최적화 피처 수 (상위 N개 선택)",
@@ -1172,11 +1117,7 @@ def _render_optimization_form(session_id: str):
                 fixed_values[feat] = fixed_val
             else:
                 if lo is not None:
-                    expand = st.slider(
-                        "탐색 공간 확장 비율 (%)", 0, 50, 12,
-                        key=f"opt_expand_{feat}"
-                    )
-                    custom_ranges[feat] = [lo, hi]  # expand는 서버에서 처리
+                    custom_ranges[feat] = [lo, hi]
 
     expand_ratio = st.slider(
         "전체 탐색 공간 확장 비율 (%)", 0, 50, 12,
@@ -1186,7 +1127,7 @@ def _render_optimization_form(session_id: str):
     st.divider()
 
     # ── 단계 3: 방향 및 실행 ──────────────────────────────
-    st.markdown("### 단계 3 · 최적화 방향 및 실행")
+    st.markdown("#### 단계 3 · 최적화 방향 및 실행")
 
     target_col = st.session_state.get("target_column", "target")
     direction = st.radio(
@@ -1275,18 +1216,28 @@ def _clear_opt_state():
         st.session_state.pop(key, None)
 
 
+def _ensure_chat_history(session_id: str) -> None:
+    """채팅 히스토리 딕셔너리 초기화 보장"""
+    if "chat_histories" not in st.session_state:
+        st.session_state.chat_histories = {}
+    if session_id not in st.session_state.chat_histories:
+        st.session_state.chat_histories[session_id] = {}
+
+
+def _get_active_branch_id(session_id: str) -> str | None:
+    """현재 선택된 브랜치 ID 반환. 없으면 첫 번째 브랜치 ID 반환"""
+    branch_id = st.session_state.get("selected_branch_id")
+    if not branch_id:
+        r = api_call("get", f"/sessions/{session_id}/branches")
+        if r and r.get("success") and r["data"]:
+            branch_id = str(r["data"][0]["id"])
+    return branch_id
+
+
 def _submit_analysis(session_id: str, message: str):
     """분석 요청 제출"""
     target_col = st.session_state.get("target_column")
-    branch_id = st.session_state.get("selected_branch_id")
-
-    if not branch_id:
-        # 기본 브랜치 가져오기
-        branches_result = api_call("get", f"/sessions/{session_id}/branches")
-        if branches_result and branches_result.get("success"):
-            branches = branches_result["data"]
-            if branches:
-                branch_id = str(branches[0]["id"])
+    branch_id = _get_active_branch_id(session_id)
 
     if not branch_id:
         st.error("브랜치를 찾을 수 없습니다. 세션에 브랜치가 있는지 확인하세요.")
@@ -1316,11 +1267,7 @@ def _submit_analysis(session_id: str, message: str):
         st.session_state.last_job_error = None
         # 요청 시점에 step 선택 해제 → 이전 대화가 즉시 접힘
         st.session_state.selected_step_id = None
-        # 브랜치별 채팅 히스토리에 추가
-        if "chat_histories" not in st.session_state:
-            st.session_state.chat_histories = {}
-        if session_id not in st.session_state.chat_histories:
-            st.session_state.chat_histories[session_id] = {}
+        _ensure_chat_history(session_id)
         bkey = branch_id or "_default"
         st.session_state.chat_histories[session_id].setdefault(bkey, []).append(
             {"role": "user", "content": message, "branch_id": branch_id, "timestamp": datetime.now().isoformat()}
@@ -1346,7 +1293,7 @@ def _render_chat_interface(session_id: str, dataset_id: str, target_col: str):
         if b_info:
             branch_name = b_info.get("name", branch_name)
 
-    st.subheader(f"분석 채팅  🌿 {branch_name}")
+    st.markdown(f"#### 분석 채팅  🌿 {branch_name}")
 
     histories = st.session_state.get("chat_histories", {})
     session_hist = histories.get(session_id, {})
@@ -1505,12 +1452,7 @@ def _render_job_progress(session_id: str):
     if status in ("completed", "failed", "cancelled"):
         if status == "completed":
             st.success("✅ 분석 완료!")
-            # 브랜치별 채팅 히스토리에 추가
-            if "chat_histories" not in st.session_state:
-                st.session_state.chat_histories = {}
-            if session_id not in st.session_state.chat_histories:
-                st.session_state.chat_histories[session_id] = {}
-            # result 필드에서 message, step_id, artifact_ids 추출
+            _ensure_chat_history(session_id)
             result_data = job.get("result") or {}
             summary = (
                 result_data.get("message")
@@ -1520,14 +1462,7 @@ def _render_job_progress(session_id: str):
             )
             step_id = result_data.get("step_id")
             artifact_ids = result_data.get("artifact_ids", [])
-            # 브랜치 ID: 현재 선택된 브랜치 사용
-            branch_id = st.session_state.get("selected_branch_id")
-            if not branch_id:
-                branches_result = api_call("get", f"/sessions/{session_id}/branches")
-                if branches_result and branches_result.get("success"):
-                    branches = branches_result["data"]
-                    if branches:
-                        branch_id = str(branches[0]["id"])
+            branch_id = _get_active_branch_id(session_id)
             bkey = branch_id or "_default"
             st.session_state.chat_histories[session_id].setdefault(bkey, []).append({
                 "role": "assistant",
@@ -1560,7 +1495,7 @@ def _render_job_progress(session_id: str):
 
 def _render_artifact_panel(session_id: str):
     """아티팩트 미리보기 패널"""
-    st.subheader("아티팩트")
+    st.markdown("#### 아티팩트")
 
     step_id = st.session_state.get("selected_step_id")
     branch_id = st.session_state.get("selected_branch_id")
@@ -1603,25 +1538,6 @@ def _render_artifact_panel(session_id: str):
         _render_single_artifact(session_id, str(art_id))
 
 
-def _compact_json(data, max_items: int = 8) -> str:
-    """JSON 데이터를 읽기 쉬운 한 줄 요약으로 축약"""
-    if isinstance(data, dict):
-        items = list(data.items())[:max_items]
-        parts = []
-        for k, v in items:
-            if isinstance(v, float):
-                parts.append(f"{k}: {v:.4f}")
-            elif isinstance(v, (list, dict)):
-                parts.append(f"{k}: [{len(v)} items]" if isinstance(v, list) else f"{k}: {{...}}")
-            else:
-                parts.append(f"{k}: {str(v)[:30]}")
-        suffix = f" ... (+{len(data)-max_items})" if len(data) > max_items else ""
-        return "  |  ".join(parts) + suffix
-    elif isinstance(data, list):
-        return f"[{len(data)} items]: " + ", ".join(str(x)[:20] for x in data[:3]) + ("..." if len(data) > 3 else "")
-    return str(data)[:100]
-
-
 def _render_compact_data(label: str, preview: dict, icon: str = "📊", max_rows: int = 5):
     """JSON/dict 데이터를 테이블 또는 축약 형태로 렌더링"""
     # 숫자형 key-value 지표는 테이블로 표시
@@ -1639,7 +1555,7 @@ def _render_compact_data(label: str, preview: dict, icon: str = "📊", max_rows
             {"항목": k, "값": f"{v:.4f}" if isinstance(v, float) else str(v)}
             for k, v in list(numeric_kv.items())[:12]
         ])
-        st.dataframe(metric_df, use_container_width=True, height=min(35 * len(metric_df) + 38, 200), hide_index=True)
+        st.dataframe(metric_df, use_container_width=True, hide_index=True)
 
     # 리스트 항목: 축약해서 expander에
     if list_kv:
@@ -1647,7 +1563,7 @@ def _render_compact_data(label: str, preview: dict, icon: str = "📊", max_rows
             if v and isinstance(v[0], dict):
                 with st.expander(f"{k} ({len(v)}개)", expanded=False):
                     sub_df = pd.DataFrame(v[:max_rows])
-                    st.dataframe(sub_df, use_container_width=True, height=min(35 * len(sub_df) + 38, 180), hide_index=True)
+                    st.dataframe(sub_df, use_container_width=True, hide_index=True)
             else:
                 st.caption(f"{k}: {', '.join(str(x)[:15] for x in v[:5])}{'...' if len(v)>5 else ''}")
 
@@ -1702,7 +1618,7 @@ def _render_inline_artifacts(session_id: str, artifact_ids: list):
                     st.caption(f"📋 {art_name}")
                     try:
                         df_inline = pd.DataFrame(rows, columns=columns)
-                        row_h = min(38 * (len(df_inline) + 1) + 10, 800)
+                        row_h = min(38 * (len(df_inline) + 1) + 10, 270)
                         st.dataframe(df_inline, use_container_width=True, height=row_h, hide_index=True)
                     except Exception:
                         _render_compact_data(art_name, preview, "📋")
@@ -1757,7 +1673,7 @@ def _render_single_artifact(session_id: str, artifact_id: str):
                 if columns and rows:
                     try:
                         df = pd.DataFrame(rows, columns=columns)
-                        row_h = min(38 * (len(df) + 1) + 10, 800)
+                        row_h = min(38 * (len(df) + 1) + 10, 270)
                         st.dataframe(df, use_container_width=True, height=row_h, hide_index=True)
                     except Exception:
                         _render_compact_data(art_name, preview)
@@ -1813,7 +1729,7 @@ def _render_single_artifact(session_id: str, artifact_id: str):
                         {"순위": i, "피처": f.get("feature",""), "중요도": f"{f.get('importance',0):.4f}"}
                         for i, f in enumerate(features[:10], 1)
                     ]
-                    st.dataframe(pd.DataFrame(rows_data), use_container_width=True, height=180, hide_index=True)
+                    st.dataframe(pd.DataFrame(rows_data), use_container_width=True, hide_index=True)
                 else:
                     _render_compact_data(art_name, preview)
         else:
