@@ -1,0 +1,53 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  * {
+    box-sizing: border-box;
+  }
+
+  html {
+    font-family: 'Inter', ui-sans-serif, system-ui, sans-serif;
+  }
+
+  body {
+    @apply bg-gray-50 text-gray-900 antialiased;
+    margin: 0;
+    padding: 0;
+  }
+}
+
+@layer components {
+  .scrollbar-thin {
+    scrollbar-width: thin;
+    scrollbar-color: #d1d5db transparent;
+  }
+
+  .scrollbar-thin::-webkit-scrollbar {
+    width: 4px;
+  }
+
+  .scrollbar-thin::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  .scrollbar-thin::-webkit-scrollbar-thumb {
+    background-color: #d1d5db;
+    border-radius: 2px;
+  }
+
+  .chat-bubble-user {
+    @apply bg-brand-navy text-white rounded-2xl rounded-tr-sm px-4 py-3 max-w-[85%] ml-auto;
+  }
+
+  .chat-bubble-assistant {
+    @apply bg-white text-gray-800 rounded-2xl rounded-tl-sm px-4 py-3 max-w-[95%] border border-gray-100 shadow-sm;
+  }
+}
+
+@layer utilities {
+  .text-brand-gradient {
+    @apply bg-gradient-to-r from-brand-red to-red-400 bg-clip-text text-transparent;
+  }
+}
