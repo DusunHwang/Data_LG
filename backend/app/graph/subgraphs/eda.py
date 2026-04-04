@@ -338,14 +338,10 @@ def _run_basic_eda(df: pd.DataFrame, dataset_path: str) -> dict:
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
-    import matplotlib.font_manager as fm
     import tempfile
 
-    # 한글 폰트 설정
-    _nanum = [f for f in fm.findSystemFonts() if 'Nanum' in f or 'nanum' in f]
-    if _nanum:
-        matplotlib.rcParams['font.family'] = fm.FontProperties(fname=_nanum[0]).get_name()
-    matplotlib.rcParams['axes.unicode_minus'] = False
+    from app.graph.helpers import setup_korean_font
+    setup_korean_font()
 
     tmp_dir = tempfile.mkdtemp(prefix="eda_basic_")
     output_files = {}

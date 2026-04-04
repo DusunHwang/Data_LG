@@ -145,6 +145,9 @@ def run_pandasai(
         import matplotlib
         matplotlib.use("Agg")
 
+        from app.graph.helpers import setup_korean_font
+        setup_korean_font()
+
         config = {
             "llm": llm,
             "save_charts": True,
