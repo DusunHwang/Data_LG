@@ -4,7 +4,8 @@ import enum
 import uuid
 
 from sqlalchemy import Enum, Float, ForeignKey, Integer, String
-from sqlalchemy.dialects.postgresql import JSONB, UUID
+from sqlalchemy import JSON
+from app.db.models.base import UUIDString
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.models.base import BaseModel
@@ -23,13 +24,13 @@ class ModelRun(BaseModel):
     __tablename__ = "model_runs"
 
     branch_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True),
+        UUIDString,
         ForeignKey("branches.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
     )
     job_run_id: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True),
+        UUIDString,
         ForeignKey("job_runs.id", ondelete="SET NULL"),
         nullable=True,
     )
@@ -58,15 +59,15 @@ class ModelRun(BaseModel):
     target_column: Mapped[str | None] = mapped_column(String(256), nullable=True)
 
     # 하이퍼파라미터 및 피처 중요도
-    hyperparams: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
-    feature_importances: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    hyperparams: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    feature_importances: Mapped[dict | None] = mapped_column(JSON, nullable=True)
 
     # 챔피언 여부
     is_champion: Mapped[bool] = mapped_column(default=False, nullable=False)
 
     # 모델 파일 경로
     model_artifact_id: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True),
+        UUIDString,
         ForeignKey("artifacts.id", ondelete="SET NULL"),
         nullable=True,
     )

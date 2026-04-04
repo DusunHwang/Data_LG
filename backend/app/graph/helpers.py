@@ -1,5 +1,6 @@
 """그래프 헬퍼 함수들 - DB/파일 접근, 진행률 업데이트"""
 
+import glob
 import json
 from datetime import datetime, timezone
 from typing import Any, Optional
@@ -14,6 +15,112 @@ from app.graph.state import GraphState
 from app.worker.progress import set_progress
 
 logger = get_logger(__name__)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# matplotlib 한글 폰트 설정 (공통 유틸)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def setup_korean_font() -> None:
+    """
+    matplotlib 한글 폰트를 설정한다.
+
+    탐색 우선순위:
+      1. fm.findSystemFonts() — matplotlib 등록 폰트
+      2. 알려진 시스템 경로 직접 glob — 캐시 미갱신 환경 대응
+      3. addfont()로 직접 등록 후 적용
+    NanumGothic → 기타 Nanum 계열 → CJK 계열 순으로 우선 선택.
+    """
+    try:
+        import matplotlib
+        import matplotlib.font_manager as fm
+
+        # ── 후보 파일 수집 ─────────────────────────────────────────────────
+        registered = fm.findSystemFonts(fontext='ttf')
+        direct: list[str] = []
+        for pattern in [
+            '/usr/share/fonts/**/*.ttf',
+            '/usr/share/fonts/**/*.TTF',
+            '/usr/local/share/fonts/**/*.ttf',
+            '/usr/local/share/fonts/**/*.TTF',
+            '/home/*/.fonts/**/*.ttf',
+            '/root/.fonts/**/*.ttf',
+        ]:
+            direct.extend(glob.glob(pattern, recursive=True))
+
+        all_fonts = registered + direct
+
+        # ── 우선순위: NanumGothic > 기타 Nanum > CJK ─────────────────────
+        def _pick(candidates: list[str]) -> str | None:
+            gothic  = [f for f in candidates if 'NanumGothic' in f]
+            nanum   = [f for f in candidates if 'Nanum' in f or 'nanum' in f]
+            cjk     = [f for f in candidates if 'CJK' in f or 'cjk' in f]
+            return (gothic or nanum or cjk or [None])[0]
+
+        font_path = _pick(all_fonts)
+
+        # ── 캐시 재구성 후 재시도 ──────────────────────────────────────────
+        if font_path is None:
+            try:
+                fm._load_fontmanager(try_read_cache=False)
+            except Exception:
+                pass
+            font_path = _pick(fm.findSystemFonts(fontext='ttf'))
+
+        # ── 폰트 등록 및 rcParams 적용 ────────────────────────────────────
+        if font_path:
+            try:
+                fm.fontManager.addfont(font_path)
+            except Exception:
+                pass
+            font_name = fm.FontProperties(fname=font_path).get_name()
+            matplotlib.rcParams['font.family'] = font_name
+            logger.debug("한글 폰트 적용", font=font_name, path=font_path)
+        else:
+            logger.warning("한글 폰트를 찾지 못했습니다 — 한글이 깨질 수 있습니다.")
+
+        matplotlib.rcParams['axes.unicode_minus'] = False
+
+    except Exception as e:
+        logger.warning("setup_korean_font 실패", error=str(e))
+
+
+# 샌드박스 서브프로세스 전용: 인라인 실행 가능한 코드 문자열
+KOREAN_FONT_PREAMBLE = r"""
+# ── 한글 폰트 설정 ────────────────────────────────────────────
+import glob as _glob
+import matplotlib as _mpl
+import matplotlib.font_manager as _fm
+
+_candidates = _fm.findSystemFonts(fontext='ttf')
+for _pat in ['/usr/share/fonts/**/*.ttf', '/usr/share/fonts/**/*.TTF',
+             '/usr/local/share/fonts/**/*.ttf', '/root/.fonts/**/*.ttf']:
+    _candidates.extend(_glob.glob(_pat, recursive=True))
+
+def _pick_font(lst):
+    g = [f for f in lst if 'NanumGothic' in f]
+    n = [f for f in lst if 'Nanum' in f or 'nanum' in f]
+    c = [f for f in lst if 'CJK' in f or 'cjk' in f]
+    return (g or n or c or [None])[0]
+
+_font_path = _pick_font(_candidates)
+if _font_path is None:
+    try:
+        _fm._load_fontmanager(try_read_cache=False)
+        _font_path = _pick_font(_fm.findSystemFonts(fontext='ttf'))
+    except Exception:
+        pass
+
+if _font_path:
+    try:
+        _fm.fontManager.addfont(_font_path)
+    except Exception:
+        pass
+    _mpl.rcParams['font.family'] = _fm.FontProperties(fname=_font_path).get_name()
+_mpl.rcParams['axes.unicode_minus'] = False
+del _glob, _candidates, _pick_font, _font_path
+# ─────────────────────────────────────────────────────────────
+"""
 
 # 동기 SQLAlchemy 엔진 (워커에서 사용)
 _sync_engine = None
@@ -66,8 +173,8 @@ def update_progress(
                 cur.execute(
                     """
                     UPDATE job_runs
-                    SET progress = %s, progress_message = %s, updated_at = %s
-                    WHERE id = %s
+                    SET progress = ?, progress_message = ?, updated_at = ?
+                    WHERE id = ?
                     """,
                     (percent, message, datetime.now(timezone.utc), job_run_id),
                 )
@@ -185,7 +292,7 @@ def save_artifact_to_db(
         INSERT INTO artifacts (
             id, step_id, dataset_id, artifact_type, name, file_path,
             mime_type, file_size_bytes, preview_json, meta, created_at, updated_at
-        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             artifact_id,
@@ -226,7 +333,7 @@ def create_step_in_db(
         INSERT INTO steps (
             id, branch_id, step_type, status, sequence_no, title,
             input_data, output_data, created_at, updated_at
-        ) VALUES (%s, %s, %s, 'completed', %s, %s, %s, %s, %s, %s)
+        ) VALUES (?, ?, ?, 'completed', ?, ?, ?, ?, ?, ?)
         """,
         (
             step_id,

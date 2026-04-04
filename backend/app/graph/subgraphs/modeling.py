@@ -356,7 +356,7 @@ def _load_available_subsets(
                 SELECT a.file_path, a.meta
                 FROM artifacts a
                 JOIN steps s ON a.step_id = s.id
-                WHERE s.branch_id = %s
+                WHERE s.branch_id = ?
                   AND a.meta->>'type' LIKE 'subset_%%_df'
                   AND a.file_path IS NOT NULL
                 ORDER BY s.created_at DESC, a.name ASC
@@ -419,7 +419,7 @@ def _save_modeling_artifacts(
                 INSERT INTO steps (
                     id, branch_id, step_type, status, sequence_no, title,
                     input_data, output_data, created_at, updated_at
-                ) VALUES (%s, %s, 'modeling', 'completed', 0, %s, %s, %s, %s, %s)
+                ) VALUES (?, ?, 'modeling', 'completed', 0, ?, ?, ?, ?, ?)
                 """,
                 (
                     step_id,
@@ -539,10 +539,10 @@ def _save_modeling_artifacts(
                         target_column, hyperparams, feature_importances, is_champion,
                         model_artifact_id, created_at, updated_at
                     ) VALUES (
-                        %s, %s, %s, %s, 'lightgbm', 'completed',
-                        %s, %s, %s, %s, %s, %s,
-                        %s, %s, %s, %s,
-                        %s, %s, %s
+                        ?, ?, ?, ?, 'lightgbm', 'completed',
+                        ?, ?, ?, ?, ?, ?,
+                        ?, ?, ?, ?,
+                        ?, ?, ?
                     )
                     """,
                     (

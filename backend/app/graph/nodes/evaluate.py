@@ -58,7 +58,7 @@ def _load_artifact_metadata(artifact_ids: list) -> list:
         conn = get_sync_db_connection()
         try:
             cur = conn.cursor()
-            placeholders = ",".join(["%s"] * len(artifact_ids))
+            placeholders = ",".join(["?"] * len(artifact_ids))
             cur.execute(
                 f"SELECT id, artifact_type, name, meta FROM artifacts WHERE id IN ({placeholders})",
                 artifact_ids,

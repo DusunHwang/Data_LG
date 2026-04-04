@@ -49,34 +49,33 @@ def execute_code_in_sandbox(
         script_path = os.path.join(tmp_dir, "analysis.py")
 
         # 표준 임포트 추가 (matplotlib 백엔드 + 한글 폰트 설정 포함)
+        from app.graph.helpers import KOREAN_FONT_PREAMBLE
         preamble = textwrap.dedent("""
             import os
             import sys
             import warnings
             warnings.filterwarnings('ignore')
 
+            import pandas as pd
+            import numpy as np
+
             # matplotlib 비대화형 백엔드 설정
             import matplotlib
             matplotlib.use('Agg')
             import matplotlib.pyplot as plt
-            import matplotlib.font_manager as fm
-
-            # 한글 폰트 설정 (NanumGothic)
-            _nanum_fonts = [f for f in fm.findSystemFonts() if 'Nanum' in f or 'nanum' in f]
-            if _nanum_fonts:
-                _font_prop = fm.FontProperties(fname=_nanum_fonts[0])
-                matplotlib.rcParams['font.family'] = _font_prop.get_name()
-            else:
-                matplotlib.rcParams['font.family'] = 'DejaVu Sans'
-            matplotlib.rcParams['axes.unicode_minus'] = False
-
+            """) + KOREAN_FONT_PREAMBLE + textwrap.dedent("""
             # 작업 디렉터리를 스크립트 위치로 설정
             os.chdir(os.path.dirname(os.path.abspath(__file__)))
 
-        """)
+            # 데이터 로드 (pd.read_parquet('data.parquet')) 자동 정의
+            if os.path.exists('data.parquet'):
+                try:
+                    df = pd.read_parquet('data.parquet')
+                except Exception:
+                    pass
+            """)
 
         full_code = preamble + "\n" + code
-
         with open(script_path, "w", encoding="utf-8") as f:
             f.write(full_code)
 

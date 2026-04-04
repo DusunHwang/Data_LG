@@ -26,20 +26,11 @@ async def health_check(
     except Exception as e:
         db_status = f"unhealthy: {str(e)}"
 
-    # Redis 연결 확인
-    try:
-        from app.worker.progress import get_redis
-        r = get_redis()
-        r.ping()
-        redis_status = "healthy"
-    except Exception as e:
-        redis_status = f"unhealthy: {str(e)}"
-
     return success_response({
         "status": "ok",
         "environment": settings.app_env,
         "database": db_status,
-        "redis": redis_status,
+        "queue": "in-process thread pool",
         "version": "0.1.0",
     })
 

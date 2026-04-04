@@ -3,6 +3,7 @@
 import json
 from typing import Any, Type, TypeVar
 
+import httpx
 from openai import AsyncOpenAI
 from pydantic import BaseModel
 
@@ -21,6 +22,8 @@ class VLLMClient:
         self.client = AsyncOpenAI(
             base_url=settings.vllm_endpoint_small,
             api_key="not-needed",
+            timeout=httpx.Timeout(timeout=120.0, connect=30.0),
+            max_retries=0,  # 코드에서 재시도 처리
         )
         self.model = settings.vllm_model_small
         self.temperature = settings.vllm_temperature

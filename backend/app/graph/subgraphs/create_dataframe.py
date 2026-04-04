@@ -30,10 +30,11 @@ CREATE_DF_SYSTEM_PROMPT = """/no_think
 You are a Python data expert. Generate Python code that filters or transforms a DataFrame based on the user's request.
 
 STRICT RULES:
-1. Load data: df = pd.read_parquet('data.parquet')
-2. Use only: pandas, numpy — no plots needed
-3. Output code only (no markdown fences, no explanations)
-4. Handle edge cases: if result is empty, still save it
+1. ALWAYS start with loading data: df = pd.read_parquet('data.parquet')
+2. Use ONLY: pandas, numpy — no plots needed.
+3. Output code only (no markdown fences, no explanations).
+4. Handle edge cases: if the result is empty, still save it to parquet.
+5. NEVER assume any variables (like 'df') are already defined. Define them yourself.
 
 SAVING RULES — choose based on the request type:
 
@@ -52,8 +53,15 @@ SAVING RULES — choose based on the request type:
   result_df.to_parquet('result_1.parquet', index=False)
   print(result_df)
 
+[Case D] show entire / unfiltered data → save the original as-is:
+  result_df = df.copy()
+  result_df.to_parquet('result_1.parquet', index=False)
+  print(f"Shape: {result_df.shape}")
+
 IMPORTANT: For groupby splits, ALWAYS use Case A (one file per group).
 For aggregation/statistics, use Case C (one summary file).
+If the user wants to see the entire dataframe without any condition, use Case D.
+ALWAYS save to parquet — never just print the dataframe.
 """
 
 
@@ -111,6 +119,18 @@ def run_create_dataframe_subgraph(state: GraphState) -> GraphState:
                 input_files={"data.parquet": dataset_path},
             )
 
+        # 2차 시도도 실패한 경우 폴백: 원본 데이터셋이라도 출력 (사용자 경험 보전)
+        used_fallback = False
+        if not sandbox_result["success"]:
+            logger.warning("create_dataframe 최종 실패, 원본 데이터 폴백")
+            used_fallback = True
+            # 원본 데이터를 result_1.parquet으로 복사하여 최소한의 결과 제공
+            work_dir = sandbox_result.get("work_dir")
+            if work_dir and os.path.exists(work_dir):
+                shutil.copy2(dataset_path, os.path.join(work_dir, "result_1.parquet"))
+                sandbox_result["success"] = True
+                sandbox_result["output_files"]["result_1.parquet"] = os.path.join(work_dir, "result_1.parquet")
+
         check_cancellation(state)
 
         state = update_progress(state, 75, "데이터프레임_생성", "아티팩트 저장 중...")
@@ -125,13 +145,13 @@ def run_create_dataframe_subgraph(state: GraphState) -> GraphState:
 
         cleanup_sandbox(sandbox_result.get("work_dir", ""))
 
-        n_artifacts = len(artifact_ids.get("artifact_ids", []))
-        if n_artifacts == 0:
-            return {
-                **state,
-                "error_code": "NO_OUTPUT",
-                "error_message": "데이터프레임 생성에 실패했습니다. 조건을 다시 확인해 주세요.",
-            }
+        n_dataframes = artifact_ids.get("n_dataframes", 0)
+        
+        # 결과 메시지 구성
+        if used_fallback:
+            execution_msg = "필터링 코드 실행에 실패하여 전체 데이터를 반환합니다. 조건을 다시 확인해 주세요."
+        else:
+            execution_msg = sandbox_result.get("stdout", "")[:500]
 
         return {
             **state,
@@ -139,8 +159,9 @@ def run_create_dataframe_subgraph(state: GraphState) -> GraphState:
             "created_step_id": artifact_ids.get("step_id"),
             "created_artifact_ids": artifact_ids.get("artifact_ids", []),
             "execution_result": {
-                "stdout": sandbox_result.get("stdout", "")[:500],
+                "stdout": execution_msg,
                 "success": sandbox_result["success"],
+                "used_fallback": used_fallback,
             },
         }
 
@@ -240,7 +261,7 @@ def _persist_artifacts(
                 INSERT INTO steps (
                     id, branch_id, step_type, status, sequence_no, title,
                     input_data, output_data, created_at, updated_at
-                ) VALUES (%s, %s, 'analysis', 'completed', 0, %s, %s, %s, %s, %s)
+                ) VALUES (?, ?, 'analysis', 'completed', 0, ?, ?, ?, ?, ?)
                 """,
                 (
                     step_id,
@@ -289,7 +310,8 @@ def _persist_artifacts(
                     df_tmp = pd.read_parquet(dest)
                 else:
                     df_tmp = pd.read_csv(dest)
-                preview_data = dataframe_to_preview(df_tmp, max_rows=len(df_tmp))
+                # 미리보기 행 제한 (대용량 데이터 대응)
+                preview_data = dataframe_to_preview(df_tmp, max_rows=100)
                 # 여러 파일이면 "그룹 N/전체" 표시, 하나면 일반 레이블
                 if total_files > 1:
                     label = f"그룹 {file_idx}/{total_files} ({df_tmp.shape[0]}행 × {df_tmp.shape[1]}열)"
@@ -320,4 +342,4 @@ def _persist_artifacts(
         if conn:
             conn.close()
 
-    return {"step_id": step_id, "artifact_ids": created_artifact_ids}
+    return {"step_id": step_id, "artifact_ids": created_artifact_ids, "n_dataframes": total_files}

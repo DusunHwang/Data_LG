@@ -3,7 +3,8 @@
 import uuid
 
 from sqlalchemy import ForeignKey, String, Text
-from sqlalchemy.dialects.postgresql import JSONB, UUID
+from sqlalchemy import JSON
+from app.db.models.base import UUIDString
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.models.base import BaseModel
@@ -15,13 +16,13 @@ class AuditLog(BaseModel):
     __tablename__ = "audit_logs"
 
     user_id: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True),
+        UUIDString,
         ForeignKey("users.id", ondelete="SET NULL"),
         nullable=True,
         index=True,
     )
     session_id: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True),
+        UUIDString,
         ForeignKey("sessions.id", ondelete="SET NULL"),
         nullable=True,
         index=True,
@@ -36,7 +37,7 @@ class AuditLog(BaseModel):
     user_agent: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     # 상세 데이터
-    details: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    details: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     # 관계

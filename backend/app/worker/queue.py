@@ -1,62 +1,58 @@
-"""RQ 큐 설정"""
+"""스레드 기반 작업 큐 (Redis/RQ 대체)"""
 
-import redis
-from rq import Queue
+import threading
+import uuid as uuid_module
+from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass, field
+from typing import Any, Callable
 
-from app.core.config import settings
 from app.core.logging import get_logger
 
 logger = get_logger(__name__)
 
-# Redis 연결
-redis_conn = redis.Redis(
-    host=settings.redis_host,
-    port=settings.redis_port,
-    db=0,
-    decode_responses=False,
-)
-
-# 기본 큐
-default_queue = Queue("default", connection=redis_conn)
-
-# 우선순위 큐
-high_queue = Queue("high", connection=redis_conn)
-low_queue = Queue("low", connection=redis_conn)
+_executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="worker")
+_jobs: dict[str, Any] = {}
+_lock = threading.Lock()
 
 
-def get_queue(priority: str = "default") -> Queue:
-    """우선순위에 따른 큐 반환"""
-    queues = {
-        "high": high_queue,
-        "default": default_queue,
-        "low": low_queue,
-    }
-    return queues.get(priority, default_queue)
+@dataclass
+class SimpleJob:
+    """RQ Job 호환 인터페이스"""
+    id: str
+    future: Any = field(repr=False)
+
+    def get_status(self) -> str:
+        if self.future.running():
+            return "started"
+        if self.future.done():
+            return "finished" if not self.future.exception() else "failed"
+        return "queued"
 
 
-def enqueue_job(
-    func,
-    *args,
-    job_id: str | None = None,
-    timeout: int | None = None,
-    priority: str = "default",
-    **kwargs,
-):
-    """작업을 큐에 추가"""
-    queue = get_queue(priority)
-    job_timeout = timeout or settings.job_timeout_seconds
+def enqueue_job(func: Callable, *args, job_id: str | None = None, **kwargs) -> SimpleJob:
+    """함수를 스레드 풀에 제출"""
+    jid = job_id or str(uuid_module.uuid4())
+    future = _executor.submit(func, *args, **kwargs)
+    job = SimpleJob(id=jid, future=future)
 
-    job = queue.enqueue(
-        func,
-        *args,
-        job_id=job_id,
-        job_timeout=job_timeout,
-        **kwargs,
-    )
-    logger.info(
-        "작업 큐 추가",
-        job_id=job.id,
-        func=getattr(func, "__name__", str(func)),
-        queue=queue.name,
-    )
+    with _lock:
+        _jobs[jid] = job
+
+    logger.info("작업 큐 추가", job_id=jid, func=getattr(func, "__name__", str(func)))
+
+    def _on_done(f):
+        exc = f.exception()
+        if exc:
+            logger.error("작업 실패", job_id=jid, error=str(exc))
+
+    future.add_done_callback(_on_done)
     return job
+
+
+def get_job(job_id: str) -> SimpleJob | None:
+    with _lock:
+        return _jobs.get(job_id)
+
+
+def shutdown(wait: bool = True):
+    _executor.shutdown(wait=wait)
