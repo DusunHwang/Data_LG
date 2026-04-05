@@ -133,6 +133,12 @@ def run_create_dataframe_subgraph(state: GraphState) -> GraphState:
 
         check_cancellation(state)
 
+        branch_config = active_branch.get("config", {}) or {}
+        if isinstance(branch_config, str):
+            import json as _json
+            branch_config = _json.loads(branch_config)
+        target_col = state.get("target_column") or branch_config.get("target_column") or dataset.get("target_column")
+
         state = update_progress(state, 75, "데이터프레임_생성", "아티팩트 저장 중...")
         artifact_ids = _persist_artifacts(
             sandbox_result=sandbox_result,
@@ -141,6 +147,7 @@ def run_create_dataframe_subgraph(state: GraphState) -> GraphState:
             branch_id=branch_id,
             dataset=dataset,
             user_message=user_message,
+            target_col=target_col,
         )
 
         cleanup_sandbox(sandbox_result.get("work_dir", ""))
@@ -237,8 +244,10 @@ def _persist_artifacts(
     branch_id: str,
     dataset: dict,
     user_message: str,
+    target_col: str | None = None,
 ) -> dict:
     """아티팩트 DB 저장"""
+    tc_suffix = f" [{target_col}]" if target_col else ""
     created_artifact_ids = []
     step_id = None
 
@@ -314,12 +323,12 @@ def _persist_artifacts(
                 preview_data = dataframe_to_preview(df_tmp, max_rows=100)
                 # 여러 파일이면 "그룹 N/전체" 표시, 하나면 일반 레이블
                 if total_files > 1:
-                    label = f"그룹 {file_idx}/{total_files} ({df_tmp.shape[0]}행 × {df_tmp.shape[1]}열)"
+                    label = f"그룹 {file_idx}/{total_files}{tc_suffix} ({df_tmp.shape[0]}행 × {df_tmp.shape[1]}열)"
                 else:
-                    label = f"서브 데이터셋 ({df_tmp.shape[0]}행 × {df_tmp.shape[1]}열)"
+                    label = f"서브 데이터셋{tc_suffix} ({df_tmp.shape[0]}행 × {df_tmp.shape[1]}열)"
             except Exception:
                 preview_data = None
-                label = f"서브 데이터셋: {fname}"
+                label = f"서브 데이터셋{tc_suffix}: {fname}"
 
             artifact_id = save_artifact_to_db(
                 conn, step_id, session_id,

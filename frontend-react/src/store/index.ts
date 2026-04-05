@@ -44,11 +44,13 @@ interface SessionState {
   sessionId: string | null
   branchId: string | null
   datasetId: string | null
-  targetColumn: string | null
+  targetColumn: string | null                        // 사이드바 단일 선택 (레거시)
+  targetColumnsByBranch: Record<string, string[]>   // 브랜치별 다중 타겟 컬럼
   setSessionId: (id: string | null) => void
   setBranchId: (id: string | null) => void
   setDatasetId: (id: string | null) => void
   setTargetColumn: (col: string | null) => void
+  setTargetColumns: (branchId: string, cols: string[]) => void
 }
 
 export const useSessionStore = create<SessionState>()(
@@ -58,10 +60,15 @@ export const useSessionStore = create<SessionState>()(
       branchId: null,
       datasetId: null,
       targetColumn: null,
+      targetColumnsByBranch: {},
       setSessionId: (id) => set({ sessionId: id, branchId: null }),
       setBranchId: (id) => set({ branchId: id }),
       setDatasetId: (id) => set({ datasetId: id }),
       setTargetColumn: (col) => set({ targetColumn: col }),
+      setTargetColumns: (branchId, cols) =>
+        set((state) => ({
+          targetColumnsByBranch: { ...state.targetColumnsByBranch, [branchId]: cols },
+        })),
     }),
     {
       name: 'session-storage',
@@ -113,12 +120,15 @@ export const useChatStore = create<ChatState>((set) => ({
     })),
 
   setActiveJob: (branchId, jobId) =>
-    set((state) => ({
-      activeJobIds: {
-        ...state.activeJobIds,
-        [branchId]: jobId ?? '',
-      },
-    })),
+    set((state) => {
+      const next = { ...state.activeJobIds }
+      if (jobId === null) {
+        delete next[branchId]
+      } else {
+        next[branchId] = jobId
+      }
+      return { activeJobIds: next }
+    }),
 
   setSelectedArtifactIds: (ids) => set({ selectedArtifactIds: ids }),
 

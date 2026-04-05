@@ -1,12 +1,13 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import type { VllmMetric } from '@/types'
 
-const VLLM_METRICS_URL = 'http://dusun.iptime.org:27800/metrics'
+const VLLM_METRICS_URL = '/api/v1/monitor/vllm-metrics'
 const POLL_INTERVAL = 1_000
 const MAX_HISTORY = 60
 
 function extractMetric(text: string, name: string): number {
-  const re = new RegExp(`^${name}\\s+([\\d.]+)`, 'm')
+  // Prometheus metrics may have labels: metric_name{label="val"} value
+  const re = new RegExp(`^${name}(?:\\{[^}]*\\})?\\s+([\\d.eE+\\-]+)`, 'm')
   const m = re.exec(text)
   return m ? parseFloat(m[1]) : 0
 }
@@ -20,8 +21,10 @@ export function useVllmMonitor(enabled = true) {
 
   const fetchMetrics = useCallback(async () => {
     try {
+      const token = localStorage.getItem('access_token')
       const res = await fetch(VLLM_METRICS_URL, {
-        signal: AbortSignal.timeout(2_000),
+        signal: AbortSignal.timeout(3_000),
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
       })
       if (!res.ok) throw new Error(`HTTP ${res.status}`)
       const text = await res.text()

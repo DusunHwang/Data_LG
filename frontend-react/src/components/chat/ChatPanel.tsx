@@ -1,10 +1,12 @@
 import { useState, useRef, useEffect, useCallback } from 'react'
-import { Send, ChevronDown, ChevronRight, Zap, BarChart2, BrainCircuit, Target } from 'lucide-react'
-import { analysisApi } from '@/api'
-import { useChatStore, useSessionStore, genId } from '@/store'
+import { Send, ChevronDown, ChevronRight, Zap, BarChart2, BrainCircuit, Target, ChevronsUpDown, FlaskConical } from 'lucide-react'
+import { analysisApi, artifactsApi } from '@/api'
+import { useChatStore, useSessionStore, useArtifactStore, genId } from '@/store'
 import type { ChatMessage } from '@/types'
 import Button from '@/components/ui/Button'
 import JobProgress from './JobProgress'
+import ArtifactCard from '@/components/artifacts/ArtifactCard'
+import InverseOptimizationModal from '@/components/optimization/InverseOptimizationModal'
 
 const ANALYSIS_MODES = [
   { value: 'auto', label: 'Auto' },
@@ -18,8 +20,8 @@ const ANALYSIS_MODES = [
 const QUICK_ACTIONS = [
   { icon: BarChart2, label: '프로파일 분석', message: '데이터 프로파일링을 수행해줘' },
   { icon: Zap, label: 'Subset 발견', message: '데이터 서브셋 패턴을 찾아줘' },
-  { icon: Target, label: '기준 모델링', message: '기준 머신러닝 모델을 구축해줘' },
-  { icon: BrainCircuit, label: 'SHAP 분석', message: 'SHAP 특성 중요도를 분석해줘' },
+  { icon: Target, label: '핵심인자 추출', message: '핵심인자를 추출해줘' },
+  { icon: BrainCircuit, label: '인자 최소화', message: '인자를 최소화해줘' },
 ]
 
 interface ChatPanelProps {
@@ -27,12 +29,14 @@ interface ChatPanelProps {
 }
 
 export default function ChatPanel({ onArtifactsChange }: ChatPanelProps) {
-  const { sessionId, branchId, datasetId, targetColumn } = useSessionStore()
+  const { sessionId, branchId, datasetId, targetColumn, targetColumnsByBranch } = useSessionStore()
+  const targetColumns = targetColumnsByBranch[branchId ?? ''] ?? (targetColumn ? [targetColumn] : [])
   const { histories, activeJobIds, addMessage, setActiveJob } = useChatStore()
 
   const [input, setInput] = useState('')
   const [mode, setMode] = useState('auto')
   const [sending, setSending] = useState(false)
+  const [invOptOpen, setInvOptOpen] = useState(false)
   const [expandedMsgs, setExpandedMsgs] = useState<Set<string>>(new Set())
   const bottomRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
@@ -41,18 +45,31 @@ export default function ChatPanel({ onArtifactsChange }: ChatPanelProps) {
   const messages = histories[currentBranchId] ?? []
   const activeJobId = activeJobIds[currentBranchId] ?? null
 
+  // 모두 접힌 상태인지 판단 (메시지가 있고 expandedMsgs가 비어있을 때)
+  const allCollapsed = messages.length > 0 && expandedMsgs.size === 0
+
   // Auto-scroll
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages.length, activeJobId])
 
-  // Auto-expand latest assistant message
+  // 새 어시스턴트 메시지 자동 펼침
   useEffect(() => {
     const last = messages[messages.length - 1]
     if (last && last.role === 'assistant') {
       setExpandedMsgs((prev) => new Set(prev).add(last.id))
     }
   }, [messages])
+
+  const handleCollapseAll = () => {
+    if (allCollapsed) {
+      // 모두 펼치기
+      setExpandedMsgs(new Set(messages.map((m) => m.id)))
+    } else {
+      // 모두 접기
+      setExpandedMsgs(new Set())
+    }
+  }
 
   const handleSend = useCallback(
     async (text: string) => {
@@ -73,8 +90,8 @@ export default function ChatPanel({ onArtifactsChange }: ChatPanelProps) {
           session_id: sessionId,
           branch_id: branchId,
           message: text.trim(),
-          target_column: targetColumn ?? undefined,
-          context: { mode, dataset_id: datasetId ?? undefined },
+          target_column: targetColumns[0] ?? undefined,
+          context: { mode, dataset_id: datasetId ?? undefined, target_columns: targetColumns },
         })
         setActiveJob(currentBranchId, result.job_id)
       } catch (err) {
@@ -88,15 +105,46 @@ export default function ChatPanel({ onArtifactsChange }: ChatPanelProps) {
         setSending(false)
       }
     },
-    [sessionId, branchId, currentBranchId, sending, mode, datasetId, targetColumn, addMessage, setActiveJob],
+    [sessionId, branchId, currentBranchId, sending, mode, datasetId, targetColumns, addMessage, setActiveJob],
   )
 
-  const handleJobDone = useCallback(() => {
-    setActiveJob(currentBranchId, null)
-    const msgs = histories[currentBranchId] ?? []
-    const allArtifactIds = msgs.flatMap((m) => m.artifact_ids ?? [])
-    onArtifactsChange?.(allArtifactIds)
-  }, [currentBranchId, setActiveJob, histories, onArtifactsChange])
+  const handleJobDone = useCallback(
+    (job: import('@/types').Job) => {
+      setActiveJob(currentBranchId, null)
+
+      if (job.status === 'completed' && job.result) {
+        const content =
+          job.result.message ||
+          (job.result.artifact_ids?.length
+            ? `분석 완료 — 아티팩트 ${job.result.artifact_ids.length}개 생성됨`
+            : '분석이 완료되었습니다.')
+        const assistantMsg: ChatMessage = {
+          id: genId(),
+          role: 'assistant',
+          content,
+          artifact_ids: job.result.artifact_ids ?? [],
+          timestamp: new Date().toISOString(),
+        }
+        addMessage(currentBranchId, assistantMsg)
+        onArtifactsChange?.(job.result.artifact_ids ?? [])
+      } else if (job.status === 'failed') {
+        addMessage(currentBranchId, {
+          id: genId(),
+          role: 'assistant',
+          content: `❌ 분석 실패: ${job.error_message || '알 수 없는 오류'}`,
+          timestamp: new Date().toISOString(),
+        })
+      } else if (job.status === 'cancelled') {
+        addMessage(currentBranchId, {
+          id: genId(),
+          role: 'assistant',
+          content: '⚠️ 작업이 취소되었습니다.',
+          timestamp: new Date().toISOString(),
+        })
+      }
+    },
+    [currentBranchId, setActiveJob, addMessage, onArtifactsChange],
+  )
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -136,21 +184,35 @@ export default function ChatPanel({ onArtifactsChange }: ChatPanelProps) {
 
   return (
     <div className="flex flex-1 flex-col min-h-0">
+      {invOptOpen && <InverseOptimizationModal onClose={() => setInvOptOpen(false)} />}
       {/* Context bar */}
-      <div className="flex items-center gap-3 border-b border-gray-200 bg-gray-50 px-4 py-2 text-xs text-gray-500 shrink-0">
-        <span className="flex items-center gap-1">
-          <span className="h-1.5 w-1.5 rounded-full bg-brand-red" />
-          Branch: <strong className="text-gray-700">{branchId.slice(0, 8)}...</strong>
-        </span>
-        {datasetId && (
+      <div className="flex items-center justify-between border-b border-gray-200 bg-gray-50 px-4 py-2 shrink-0">
+        <div className="flex items-center gap-3 text-xs text-gray-500">
           <span className="flex items-center gap-1">
-            Dataset: <strong className="text-gray-700">{datasetId.slice(0, 8)}...</strong>
+            <span className="h-1.5 w-1.5 rounded-full bg-brand-red" />
+            Branch: <strong className="text-gray-700">{branchId.slice(0, 8)}...</strong>
           </span>
-        )}
-        {targetColumn && (
-          <span className="flex items-center gap-1">
-            Target: <strong className="text-brand-red">{targetColumn}</strong>
-          </span>
+          {datasetId && (
+            <span className="flex items-center gap-1">
+              Dataset: <strong className="text-gray-700">{datasetId.slice(0, 8)}...</strong>
+            </span>
+          )}
+          {targetColumns.length > 0 && (
+            <span className="flex items-center gap-1">
+              Target: <strong className="text-brand-red">{targetColumns.join(', ')}</strong>
+            </span>
+          )}
+        </div>
+
+        {/* 모두 접기/펼치기 버튼 */}
+        {messages.length > 0 && (
+          <button
+            onClick={handleCollapseAll}
+            className="flex items-center gap-1 text-xs text-gray-400 hover:text-brand-red transition-colors"
+          >
+            <ChevronsUpDown className="h-3.5 w-3.5" />
+            {allCollapsed ? '모두 펼치기' : '모두 접기'}
+          </button>
         )}
       </div>
 
@@ -176,13 +238,19 @@ export default function ChatPanel({ onArtifactsChange }: ChatPanelProps) {
                   {qa.label}
                 </button>
               ))}
+              <button
+                onClick={() => setInvOptOpen(true)}
+                className="flex items-center gap-2 rounded-lg border border-purple-200 bg-white px-3 py-2.5 text-sm text-purple-700 hover:border-purple-400 hover:bg-purple-50 transition-colors text-left"
+              >
+                <FlaskConical className="h-4 w-4 shrink-0" />
+                모델기반 최적화
+              </button>
             </div>
           </div>
         )}
 
-        {messages.map((msg, idx) => {
-          const isLast = idx === messages.length - 1
-          const isExpanded = expandedMsgs.has(msg.id) || isLast
+        {messages.map((msg) => {
+          const isExpanded = expandedMsgs.has(msg.id)
           return (
             <MessageBubble
               key={msg.id}
@@ -218,6 +286,14 @@ export default function ChatPanel({ onArtifactsChange }: ChatPanelProps) {
               {qa.label}
             </button>
           ))}
+          <button
+            onClick={() => setInvOptOpen(true)}
+            disabled={sending || !!activeJobId}
+            className="flex shrink-0 items-center gap-1.5 rounded-full border border-purple-200 px-3 py-1 text-xs text-purple-700 hover:border-purple-400 hover:bg-purple-50 transition-colors disabled:opacity-50"
+          >
+            <FlaskConical className="h-3 w-3" />
+            모델기반 최적화
+          </button>
         </div>
 
         <div className="flex items-end gap-2">
@@ -280,45 +356,91 @@ function MessageBubble({
   onArtifactClick: (ids: string[]) => void
 }) {
   const isUser = msg.role === 'user'
-  const hasArtifacts = (msg.artifact_ids?.length ?? 0) > 0
+  const artifactIds = msg.artifact_ids ?? []
+  const hasArtifacts = artifactIds.length > 0
 
-  const preview = msg.content.length > 120 ? msg.content.slice(0, 120) + '...' : msg.content
+  const { artifacts: cached, cacheArtifact } = useArtifactStore()
+  const { sessionId } = useSessionStore()
+
+  // 메시지 펼쳐질 때 아티팩트 fetch
+  useEffect(() => {
+    if (!isExpanded || !sessionId || artifactIds.length === 0) return
+    const uncached = artifactIds.filter((id) => !cached[id])
+    uncached.forEach((id) => {
+      artifactsApi.preview(sessionId, id).then(cacheArtifact).catch(() => {})
+    })
+  }, [isExpanded, artifactIds.join(','), sessionId])
+
+  const artifacts = artifactIds.map((id) => cached[id]).filter(Boolean) as import('@/types').Artifact[]
+  const preview = msg.content.length > 100 ? msg.content.slice(0, 100) + '...' : msg.content
 
   return (
-    <div className={`flex ${isUser ? 'justify-end' : 'justify-start'}`}>
+    <div className={`flex flex-col ${isUser ? 'items-end' : 'items-start'}`}>
       <div className={isUser ? 'chat-bubble-user' : 'chat-bubble-assistant'}>
-        {/* Collapsed header for non-latest */}
+
+        {/* ── 접힌 상태: 한 줄 미리보기 ── */}
         {!isExpanded ? (
           <button onClick={onToggle} className="flex items-center gap-1.5 text-left w-full">
-            <span className="flex-1 text-sm opacity-80 line-clamp-2">{preview}</span>
+            <span className="flex-1 text-sm opacity-80 truncate">{preview}</span>
             <ChevronRight className="h-3.5 w-3.5 shrink-0 opacity-50" />
           </button>
         ) : (
           <>
+            {/* ── 상단 접기 버튼 ── */}
+            <div className="flex justify-end mb-1.5">
+              <button
+                onClick={onToggle}
+                className="flex items-center gap-0.5 text-xs opacity-50 hover:opacity-80"
+              >
+                <ChevronDown className="h-3 w-3" />
+                접기
+              </button>
+            </div>
+
+            {/* ── 펼친 상태: 본문 ── */}
             <div className="text-sm whitespace-pre-wrap leading-relaxed">{msg.content}</div>
 
+            {/* ── 인라인 아티팩트 (말풍선 안) ── */}
             {hasArtifacts && (
-              <div className="mt-2 flex flex-wrap gap-1">
-                <button
-                  onClick={() => onArtifactClick(msg.artifact_ids ?? [])}
-                  className="flex items-center gap-1 rounded-md bg-white/20 px-2 py-1 text-xs font-medium hover:bg-white/30 transition-colors"
-                >
-                  <BarChart2 className="h-3 w-3" />
-                  {msg.artifact_ids?.length}개 아티팩트 보기
-                </button>
+              <div className="mt-3 space-y-2">
+                {/* 로딩 스켈레톤 */}
+                {artifactIds
+                  .filter((id) => !cached[id])
+                  .map((id) => (
+                    <div key={id} className="rounded-xl border border-gray-200 bg-white p-4 animate-pulse">
+                      <div className="h-3 bg-gray-200 rounded w-1/4 mb-3" />
+                      <div className="h-32 bg-gray-100 rounded" />
+                    </div>
+                  ))}
+                {/* 캐시된 아티팩트 */}
+                {artifacts.map((artifact) => (
+                  <ArtifactCard key={artifact.id} artifact={artifact} />
+                ))}
+                {/* 우측 패널 열기 */}
+                {artifacts.length > 0 && (
+                  <button
+                    onClick={() => onArtifactClick(artifactIds)}
+                    className="flex items-center gap-1.5 text-xs text-gray-400 hover:text-brand-red transition-colors mt-1"
+                  >
+                    <BarChart2 className="h-3 w-3" />
+                    우측 패널에서 보기
+                  </button>
+                )}
               </div>
             )}
 
-            <div className="mt-1.5 flex items-center justify-between">
+            {/* ── 하단: 타임스탬프 + 접기 버튼 ── */}
+            <div className="mt-2 flex items-center justify-between">
               <span className="text-xs opacity-40">
                 {new Date(msg.timestamp).toLocaleTimeString('ko-KR')}
               </span>
-              {msg.content.length > 120 && (
-                <button onClick={onToggle} className="text-xs opacity-50 hover:opacity-80 flex items-center gap-0.5">
-                  <ChevronDown className="h-3 w-3" />
-                  접기
-                </button>
-              )}
+              <button
+                onClick={onToggle}
+                className="flex items-center gap-0.5 text-xs opacity-50 hover:opacity-80"
+              >
+                <ChevronDown className="h-3 w-3" />
+                접기
+              </button>
             </div>
           </>
         )}

@@ -67,7 +67,7 @@ export default function JobProgress({ jobId, onDone }: JobProgressProps) {
         <div className="flex items-center gap-2">
           {!isTerminal && <Loader2 className="h-4 w-4 animate-spin text-brand-red shrink-0" />}
           <span className="text-sm text-gray-700 leading-snug">
-            {job.current_message || '처리 중...'}
+            {job.progress_message || '처리 중...'}
           </span>
         </div>
         {!isTerminal && (

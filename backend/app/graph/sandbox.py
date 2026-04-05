@@ -53,6 +53,7 @@ def execute_code_in_sandbox(
         preamble = textwrap.dedent("""
             import os
             import sys
+            import json
             import warnings
             warnings.filterwarnings('ignore')
 

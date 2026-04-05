@@ -48,16 +48,54 @@ def run_analysis_task(
         except Exception as e:
             logger.warning("user_id 조회 실패", error=str(e))
 
-        final_state = run_analysis_graph(
+        mode = context.get("mode", "auto") if context else "auto"
+        target_columns: list[str] = (context or {}).get("target_columns", [])
+        if not target_columns and target_column:
+            target_columns = [target_column]
+
+        logger.info(
+            "분석 작업 파라미터",
             job_run_id=job_run_id,
-            session_id=session_id,
-            user_id=user_id or "",
-            user_message=message,
-            mode=context.get("mode", "auto") if context else "auto",
-            selected_step_id=context.get("selected_step_id") if context else None,
-            selected_artifact_id=context.get("selected_artifact_id") if context else None,
+            mode=mode,
             target_column=target_column,
+            target_columns=target_columns,
+            context_keys=list((context or {}).keys()),
         )
+
+        # 타겟이 복수면 iterative 실행 (단, 타겟 무관 모드는 한 번만 실행)
+        TARGET_INDEPENDENT_MODES = {"dataset_profile", "subset_discovery", "create_dataframe"}
+
+        def _run_once(tc, skip_finalize=False):
+            return run_analysis_graph(
+                job_run_id=job_run_id,
+                session_id=session_id,
+                user_id=user_id or "",
+                user_message=message,
+                branch_id=branch_id,
+                mode=mode,
+                selected_step_id=context.get("selected_step_id") if context else None,
+                selected_artifact_id=context.get("selected_artifact_id") if context else None,
+                target_column=tc,
+                skip_job_finalize=skip_finalize,
+            )
+
+        if len(target_columns) > 1 and mode not in TARGET_INDEPENDENT_MODES:
+            all_artifact_ids: list[str] = []
+            all_messages: list[str] = []
+            final_state = {}
+            for i, tc in enumerate(target_columns):
+                is_last = (i == len(target_columns) - 1)
+                reporter.update(20, f"타겟 '{tc}' 모델링 중... ({i+1}/{len(target_columns)})")
+                state = _run_once(tc, skip_finalize=not is_last)
+                final_state = state
+                all_artifact_ids.extend(state.get("created_artifact_ids", []))
+                msg = state.get("assistant_message", "")
+                if msg:
+                    all_messages.append(f"[{tc}] {msg}")
+            final_state["created_artifact_ids"] = all_artifact_ids
+            final_state["assistant_message"] = "\n\n".join(all_messages) or f"{len(target_columns)}개 타겟 모델링 완료"
+        else:
+            final_state = _run_once(target_columns[0] if target_columns else None)
 
         result = {
             "status": "completed",

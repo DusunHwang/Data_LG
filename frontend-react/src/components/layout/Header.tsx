@@ -1,13 +1,19 @@
 import { useState } from 'react'
 import { LogOut, User, ChevronDown, Activity } from 'lucide-react'
+import { LineChart, Line, ResponsiveContainer } from 'recharts'
 import { useAuthStore } from '@/store'
 import { authApi } from '@/api'
 import VllmMonitor from '@/components/monitor/VllmMonitor'
+import { useVllmMonitor } from '@/hooks/useVllmMonitor'
 
 export default function Header() {
   const { username, clearAuth } = useAuthStore()
   const [menuOpen, setMenuOpen] = useState(false)
   const [monitorOpen, setMonitorOpen] = useState(false)
+  const { metrics, isOnline } = useVllmMonitor(true)
+
+  // 최근 60초 gen/sec 데이터
+  const sparkData = metrics.map((m) => ({ v: Math.round(m.genPerSec * 10) / 10 }))
 
   const handleLogout = async () => {
     try {
@@ -38,15 +44,33 @@ export default function Header() {
         </span>
       </div>
 
-      {/* Center: vLLM status pill */}
-      <button
-        onClick={() => setMonitorOpen((v) => !v)}
-        className="flex items-center gap-2 rounded-full bg-white/5 px-3 py-1.5 text-xs text-gray-300 hover:bg-white/10 transition-colors"
-      >
-        <Activity className="h-3.5 w-3.5 text-green-400" />
-        <span>vLLM Monitor</span>
-        <ChevronDown className={`h-3.5 w-3.5 transition-transform ${monitorOpen ? 'rotate-180' : ''}`} />
-      </button>
+      {/* Center: vLLM status pill + gen/sec sparkline */}
+      <div className="flex items-center gap-2">
+        <button
+          onClick={() => setMonitorOpen((v) => !v)}
+          className="flex items-center gap-2 rounded-full bg-white/5 px-3 py-1.5 text-xs text-gray-300 hover:bg-white/10 transition-colors"
+        >
+          <Activity className={`h-3.5 w-3.5 ${isOnline ? 'text-green-400' : 'text-gray-500'}`} />
+          <span>vLLM Monitor</span>
+          <ChevronDown className={`h-3.5 w-3.5 transition-transform ${monitorOpen ? 'rotate-180' : ''}`} />
+        </button>
+
+        {/* Gen token/sec sparkline — 최근 60초, 축 없음 */}
+        <div className="w-36 h-8">
+          <ResponsiveContainer width="100%" height="100%">
+            <LineChart data={sparkData} margin={{ top: 2, right: 2, bottom: 2, left: 2 }}>
+              <Line
+                type="monotone"
+                dataKey="v"
+                stroke={isOnline ? '#4ade80' : '#4b5563'}
+                strokeWidth={1.5}
+                dot={false}
+                isAnimationActive={false}
+              />
+            </LineChart>
+          </ResponsiveContainer>
+        </div>
+      </div>
 
       {/* Right: User menu */}
       <div className="relative">

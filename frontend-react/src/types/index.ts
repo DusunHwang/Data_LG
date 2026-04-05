@@ -91,6 +91,7 @@ export type ArtifactType =
   | 'feature_importance'
   | 'metric'
   | 'report'
+  | 'shap'
   | 'shap_summary'
   | 'code'
   | 'model'
@@ -98,23 +99,30 @@ export type ArtifactType =
 
 export interface Artifact {
   id: string
-  session_id: string
+  session_id?: string
   type: ArtifactType
   name: string
   description?: string
   data: ArtifactData
-  created_at: string
+  created_at?: string
 }
 
 export interface ArtifactData {
-  data_url?: string       // base64 image for plots
-  html?: string           // table html
+  data_url?: string
+  html?: string
   rows?: Record<string, unknown>[]
   columns?: string[]
   metrics?: Record<string, number | string>
   code?: string
   text?: string
   summary?: string
+  message?: string
+  plotly_json?: Record<string, unknown>
+  // report / champion / proposal 전용
+  recommended_features?: string[]
+  top_features?: string[]
+  feature_names?: string[]
+  [key: string]: unknown
 }
 
 // ─── Analysis ────────────────────────────────────────────────────────────────
@@ -141,16 +149,17 @@ export interface Job {
   session_id: string
   status: JobStatus
   progress: number
-  current_message: string
-  result?: JobResult
-  error?: string
+  progress_message?: string | null
+  result?: JobResult | null
+  error_message?: string | null
   created_at: string
   updated_at: string
 }
 
 export interface JobResult {
-  messages: AssistantMessage[]
-  artifact_ids: string[]
+  message?: string | null
+  step_id?: string | null
+  artifact_ids?: string[]
 }
 
 // ─── Chat ────────────────────────────────────────────────────────────────────
@@ -188,12 +197,61 @@ export interface NullImportanceRequest {
   n_permutations?: number
 }
 
+export interface NullImportanceResult {
+  actual_importance: Record<string, number>
+  null_importance: Record<string, { p90: number; mean: number }>
+  recommended_features: string[]
+  recommended_n: number
+  feature_ranges: Record<string, [number, number]>
+  feature_names: string[]
+}
+
 export interface InverseRunRequest {
   session_id: string
   branch_id: string
   selected_features: string[]
-  n_trials?: number
-  timeout?: number
+  fixed_values?: Record<string, number>
+  feature_ranges?: Record<string, [number, number]>
+  expand_ratio?: number
+  direction?: 'maximize' | 'minimize'
+  n_calls?: number
+  target_column?: string
+}
+
+export interface ConstrainedInverseRunRequest {
+  session_id: string
+  branch_id: string
+  // 최적화 대상
+  target_column: string
+  selected_features: string[]
+  fixed_values?: Record<string, number>
+  feature_ranges?: Record<string, [number, number]>
+  expand_ratio?: number
+  direction: 'maximize' | 'minimize'
+  n_calls?: number
+  model_type?: 'lgbm' | 'bcm'
+  // 제약 조건 (이중 타겟)
+  constraint_target_column?: string
+  constraint_type?: 'gte' | 'lte'
+  constraint_threshold?: number
+}
+
+export interface InverseRunResult {
+  optimal_prediction: number
+  baseline_prediction?: number
+  improvement?: number
+  optimal_features: Record<string, number>
+  fixed_features?: Record<string, number>
+  convergence: boolean
+  n_evaluations: number
+  direction: string
+  target_column: string
+  selected_features: string[]
+  // 이중 타겟
+  constraint_target_column?: string
+  constraint_type?: string
+  constraint_threshold?: number
+  constraint_prediction?: number
 }
 
 // ─── API Response wrapper ─────────────────────────────────────────────────────

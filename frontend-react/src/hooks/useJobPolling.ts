@@ -55,13 +55,13 @@ export function useJobPolling({
           }),
         )
 
-        // Add assistant messages to chat
-        const messages = job.result?.messages ?? []
-        const content = messages.map((m) => m.content).join('\n\n')
+        // Add assistant message to chat
+        const content = job.result?.message ||
+          (artifactIds.length ? `분석 완료 — 아티팩트 ${artifactIds.length}개 생성됨` : '분석이 완료되었습니다.')
         addMessage(branchId, {
           id: genId(),
           role: 'assistant',
-          content: content || '분석이 완료되었습니다.',
+          content,
           artifact_ids: artifactIds,
           timestamp: new Date().toISOString(),
         })
@@ -73,9 +73,9 @@ export function useJobPolling({
         addMessage(branchId, {
           id: genId(),
           role: 'assistant',
-          content: job.error
-            ? `오류가 발생했습니다: ${job.error}`
-            : '작업이 취소되었습니다.',
+          content: job.status === 'failed'
+            ? `❌ 분석 실패: ${job.error_message || '알 수 없는 오류'}`
+            : '⚠️ 작업이 취소되었습니다.',
           timestamp: new Date().toISOString(),
         })
         onError?.(job)

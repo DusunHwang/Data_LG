@@ -20,6 +20,7 @@ class ArtifactType(str, enum.Enum):
     shap = "shap"
     feature_importance = "feature_importance"
     leaderboard = "leaderboard"
+    table = "table"
     code = "code"
 
 

@@ -1,4 +1,4 @@
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { Layers } from 'lucide-react'
 import { artifactsApi } from '@/api'
 import { useSessionStore, useArtifactStore } from '@/store'
@@ -8,13 +8,22 @@ import type { Artifact } from '@/types'
 
 interface ArtifactPanelProps {
   artifactIds: string[]
-  onAskAbout?: (artifact: Artifact) => void
+  baseArtifactId?: string | null
+  targetColumns?: string[]
+  onSetTargetColumns?: (cols: string[]) => void
   onNewBranch?: (artifact: Artifact) => void
 }
 
-export default function ArtifactPanel({ artifactIds, onAskAbout, onNewBranch }: ArtifactPanelProps) {
+export default function ArtifactPanel({
+  artifactIds,
+  baseArtifactId,
+  targetColumns = [],
+  onSetTargetColumns,
+  onNewBranch,
+}: ArtifactPanelProps) {
   const { sessionId } = useSessionStore()
   const { artifacts: cached, cacheArtifact } = useArtifactStore()
+  const [reversed, setReversed] = useState(true)
 
   // Fetch any uncached artifacts
   const uncachedIds = artifactIds.filter((id) => !cached[id])
@@ -42,6 +51,14 @@ export default function ArtifactPanel({ artifactIds, onAskAbout, onNewBranch }: 
               {artifacts.length}
             </span>
           )}
+          {artifacts.length > 1 && (
+            <button
+              onClick={() => setReversed((v) => !v)}
+              className="text-xs text-gray-400 hover:text-brand-red transition-colors"
+            >
+              {reversed ? '출력순' : '역순'}
+            </button>
+          )}
         </div>
         {uncachedIds.length > 0 && <Spinner size="sm" />}
       </div>
@@ -67,12 +84,14 @@ export default function ArtifactPanel({ artifactIds, onAskAbout, onNewBranch }: 
                 <div className="h-24 bg-gray-100 rounded" />
               </div>
             ))}
-            {/* Render cached artifacts (newest first) */}
-            {[...artifacts].reverse().map((artifact) => (
+            {/* Render cached artifacts */}
+            {(reversed ? [...artifacts].reverse() : artifacts).map((artifact) => (
               <ArtifactCard
                 key={artifact.id}
                 artifact={artifact}
-                onAskAbout={onAskAbout}
+                isBaseDataset={!!baseArtifactId && artifact.id === baseArtifactId}
+                targetColumns={targetColumns}
+                onSetTargetColumns={onSetTargetColumns}
                 onNewBranch={onNewBranch}
               />
             ))}

@@ -74,7 +74,8 @@ def setup_korean_font() -> None:
             except Exception:
                 pass
             font_name = fm.FontProperties(fname=font_path).get_name()
-            matplotlib.rcParams['font.family'] = font_name
+            matplotlib.rcParams['font.sans-serif'] = [font_name, 'DejaVu Sans']
+            matplotlib.rcParams['font.family'] = 'sans-serif'
             logger.debug("한글 폰트 적용", font=font_name, path=font_path)
         else:
             logger.warning("한글 폰트를 찾지 못했습니다 — 한글이 깨질 수 있습니다.")
@@ -116,9 +117,13 @@ if _font_path:
         _fm.fontManager.addfont(_font_path)
     except Exception:
         pass
-    _mpl.rcParams['font.family'] = _fm.FontProperties(fname=_font_path).get_name()
+    _font_name = _fm.FontProperties(fname=_font_path).get_name()
+    _mpl.rcParams['font.sans-serif'] = [_font_name, 'DejaVu Sans']
+    _mpl.rcParams['font.family'] = 'sans-serif'
 _mpl.rcParams['axes.unicode_minus'] = False
 del _glob, _candidates, _pick_font, _font_path
+try: del _font_name
+except NameError: pass
 # ─────────────────────────────────────────────────────────────
 """
 
