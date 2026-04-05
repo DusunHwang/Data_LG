@@ -6,14 +6,13 @@ import os
 import shutil
 import uuid
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import List, Optional
 
 import pandas as pd
 
 from app.core.logging import get_logger
 from app.graph.helpers import (
     check_cancellation,
-    dataframe_to_preview,
     get_artifact_dir,
     save_artifact_to_db,
     update_progress,
@@ -49,12 +48,12 @@ def run_followup_subgraph(state: GraphState) -> GraphState:
     intent = state.get("intent", "")
     state = update_progress(state, 15, "후속_질의", f"후속 질의 처리 중... ({intent})")
 
-    session_id = state.get("session_id")
+    state.get("session_id")
     active_branch = state.get("active_branch", {})
-    branch_id = active_branch.get("id")
-    user_message = state.get("user_message", "")
-    resolved_step_ids = state.get("resolved_step_ids", [])
-    resolved_artifact_ids = state.get("resolved_artifact_ids", [])
+    active_branch.get("id")
+    state.get("user_message", "")
+    state.get("resolved_step_ids", [])
+    state.get("resolved_artifact_ids", [])
 
     try:
         if intent == "followup_dataframe":
@@ -637,7 +636,7 @@ def _save_followup_artifacts(
                 shutil.copy2(fpath, dest)
                 artifact_id = save_artifact_to_db(
                     conn, step_id, session_id,
-                    "plot", f"후속 분석 차트",
+                    "plot", "후속 분석 차트",
                     dest, "image/png",
                     os.path.getsize(dest),
                     None,

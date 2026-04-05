@@ -3,12 +3,10 @@
 import enum
 import uuid
 
-from sqlalchemy import BigInteger, Enum, ForeignKey, String, Text
-from sqlalchemy import JSON
-from app.db.models.base import UUIDString
+from sqlalchemy import JSON, BigInteger, Enum, ForeignKey, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from app.db.models.base import BaseModel
+from app.db.models.base import BaseModel, UUIDString
 
 
 class ArtifactType(str, enum.Enum):

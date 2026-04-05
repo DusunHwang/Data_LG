@@ -2,9 +2,8 @@
 
 import json
 import os
-import uuid
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional, Tuple
+from typing import List, Optional, Tuple
 
 import joblib
 import numpy as np
@@ -108,11 +107,13 @@ def run_modeling_subgraph(state: GraphState) -> GraphState:
 
         full_data_features, feature_names = build_feature_matrix(df, target_col)
         if full_data_features is not None:
+            # y 값 추출 (x 인덱스에 맞춤)
+            y_full = df.loc[full_data_features.index, target_col].fillna(df[target_col].median())
             training_datasets.append({
                 "name": "전체 데이터",
                 "subset_no": None,
-                "X": full_data_features,
-                "y": df.loc[full_data_features.index, target_col].fillna(df[target_col].median()),
+                "x": full_data_features,
+                "y": y_full,
                 "feature_names": feature_names,
             })
 
@@ -131,7 +132,7 @@ def run_modeling_subgraph(state: GraphState) -> GraphState:
 
             try:
                 result = _train_lgbm(
-                    td["X"], td["y"], td["name"], td["feature_names"], td.get("subset_no")
+                    td["x"], td["y"], td["name"], td["feature_names"], td.get("subset_no")
                 )
                 model_results.append(result)
             except Exception as e:
@@ -197,6 +198,8 @@ def build_feature_matrix(
     - 카테고리형 자동 인코딩 (LightGBM 기본 지원)
     - 타겟 컬럼의 결측 행 제거
     """
+    from app.graph.helpers import prepare_feature_matrix
+
     # 타겟 결측 제거
     df_clean = df.dropna(subset=[target_col]).copy()
 
@@ -212,7 +215,6 @@ def build_feature_matrix(
         series = df_clean[col]
         n_unique = series.nunique(dropna=True)
         n_total = len(series)
-        unique_ratio = n_unique / n_total if n_total > 0 else 0
 
         if n_unique <= 1:  # 상수
             exclude.append(col)
@@ -224,23 +226,14 @@ def build_feature_matrix(
     if not feature_cols:
         return None, []
 
-    X = df_clean[feature_cols].copy()
+    # prepare_feature_matrix 사용
+    x = prepare_feature_matrix(df_clean, feature_cols)
 
-    # 카테고리형 처리 (LightGBM은 category dtype 직접 지원)
-    for col in X.columns:
-        if X[col].dtype == "object":
-            X[col] = X[col].fillna("__missing__").astype("category")
-        elif str(X[col].dtype) == "category":
-            # 결측값 처리
-            if X[col].isnull().any():
-                X[col] = X[col].cat.add_categories(["__missing__"])
-                X[col] = X[col].fillna("__missing__")
-
-    return X, feature_cols
+    return x, feature_cols
 
 
 def _train_lgbm(
-    X: pd.DataFrame,
+    x: pd.DataFrame,
     y: pd.Series,
     name: str,
     feature_names: List[str],
@@ -252,20 +245,20 @@ def _train_lgbm(
     from sklearn.model_selection import train_test_split
 
     # train/val 분할 (80/20)
-    X_train, X_val, y_train, y_val = train_test_split(
-        X, y, test_size=0.2, random_state=42
+    x_train, x_val, y_train, y_val = train_test_split(
+        x, y, test_size=0.2, random_state=42
     )
 
     # LightGBM 데이터셋 생성
-    categorical_features = [col for col in X_train.columns
-                            if str(X_train[col].dtype) == "category"]
+    categorical_features = [col for col in x_train.columns
+                            if str(x_train[col].dtype) == "category"]
 
     train_data = lgb.Dataset(
-        X_train, label=y_train,
+        x_train, label=y_train,
         categorical_feature=categorical_features if categorical_features else "auto",
     )
     val_data = lgb.Dataset(
-        X_val, label=y_val, reference=train_data,
+        x_val, label=y_val, reference=train_data,
         categorical_feature=categorical_features if categorical_features else "auto",
     )
 
@@ -282,12 +275,15 @@ def _train_lgbm(
     )
 
     # 평가
-    y_pred_val = model.predict(X_val)
-    y_pred_train = model.predict(X_train)
+    y_pred_val = model.predict(x_val)
+    y_pred_train = model.predict(x_train)
 
     def _mape(y_true, y_pred):
         mask = np.abs(y_true) > 1e-8
-        return float(np.mean(np.abs((y_true[mask] - y_pred[mask]) / y_true[mask])) * 100) if mask.any() else float("nan")
+        return (
+            float(np.mean(np.abs((y_true[mask] - y_pred[mask]) / y_true[mask])) * 100)
+            if mask.any() else float("nan")
+        )
 
     train_rmse = float(np.sqrt(mean_squared_error(y_train, y_pred_train)))
     train_mae  = float(mean_absolute_error(y_train, y_pred_train))
@@ -307,7 +303,10 @@ def _train_lgbm(
     })
 
     # 피처 중요도
-    importance = dict(zip(model.feature_name(), model.feature_importance(importance_type="gain").tolist()))
+    importance = dict(zip(
+        model.feature_name(),
+        model.feature_importance(importance_type="gain").tolist()
+    ))
 
     return {
         "name": name,
@@ -323,8 +322,8 @@ def _train_lgbm(
         "val_mae":  round(val_mae, 6),
         "val_mape": round(val_mape, 4) if not np.isnan(val_mape) else None,
         "val_r2":   round(val_r2, 6),
-        "n_train": len(X_train),
-        "n_val": len(X_val),
+        "n_train": len(x_train),
+        "n_val": len(x_val),
         "n_features": len(feature_names),
         "best_iteration": model.best_iteration,
         "feature_importances": importance,
@@ -336,7 +335,7 @@ def _train_lgbm(
         "y_train_pred": y_pred_train,
         "y_val_true":   y_val.values,
         "y_val_pred":   y_pred_val,
-        "X_val": X_val,  # SHAP을 위해 보관
+        "x_val": x_val,  # SHAP을 위해 보관
         "is_champion": False,
     }
 
@@ -607,6 +606,7 @@ def _save_comparison_plot(
         import matplotlib
         matplotlib.use("Agg")
         import matplotlib.pyplot as plt
+
         from app.graph.helpers import setup_korean_font
         setup_korean_font()
 

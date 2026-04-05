@@ -4,10 +4,9 @@ import uuid
 from datetime import datetime
 
 from sqlalchemy import DateTime, ForeignKey, Integer, String, Text
-from app.db.models.base import UUIDString
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from app.db.models.base import BaseModel
+from app.db.models.base import BaseModel, UUIDString
 
 
 class Session(BaseModel):

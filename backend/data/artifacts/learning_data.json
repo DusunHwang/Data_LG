@@ -71,20 +71,1201 @@
       "artifact_count": 1,
       "relevance_score": 0,
       "query_preview": "RAD가 1인 데이터만 출력해줘\n\n[재분석 가설] 데이터 필터링을 통해 RAD가 1인 데이터만 추출하고, 이를 시각화하거나 테이블로 출력하는 분"
+    },
+    {
+      "ts": "2026-04-03T07:42:15.018262+00:00",
+      "intent": "create_dataframe",
+      "method": "direct_code",
+      "success": true,
+      "artifact_count": 2,
+      "relevance_score": 9,
+      "query_preview": "전체 데이터 개수는?"
+    },
+    {
+      "ts": "2026-04-03T07:42:42.232698+00:00",
+      "intent": "create_dataframe",
+      "method": "direct_code",
+      "success": true,
+      "artifact_count": 1,
+      "relevance_score": 7,
+      "query_preview": "전체 데이터를 다시 출력해줘"
+    },
+    {
+      "ts": "2026-04-03T07:43:47.734763+00:00",
+      "intent": "create_dataframe",
+      "method": "direct_code",
+      "success": true,
+      "artifact_count": 2,
+      "relevance_score": 9,
+      "query_preview": "전체 데이터 개수는?"
+    },
+    {
+      "ts": "2026-04-03T07:44:30.051977+00:00",
+      "intent": "create_dataframe",
+      "method": "direct_code",
+      "success": true,
+      "artifact_count": 1,
+      "relevance_score": 8,
+      "query_preview": "전체 데이터 프레임을 다시 출력해줘"
+    },
+    {
+      "ts": "2026-04-03T08:37:51.859963+00:00",
+      "intent": "create_dataframe",
+      "method": "direct_code",
+      "success": true,
+      "artifact_count": 1,
+      "relevance_score": 8,
+      "query_preview": "전체 데이터 프레임 출력해줘"
+    },
+    {
+      "ts": "2026-04-03T08:54:20.660381+00:00",
+      "intent": "create_dataframe",
+      "method": "direct_code",
+      "success": true,
+      "artifact_count": 1,
+      "relevance_score": 7,
+      "query_preview": "전체 데이터 출력해줘"
+    },
+    {
+      "ts": "2026-04-03T08:58:51.045701+00:00",
+      "intent": "create_dataframe",
+      "method": "direct_code",
+      "success": true,
+      "artifact_count": 1,
+      "relevance_score": 7,
+      "query_preview": "전체 데이터 프레임 보여줘"
+    },
+    {
+      "ts": "2026-04-03T09:57:36.465408+00:00",
+      "intent": "create_dataframe",
+      "method": "direct_code",
+      "success": true,
+      "artifact_count": 2,
+      "relevance_score": 8,
+      "query_preview": "전체 데이터 출력해줘"
+    },
+    {
+      "ts": "2026-04-03T09:58:04.714914+00:00",
+      "intent": "create_dataframe",
+      "method": "direct_code",
+      "success": true,
+      "artifact_count": 2,
+      "relevance_score": 9,
+      "query_preview": "RAD =1 인 데이터 셋 추출해줘"
+    },
+    {
+      "ts": "2026-04-03T10:10:59.661021+00:00",
+      "intent": "create_dataframe",
+      "method": "direct_code",
+      "success": true,
+      "artifact_count": 2,
+      "relevance_score": 8,
+      "query_preview": "다시 전체 데이터 보여줘"
+    },
+    {
+      "ts": "2026-04-03T10:11:44.361874+00:00",
+      "intent": "create_dataframe",
+      "method": "direct_code",
+      "success": true,
+      "artifact_count": 10,
+      "relevance_score": 7,
+      "query_preview": "RAD에 대해서 groupby 해줘"
+    },
+    {
+      "ts": "2026-04-03T10:12:31.905351+00:00",
+      "intent": "create_dataframe",
+      "method": "direct_code",
+      "success": true,
+      "artifact_count": 10,
+      "relevance_score": 8,
+      "query_preview": "RAD 에 대해서 groupby 해줘"
+    },
+    {
+      "ts": "2026-04-03T10:13:36.903910+00:00",
+      "intent": "dataset_profile",
+      "method": "direct_code",
+      "success": true,
+      "artifact_count": 4,
+      "relevance_score": 9,
+      "query_preview": "데이터셋 프로파일 분석"
+    },
+    {
+      "ts": "2026-04-03T10:17:39.034176+00:00",
+      "intent": "create_dataframe",
+      "method": "direct_code",
+      "success": true,
+      "artifact_count": 2,
+      "relevance_score": 8,
+      "query_preview": "MEDV 하위 10%는 버리고 다시 데이터셋 만들어줘"
+    },
+    {
+      "ts": "2026-04-03T14:09:40.148395+00:00",
+      "intent": "create_dataframe",
+      "method": "direct_code",
+      "success": true,
+      "artifact_count": 2,
+      "relevance_score": 8,
+      "query_preview": "현재 데이터셋 보여줘"
+    },
+    {
+      "ts": "2026-04-03T14:39:51.328759+00:00",
+      "intent": "baseline_modeling",
+      "method": "direct_code",
+      "success": true,
+      "artifact_count": 5,
+      "relevance_score": 9,
+      "query_preview": "LightGBM baseline 모델링 실행"
+    },
+    {
+      "ts": "2026-04-03T14:41:25.490032+00:00",
+      "intent": "eda",
+      "method": "direct_code",
+      "success": true,
+      "artifact_count": 6,
+      "relevance_score": 7,
+      "query_preview": "전체 데이터에 대해서 comparison plot 그려주고 r2 표시해줘"
+    },
+    {
+      "ts": "2026-04-03T15:00:26.820514+00:00",
+      "intent": "dataset_profile",
+      "method": "direct_code",
+      "success": true,
+      "artifact_count": 4,
+      "relevance_score": 8,
+      "query_preview": "데이터셋 프로파일 분석"
+    },
+    {
+      "ts": "2026-04-03T15:00:46.194387+00:00",
+      "intent": "subset_discovery",
+      "method": "direct_code",
+      "success": true,
+      "artifact_count": 6,
+      "relevance_score": 7,
+      "query_preview": "dense subset 5개 발견"
+    },
+    {
+      "ts": "2026-04-03T15:12:25.923525+00:00",
+      "intent": "dataset_profile",
+      "method": "direct_code",
+      "success": true,
+      "artifact_count": 4,
+      "relevance_score": 7,
+      "query_preview": "데이터 개수는?"
+    },
+    {
+      "ts": "2026-04-03T15:13:22.884312+00:00",
+      "intent": "eda",
+      "method": "direct_code",
+      "success": true,
+      "artifact_count": 2,
+      "relevance_score": 8,
+      "query_preview": "각 컬럼별로 stripplot 과 boxplot 을 overlay 해줘"
+    },
+    {
+      "ts": "2026-04-03T15:16:09.507436+00:00",
+      "intent": "create_dataframe",
+      "method": "direct_code",
+      "success": true,
+      "artifact_count": 2,
+      "relevance_score": 8,
+      "query_preview": "아웃라이어를 제거하고 다시 그려줘"
+    },
+    {
+      "ts": "2026-04-03T15:18:04.432593+00:00",
+      "intent": "baseline_modeling",
+      "method": "direct_code",
+      "success": true,
+      "artifact_count": 5,
+      "relevance_score": 9,
+      "query_preview": "LightGBM baseline 모델링 실행"
+    },
+    {
+      "ts": "2026-04-03T15:19:03.864069+00:00",
+      "intent": "baseline_modeling",
+      "method": "direct_code",
+      "success": true,
+      "artifact_count": 5,
+      "relevance_score": 9,
+      "query_preview": "LightGBM baseline 모델링 실행"
+    },
+    {
+      "ts": "2026-04-03T15:22:27.858351+00:00",
+      "intent": "subset_discovery",
+      "method": "direct_code",
+      "success": true,
+      "artifact_count": 6,
+      "relevance_score": 7,
+      "query_preview": "dense subset 5개 발견"
+    },
+    {
+      "ts": "2026-04-04T15:44:12.999597+00:00",
+      "intent": "dataset_profile",
+      "method": "direct_code",
+      "success": true,
+      "artifact_count": 4,
+      "relevance_score": 8,
+      "query_preview": "데이터 프로파일링을 수행해줘"
+    },
+    {
+      "ts": "2026-04-04T15:44:35.574586+00:00",
+      "intent": "dataset_profile",
+      "method": "direct_code",
+      "success": true,
+      "artifact_count": 4,
+      "relevance_score": 8,
+      "query_preview": "데이터 프로파일링을 수행해줘"
+    },
+    {
+      "ts": "2026-04-04T16:01:35.869653+00:00",
+      "intent": "dataset_profile",
+      "method": "direct_code",
+      "success": true,
+      "artifact_count": 4,
+      "relevance_score": 9,
+      "query_preview": "데이터 프로파일링을 수행해줘"
+    },
+    {
+      "ts": "2026-04-04T22:42:36.386214+00:00",
+      "intent": "dataset_profile",
+      "method": "direct_code",
+      "success": true,
+      "artifact_count": 4,
+      "relevance_score": 9,
+      "query_preview": "데이터 프로파일링을 수행해줘"
+    },
+    {
+      "ts": "2026-04-04T22:44:02.571197+00:00",
+      "intent": "subset_discovery",
+      "method": "direct_code",
+      "success": true,
+      "artifact_count": 6,
+      "relevance_score": 7,
+      "query_preview": "데이터 서브셋 패턴을 찾아줘"
+    },
+    {
+      "ts": "2026-04-04T22:45:02.714394+00:00",
+      "intent": "eda",
+      "method": "direct_code",
+      "success": true,
+      "artifact_count": 2,
+      "relevance_score": 9,
+      "query_preview": "MEDV 컬럼을 boxplot 으로 보여줘"
+    },
+    {
+      "ts": "2026-04-04T22:49:44.962754+00:00",
+      "intent": "eda",
+      "method": "direct_code",
+      "success": true,
+      "artifact_count": 2,
+      "relevance_score": 9,
+      "query_preview": "MEDV 컬럼을 boxplot 으로 보여줘"
+    },
+    {
+      "ts": "2026-04-04T22:50:30.345829+00:00",
+      "intent": "eda",
+      "method": "direct_code",
+      "success": true,
+      "artifact_count": 4,
+      "relevance_score": 7,
+      "query_preview": "MEDV 컬럼의 평균값은?"
+    },
+    {
+      "ts": "2026-04-04T22:53:28.156597+00:00",
+      "intent": "dataset_profile",
+      "method": "direct_code",
+      "success": true,
+      "artifact_count": 4,
+      "relevance_score": 8,
+      "query_preview": "컬럼 이름 모두 출력해줘"
+    },
+    {
+      "ts": "2026-04-04T22:54:16.558632+00:00",
+      "intent": "eda",
+      "method": "direct_code",
+      "success": true,
+      "artifact_count": 2,
+      "relevance_score": 9,
+      "query_preview": "MEDV 컬럼 boxplot 으로 그려줘"
+    },
+    {
+      "ts": "2026-04-04T22:54:51.176028+00:00",
+      "intent": "dataset_profile",
+      "method": "direct_code",
+      "success": true,
+      "artifact_count": 4,
+      "relevance_score": 8,
+      "query_preview": "데이터 프로파일링을 수행해줘"
+    },
+    {
+      "ts": "2026-04-04T22:55:55.316618+00:00",
+      "intent": "dataset_profile",
+      "method": "direct_code",
+      "success": true,
+      "artifact_count": 4,
+      "relevance_score": 7,
+      "query_preview": "데이터의 크기는?"
+    },
+    {
+      "ts": "2026-04-04T22:57:06.567711+00:00",
+      "intent": "eda",
+      "method": "direct_code",
+      "success": true,
+      "artifact_count": 2,
+      "relevance_score": 9,
+      "query_preview": "CAT.MEDV 에 따른 MEDV 값을 sripplot 으로 나타내줘"
+    },
+    {
+      "ts": "2026-04-04T23:04:00.877324+00:00",
+      "intent": "eda",
+      "method": "direct_code",
+      "success": true,
+      "artifact_count": 8,
+      "relevance_score": 7,
+      "query_preview": "MEDV 와 상관이 높은 3개의 변수에 대해서 MEDV와의 산점도를 그리고 R2를 표시해줘"
+    },
+    {
+      "ts": "2026-04-04T23:05:50.821747+00:00",
+      "intent": "create_dataframe",
+      "method": "direct_code",
+      "success": true,
+      "artifact_count": 2,
+      "relevance_score": 9,
+      "query_preview": "MEDV/RM 을 MEDV_per_RM 이라는 새로운 컬럼으로 만들어서 전체 데이터에 추가해줘"
+    },
+    {
+      "ts": "2026-04-04T23:14:28.128428+00:00",
+      "intent": "eda",
+      "method": "direct_code",
+      "success": true,
+      "artifact_count": 4,
+      "relevance_score": 7,
+      "query_preview": "MEDV_per_RM 컬럼과 가장 상관이 높은 3개 컬럼과 산점도를 그리고 r2를 표시해줘"
+    },
+    {
+      "ts": "2026-04-04T23:21:00.822978+00:00",
+      "intent": "dataset_profile",
+      "method": "direct_code",
+      "success": true,
+      "artifact_count": 4,
+      "relevance_score": 8,
+      "query_preview": "데이터 프로파일링을 수행해줘"
+    },
+    {
+      "ts": "2026-04-04T23:21:48.975173+00:00",
+      "intent": "create_dataframe",
+      "method": "direct_code",
+      "success": true,
+      "artifact_count": 2,
+      "relevance_score": 9,
+      "query_preview": "MperR 이라는 컬럼을 MEDV/RM 연산으로 만들어서 데이터 프레임에 추가해줘"
+    },
+    {
+      "ts": "2026-04-04T23:34:16.698038+00:00",
+      "intent": "eda",
+      "method": "direct_code",
+      "success": true,
+      "artifact_count": 4,
+      "relevance_score": 7,
+      "query_preview": "MperR 과 상관계수가 높은 3개 컬럼을 MperR 과 산점도로 나타내고 r2 도 산점도에 표시해줘"
+    },
+    {
+      "ts": "2026-04-05T02:18:42.333289+00:00",
+      "intent": "eda",
+      "method": "direct_code",
+      "success": true,
+      "artifact_count": 4,
+      "relevance_score": 7,
+      "query_preview": "MperR 과 가장 상관이 높은 수치형 컬럼 3개를 뽑아서 산점도를 그려줘."
+    },
+    {
+      "ts": "2026-04-05T02:24:37.743669+00:00",
+      "intent": "dataset_profile",
+      "method": "direct_code",
+      "success": true,
+      "artifact_count": 4,
+      "relevance_score": 7,
+      "query_preview": "MperR이라는 컬럼이 있나?"
+    },
+    {
+      "ts": "2026-04-05T02:25:20.582632+00:00",
+      "intent": "dataset_profile",
+      "method": "direct_code",
+      "success": true,
+      "artifact_count": 4,
+      "relevance_score": 7,
+      "query_preview": "MperR 이라는 컬럼 있나?"
+    },
+    {
+      "ts": "2026-04-05T02:28:46.953905+00:00",
+      "intent": "eda",
+      "method": "direct_code",
+      "success": true,
+      "artifact_count": 4,
+      "relevance_score": 7,
+      "query_preview": "MperR 이라는 컬럼에 대해 stripplot 그려줘"
+    },
+    {
+      "ts": "2026-04-05T02:29:35.903197+00:00",
+      "intent": "eda",
+      "method": "direct_code",
+      "success": true,
+      "artifact_count": 4,
+      "relevance_score": 7,
+      "query_preview": "MperR 컬럼으 KDEplot 으로 그려줘"
+    },
+    {
+      "ts": "2026-04-05T02:30:58.055508+00:00",
+      "intent": "eda",
+      "method": "direct_code",
+      "success": true,
+      "artifact_count": 2,
+      "relevance_score": 9,
+      "query_preview": "MperR 컬럼으 KDEplot 으로 그려줘"
+    },
+    {
+      "ts": "2026-04-05T02:32:02.180032+00:00",
+      "intent": "eda",
+      "method": "direct_code",
+      "success": true,
+      "artifact_count": 8,
+      "relevance_score": 7,
+      "query_preview": "MperR 컬럼과 상관이 높은 3개의 컬럼에 대해서 산점도를 그리고 r2를 표시해줘"
+    },
+    {
+      "ts": "2026-04-05T02:48:29.658613+00:00",
+      "intent": "baseline_modeling",
+      "method": "direct_code",
+      "success": true,
+      "artifact_count": 5,
+      "relevance_score": 8,
+      "query_preview": "기준 머신러닝 모델을 구축해줘"
+    },
+    {
+      "ts": "2026-04-05T02:49:59.604439+00:00",
+      "intent": "eda",
+      "method": "direct_code",
+      "success": true,
+      "artifact_count": 4,
+      "relevance_score": 7,
+      "query_preview": "챔피언 모델로 real-pred 산점도 그려줘"
+    },
+    {
+      "ts": "2026-04-05T02:55:01.046403+00:00",
+      "intent": "baseline_modeling",
+      "method": "direct_code",
+      "success": true,
+      "artifact_count": 7,
+      "relevance_score": 9,
+      "query_preview": "기준 머신러닝 모델을 구축해줘"
+    },
+    {
+      "ts": "2026-04-05T02:57:12.291457+00:00",
+      "intent": "baseline_modeling",
+      "method": "direct_code",
+      "success": true,
+      "artifact_count": 7,
+      "relevance_score": 9,
+      "query_preview": "기준 머신러닝 모델을 구축해줘"
+    },
+    {
+      "ts": "2026-04-05T02:57:26.165612+00:00",
+      "intent": "baseline_modeling",
+      "method": "direct_code",
+      "success": true,
+      "artifact_count": 7,
+      "relevance_score": 9,
+      "query_preview": "기준 머신러닝 모델을 구축해줘"
+    },
+    {
+      "ts": "2026-04-05T03:06:50.013085+00:00",
+      "intent": "baseline_modeling",
+      "method": "direct_code",
+      "success": true,
+      "artifact_count": 7,
+      "relevance_score": 9,
+      "query_preview": "기준 머신러닝 모델을 구축해줘"
+    },
+    {
+      "ts": "2026-04-05T03:07:04.165767+00:00",
+      "intent": "baseline_modeling",
+      "method": "direct_code",
+      "success": true,
+      "artifact_count": 7,
+      "relevance_score": 8,
+      "query_preview": "기준 머신러닝 모델을 구축해줘"
+    },
+    {
+      "ts": "2026-04-05T03:19:06.489029+00:00",
+      "intent": "baseline_modeling",
+      "method": "direct_code",
+      "success": true,
+      "artifact_count": 7,
+      "relevance_score": 9,
+      "query_preview": "기준 머신러닝 모델을 구축해줘"
+    },
+    {
+      "ts": "2026-04-05T03:19:21.914673+00:00",
+      "intent": "baseline_modeling",
+      "method": "direct_code",
+      "success": true,
+      "artifact_count": 7,
+      "relevance_score": 9,
+      "query_preview": "기준 머신러닝 모델을 구축해줘"
+    },
+    {
+      "ts": "2026-04-05T03:20:43.886553+00:00",
+      "intent": "baseline_modeling",
+      "method": "direct_code",
+      "success": true,
+      "artifact_count": 7,
+      "relevance_score": 9,
+      "query_preview": "기준 머신러닝 모델을 구축해줘"
+    },
+    {
+      "ts": "2026-04-05T03:20:57.465013+00:00",
+      "intent": "baseline_modeling",
+      "method": "direct_code",
+      "success": true,
+      "artifact_count": 7,
+      "relevance_score": 9,
+      "query_preview": "기준 머신러닝 모델을 구축해줘"
+    },
+    {
+      "ts": "2026-04-05T03:25:35.154678+00:00",
+      "intent": "baseline_modeling",
+      "method": "direct_code",
+      "success": true,
+      "artifact_count": 7,
+      "relevance_score": 9,
+      "query_preview": "기준 머신러닝 모델을 구축해줘"
+    },
+    {
+      "ts": "2026-04-05T03:25:49.310989+00:00",
+      "intent": "baseline_modeling",
+      "method": "direct_code",
+      "success": true,
+      "artifact_count": 7,
+      "relevance_score": 8,
+      "query_preview": "기준 머신러닝 모델을 구축해줘"
+    },
+    {
+      "ts": "2026-04-05T03:30:04.007994+00:00",
+      "intent": "baseline_modeling",
+      "method": "direct_code",
+      "success": true,
+      "artifact_count": 7,
+      "relevance_score": 9,
+      "query_preview": "기준 머신러닝 모델을 구축해줘"
+    },
+    {
+      "ts": "2026-04-05T03:30:15.990120+00:00",
+      "intent": "baseline_modeling",
+      "method": "direct_code",
+      "success": true,
+      "artifact_count": 7,
+      "relevance_score": 9,
+      "query_preview": "기준 머신러닝 모델을 구축해줘"
+    },
+    {
+      "ts": "2026-04-05T03:35:43.540414+00:00",
+      "intent": "baseline_modeling",
+      "method": "direct_code",
+      "success": true,
+      "artifact_count": 7,
+      "relevance_score": 9,
+      "query_preview": "기준 머신러닝 모델을 구축해줘"
+    },
+    {
+      "ts": "2026-04-05T03:35:57.903184+00:00",
+      "intent": "baseline_modeling",
+      "method": "direct_code",
+      "success": true,
+      "artifact_count": 7,
+      "relevance_score": 9,
+      "query_preview": "기준 머신러닝 모델을 구축해줘"
+    },
+    {
+      "ts": "2026-04-05T03:41:54.399717+00:00",
+      "intent": "baseline_modeling",
+      "method": "direct_code",
+      "success": true,
+      "artifact_count": 7,
+      "relevance_score": 9,
+      "query_preview": "기준 머신러닝 모델을 구축해줘"
+    },
+    {
+      "ts": "2026-04-05T03:42:09.043646+00:00",
+      "intent": "baseline_modeling",
+      "method": "direct_code",
+      "success": true,
+      "artifact_count": 7,
+      "relevance_score": 9,
+      "query_preview": "기준 머신러닝 모델을 구축해줘"
+    },
+    {
+      "ts": "2026-04-05T03:42:38.372460+00:00",
+      "intent": "shap_analysis",
+      "method": "direct_code",
+      "success": true,
+      "artifact_count": 5,
+      "relevance_score": 9,
+      "query_preview": "SHAP 특성 중요도를 분석해줘"
+    },
+    {
+      "ts": "2026-04-05T03:42:48.301177+00:00",
+      "intent": "shap_analysis",
+      "method": "direct_code",
+      "success": true,
+      "artifact_count": 5,
+      "relevance_score": 7,
+      "query_preview": "SHAP 특성 중요도를 분석해줘"
+    },
+    {
+      "ts": "2026-04-05T03:47:15.761234+00:00",
+      "intent": "baseline_modeling",
+      "method": "direct_code",
+      "success": true,
+      "artifact_count": 7,
+      "relevance_score": 9,
+      "query_preview": "기준 머신러닝 모델을 구축해줘"
+    },
+    {
+      "ts": "2026-04-05T03:47:27.130241+00:00",
+      "intent": "baseline_modeling",
+      "method": "direct_code",
+      "success": true,
+      "artifact_count": 7,
+      "relevance_score": 9,
+      "query_preview": "기준 머신러닝 모델을 구축해줘"
+    },
+    {
+      "ts": "2026-04-05T03:48:21.952532+00:00",
+      "intent": "shap_analysis",
+      "method": "direct_code",
+      "success": true,
+      "artifact_count": 5,
+      "relevance_score": 9,
+      "query_preview": "SHAP 특성 중요도를 분석해줘"
+    },
+    {
+      "ts": "2026-04-05T03:48:33.427923+00:00",
+      "intent": "shap_analysis",
+      "method": "direct_code",
+      "success": true,
+      "artifact_count": 5,
+      "relevance_score": 9,
+      "query_preview": "SHAP 특성 중요도를 분석해줘"
+    },
+    {
+      "ts": "2026-04-05T03:58:08.841585+00:00",
+      "intent": "subset_discovery",
+      "method": "direct_code",
+      "success": true,
+      "artifact_count": 6,
+      "relevance_score": 8,
+      "query_preview": "데이터 서브셋 패턴을 찾아줘"
+    },
+    {
+      "ts": "2026-04-05T03:58:22.481340+00:00",
+      "intent": "subset_discovery",
+      "method": "direct_code",
+      "success": true,
+      "artifact_count": 6,
+      "relevance_score": 8,
+      "query_preview": "데이터 서브셋 패턴을 찾아줘"
+    },
+    {
+      "ts": "2026-04-05T03:58:48.831666+00:00",
+      "intent": "baseline_modeling",
+      "method": "direct_code",
+      "success": true,
+      "artifact_count": 17,
+      "relevance_score": 8,
+      "query_preview": "기준 머신러닝 모델을 구축해줘"
+    },
+    {
+      "ts": "2026-04-05T03:59:16.980441+00:00",
+      "intent": "baseline_modeling",
+      "method": "direct_code",
+      "success": true,
+      "artifact_count": 17,
+      "relevance_score": 8,
+      "query_preview": "기준 머신러닝 모델을 구축해줘"
+    },
+    {
+      "ts": "2026-04-05T04:00:06.951120+00:00",
+      "intent": "shap_analysis",
+      "method": "direct_code",
+      "success": true,
+      "artifact_count": 4,
+      "relevance_score": 9,
+      "query_preview": "SHAP 특성 중요도를 분석해줘"
+    },
+    {
+      "ts": "2026-04-05T04:00:19.345510+00:00",
+      "intent": "shap_analysis",
+      "method": "direct_code",
+      "success": true,
+      "artifact_count": 4,
+      "relevance_score": 7,
+      "query_preview": "SHAP 특성 중요도를 분석해줘"
+    },
+    {
+      "ts": "2026-04-05T04:06:46.581623+00:00",
+      "intent": "subset_discovery",
+      "method": "direct_code",
+      "success": true,
+      "artifact_count": 6,
+      "relevance_score": 7,
+      "query_preview": "데이터 서브셋 패턴을 찾아줘"
+    },
+    {
+      "ts": "2026-04-05T04:06:59.033080+00:00",
+      "intent": "subset_discovery",
+      "method": "direct_code",
+      "success": true,
+      "artifact_count": 6,
+      "relevance_score": 8,
+      "query_preview": "데이터 서브셋 패턴을 찾아줘"
+    },
+    {
+      "ts": "2026-04-05T04:08:25.290696+00:00",
+      "intent": "create_dataframe",
+      "method": "direct_code",
+      "success": true,
+      "artifact_count": 2,
+      "relevance_score": 7,
+      "query_preview": "전체 row 의 수는?"
+    },
+    {
+      "ts": "2026-04-05T04:08:35.015393+00:00",
+      "intent": "create_dataframe",
+      "method": "direct_code",
+      "success": true,
+      "artifact_count": 2,
+      "relevance_score": 8,
+      "query_preview": "전체 row 의 수는?"
+    },
+    {
+      "ts": "2026-04-05T04:09:01.851065+00:00",
+      "intent": "create_dataframe",
+      "method": "direct_code",
+      "success": true,
+      "artifact_count": 2,
+      "relevance_score": 7,
+      "query_preview": "전체row의 수는?"
+    },
+    {
+      "ts": "2026-04-05T04:09:10.611525+00:00",
+      "intent": "dataset_profile",
+      "method": "direct_code",
+      "success": true,
+      "artifact_count": 4,
+      "relevance_score": 7,
+      "query_preview": "전체row의 수는?"
+    },
+    {
+      "ts": "2026-04-05T04:13:43.687762+00:00",
+      "intent": "dataset_profile",
+      "method": "direct_code",
+      "success": true,
+      "artifact_count": 4,
+      "relevance_score": 9,
+      "query_preview": "데이터 프로파일링을 수행해줘"
+    },
+    {
+      "ts": "2026-04-05T04:13:51.948331+00:00",
+      "intent": "dataset_profile",
+      "method": "direct_code",
+      "success": true,
+      "artifact_count": 4,
+      "relevance_score": 9,
+      "query_preview": "데이터 프로파일링을 수행해줘"
+    },
+    {
+      "ts": "2026-04-05T04:14:48.886002+00:00",
+      "intent": "subset_discovery",
+      "method": "direct_code",
+      "success": true,
+      "artifact_count": 6,
+      "relevance_score": 8,
+      "query_preview": "데이터 서브셋 패턴을 찾아줘"
+    },
+    {
+      "ts": "2026-04-05T04:15:02.326654+00:00",
+      "intent": "subset_discovery",
+      "method": "direct_code",
+      "success": true,
+      "artifact_count": 6,
+      "relevance_score": 7,
+      "query_preview": "데이터 서브셋 패턴을 찾아줘"
+    },
+    {
+      "ts": "2026-04-05T04:19:14.276209+00:00",
+      "intent": "dataset_profile",
+      "method": "direct_code",
+      "success": true,
+      "artifact_count": 4,
+      "relevance_score": 9,
+      "query_preview": "데이터 프로파일링을 수행해줘"
+    },
+    {
+      "ts": "2026-04-05T04:19:22.977166+00:00",
+      "intent": "dataset_profile",
+      "method": "direct_code",
+      "success": true,
+      "artifact_count": 4,
+      "relevance_score": 9,
+      "query_preview": "데이터 프로파일링을 수행해줘"
+    },
+    {
+      "ts": "2026-04-05T04:19:47.733935+00:00",
+      "intent": "subset_discovery",
+      "method": "direct_code",
+      "success": true,
+      "artifact_count": 6,
+      "relevance_score": 7,
+      "query_preview": "데이터 서브셋 패턴을 찾아줘"
+    },
+    {
+      "ts": "2026-04-05T04:19:58.486421+00:00",
+      "intent": "subset_discovery",
+      "method": "direct_code",
+      "success": true,
+      "artifact_count": 6,
+      "relevance_score": 7,
+      "query_preview": "데이터 서브셋 패턴을 찾아줘"
+    },
+    {
+      "ts": "2026-04-05T04:25:49.674000+00:00",
+      "intent": "dataset_profile",
+      "method": "direct_code",
+      "success": true,
+      "artifact_count": 4,
+      "relevance_score": 9,
+      "query_preview": "데이터 프로파일링을 수행해줘"
+    },
+    {
+      "ts": "2026-04-05T04:25:57.662137+00:00",
+      "intent": "dataset_profile",
+      "method": "direct_code",
+      "success": true,
+      "artifact_count": 4,
+      "relevance_score": 9,
+      "query_preview": "데이터 프로파일링을 수행해줘"
+    },
+    {
+      "ts": "2026-04-05T04:26:21.421696+00:00",
+      "intent": "subset_discovery",
+      "method": "direct_code",
+      "success": true,
+      "artifact_count": 6,
+      "relevance_score": 8,
+      "query_preview": "데이터 서브셋 패턴을 찾아줘"
+    },
+    {
+      "ts": "2026-04-05T04:26:31.293824+00:00",
+      "intent": "subset_discovery",
+      "method": "direct_code",
+      "success": true,
+      "artifact_count": 6,
+      "relevance_score": 7,
+      "query_preview": "데이터 서브셋 패턴을 찾아줘"
+    },
+    {
+      "ts": "2026-04-05T04:31:27.476892+00:00",
+      "intent": "dataset_profile",
+      "method": "direct_code",
+      "success": true,
+      "artifact_count": 4,
+      "relevance_score": 8,
+      "query_preview": "데이터 프로파일링을 수행해줘"
+    },
+    {
+      "ts": "2026-04-05T04:31:35.786061+00:00",
+      "intent": "dataset_profile",
+      "method": "direct_code",
+      "success": true,
+      "artifact_count": 4,
+      "relevance_score": 9,
+      "query_preview": "데이터 프로파일링을 수행해줘"
+    },
+    {
+      "ts": "2026-04-05T04:34:38.226352+00:00",
+      "intent": "dataset_profile",
+      "method": "direct_code",
+      "success": true,
+      "artifact_count": 4,
+      "relevance_score": 8,
+      "query_preview": "데이터 프로파일링을 수행해줘"
+    },
+    {
+      "ts": "2026-04-05T04:34:48.266428+00:00",
+      "intent": "dataset_profile",
+      "method": "direct_code",
+      "success": true,
+      "artifact_count": 4,
+      "relevance_score": 8,
+      "query_preview": "데이터 프로파일링을 수행해줘"
+    },
+    {
+      "ts": "2026-04-05T04:35:09.854625+00:00",
+      "intent": "subset_discovery",
+      "method": "direct_code",
+      "success": true,
+      "artifact_count": 6,
+      "relevance_score": 8,
+      "query_preview": "데이터 서브셋 패턴을 찾아줘"
+    },
+    {
+      "ts": "2026-04-05T04:35:23.001103+00:00",
+      "intent": "subset_discovery",
+      "method": "direct_code",
+      "success": true,
+      "artifact_count": 6,
+      "relevance_score": 7,
+      "query_preview": "데이터 서브셋 패턴을 찾아줘"
+    },
+    {
+      "ts": "2026-04-05T04:42:16.680230+00:00",
+      "intent": "subset_discovery",
+      "method": "direct_code",
+      "success": true,
+      "artifact_count": 6,
+      "relevance_score": 8,
+      "query_preview": "데이터 서브셋 패턴을 찾아줘"
+    },
+    {
+      "ts": "2026-04-05T04:42:30.934080+00:00",
+      "intent": "subset_discovery",
+      "method": "direct_code",
+      "success": true,
+      "artifact_count": 6,
+      "relevance_score": 7,
+      "query_preview": "데이터 서브셋 패턴을 찾아줘"
+    },
+    {
+      "ts": "2026-04-05T04:47:49.974615+00:00",
+      "intent": "subset_discovery",
+      "method": "direct_code",
+      "success": true,
+      "artifact_count": 6,
+      "relevance_score": 7,
+      "query_preview": "데이터 서브셋 패턴을 찾아줘"
+    },
+    {
+      "ts": "2026-04-05T04:48:02.160363+00:00",
+      "intent": "subset_discovery",
+      "method": "direct_code",
+      "success": true,
+      "artifact_count": 6,
+      "relevance_score": 7,
+      "query_preview": "데이터 서브셋 패턴을 찾아줘"
+    },
+    {
+      "ts": "2026-04-05T08:54:07.625228+00:00",
+      "intent": "dataset_profile",
+      "method": "direct_code",
+      "success": true,
+      "artifact_count": 4,
+      "relevance_score": 9,
+      "query_preview": "데이터 프로파일링을 수행해줘"
+    },
+    {
+      "ts": "2026-04-05T08:57:15.399015+00:00",
+      "intent": "baseline_modeling",
+      "method": "direct_code",
+      "success": true,
+      "artifact_count": 7,
+      "relevance_score": 9,
+      "query_preview": "기준 머신러닝 모델을 구축해줘"
+    },
+    {
+      "ts": "2026-04-05T08:58:16.568244+00:00",
+      "intent": "shap_analysis",
+      "method": "direct_code",
+      "success": true,
+      "artifact_count": 4,
+      "relevance_score": 8,
+      "query_preview": "SHAP 특성 중요도를 분석해줘"
+    },
+    {
+      "ts": "2026-04-05T09:09:57.096494+00:00",
+      "intent": "dataset_profile",
+      "method": "direct_code",
+      "success": true,
+      "artifact_count": 4,
+      "relevance_score": 9,
+      "query_preview": "데이터 프로파일링을 수행해줘"
+    },
+    {
+      "ts": "2026-04-05T09:10:20.481749+00:00",
+      "intent": "baseline_modeling",
+      "method": "direct_code",
+      "success": true,
+      "artifact_count": 7,
+      "relevance_score": 9,
+      "query_preview": "기준 머신러닝 모델을 구축해줘"
+    },
+    {
+      "ts": "2026-04-05T09:11:08.057615+00:00",
+      "intent": "shap_analysis",
+      "method": "direct_code",
+      "success": true,
+      "artifact_count": 4,
+      "relevance_score": 9,
+      "query_preview": "SHAP 특성 중요도를 분석해줘"
+    },
+    {
+      "ts": "2026-04-05T09:19:50.772338+00:00",
+      "intent": "baseline_modeling",
+      "method": "direct_code",
+      "success": true,
+      "artifact_count": 7,
+      "relevance_score": 9,
+      "query_preview": "기준 머신러닝 모델을 구축해줘"
+    },
+    {
+      "ts": "2026-04-05T12:39:37.519705+00:00",
+      "intent": "baseline_modeling",
+      "method": "direct_code",
+      "success": true,
+      "artifact_count": 7,
+      "relevance_score": 8,
+      "query_preview": "기준 머신러닝 모델을 구축해줘"
+    },
+    {
+      "ts": "2026-04-05T12:45:50.977946+00:00",
+      "intent": "baseline_modeling",
+      "method": "direct_code",
+      "success": true,
+      "artifact_count": 7,
+      "relevance_score": 9,
+      "query_preview": "기준 머신러닝 모델을 구축해줘"
+    },
+    {
+      "ts": "2026-04-05T12:46:26.523318+00:00",
+      "intent": "baseline_modeling",
+      "method": "direct_code",
+      "success": true,
+      "artifact_count": 7,
+      "relevance_score": 9,
+      "query_preview": "기준 머신러닝 모델을 구축해줘"
+    },
+    {
+      "ts": "2026-04-05T12:49:36.269922+00:00",
+      "intent": "baseline_modeling",
+      "method": "direct_code",
+      "success": true,
+      "artifact_count": 7,
+      "relevance_score": 9,
+      "query_preview": "기준 머신러닝 모델을 구축해줘"
+    },
+    {
+      "ts": "2026-04-05T12:50:05.178574+00:00",
+      "intent": "baseline_modeling",
+      "method": "direct_code",
+      "success": true,
+      "artifact_count": 7,
+      "relevance_score": 9,
+      "query_preview": "기준 머신러닝 모델을 구축해줘"
+    },
+    {
+      "ts": "2026-04-05T13:17:00.177184+00:00",
+      "intent": "baseline_modeling",
+      "method": "direct_code",
+      "success": true,
+      "artifact_count": 7,
+      "relevance_score": 9,
+      "query_preview": "기준 머신러닝 모델을 구축해줘"
+    },
+    {
+      "ts": "2026-04-05T13:17:34.550986+00:00",
+      "intent": "shap_analysis",
+      "method": "direct_code",
+      "success": true,
+      "artifact_count": 4,
+      "relevance_score": 7,
+      "query_preview": "SHAP 특성 중요도를 분석해줘"
+    },
+    {
+      "ts": "2026-04-05T13:22:54.514331+00:00",
+      "intent": "dataset_profile",
+      "method": "direct_code",
+      "success": true,
+      "artifact_count": 4,
+      "relevance_score": 8,
+      "query_preview": "데이터 프로파일링을 수행해줘"
+    },
+    {
+      "ts": "2026-04-05T13:23:26.359035+00:00",
+      "intent": "subset_discovery",
+      "method": "direct_code",
+      "success": true,
+      "artifact_count": 6,
+      "relevance_score": 8,
+      "query_preview": "데이터 서브셋 패턴을 찾아줘"
+    },
+    {
+      "ts": "2026-04-05T13:47:50.299940+00:00",
+      "intent": "dataset_profile",
+      "method": "direct_code",
+      "success": true,
+      "artifact_count": 4,
+      "relevance_score": 8,
+      "query_preview": "데이터 프로파일링을 수행해줘"
+    },
+    {
+      "ts": "2026-04-05T13:53:10.962591+00:00",
+      "intent": "baseline_modeling",
+      "method": "direct_code",
+      "success": true,
+      "artifact_count": 7,
+      "relevance_score": 9,
+      "query_preview": "핵심인자를 추출해줘"
+    },
+    {
+      "ts": "2026-04-05T13:54:05.808872+00:00",
+      "intent": "shap_analysis",
+      "method": "direct_code",
+      "success": true,
+      "artifact_count": 4,
+      "relevance_score": 7,
+      "query_preview": "인자를 최소화해줘"
     }
   ],
   "stats": {
     "pandasai": {},
     "direct_code": {
       "dataset_profile": {
-        "success": 0,
-        "total": 4,
-        "relevance_sum": 0.0
+        "success": 28,
+        "total": 32,
+        "relevance_sum": 231.0
       },
       "create_dataframe": {
-        "success": 0,
-        "total": 4,
-        "relevance_sum": 0.0
+        "success": 20,
+        "total": 24,
+        "relevance_sum": 159.0
+      },
+      "baseline_modeling": {
+        "success": 35,
+        "total": 35,
+        "relevance_sum": 309.0
+      },
+      "eda": {
+        "success": 16,
+        "total": 16,
+        "relevance_sum": 123.0
+      },
+      "subset_discovery": {
+        "success": 20,
+        "total": 20,
+        "relevance_sum": 148.0
+      },
+      "shap_analysis": {
+        "success": 10,
+        "total": 10,
+        "relevance_sum": 81.0
       }
     }
   }

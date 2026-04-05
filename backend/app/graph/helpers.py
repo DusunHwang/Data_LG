@@ -3,10 +3,10 @@
 import glob
 import json
 from datetime import datetime, timezone
-from typing import Any, Optional
+from typing import Optional
 
 import pandas as pd
-from sqlalchemy import create_engine, text
+from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.core.config import settings
@@ -364,3 +364,47 @@ def dataframe_to_preview(df: pd.DataFrame, max_rows: int = 20) -> dict:
         "total_rows": len(df),
         "total_cols": len(df.columns),
     }
+
+
+def prepare_feature_matrix(
+    df: pd.DataFrame,
+    feature_columns: list[str],
+    categorical_features: Optional[list[str]] = None,
+    fill_na: bool = True,
+    encode_categories: bool = False,
+) -> pd.DataFrame:
+    """
+    분석을 위한 피처 행렬 준비 (컬럼 선택, 카테고리 변환, 결측치 처리)
+    """
+    # 1. 컬럼 선택 및 복사
+    available = [c for c in feature_columns if c in df.columns]
+    if not available:
+        available = [c for c in df.columns]
+    x = df[available].copy()
+
+    # 2. 결측치 처리 및 타입 변환
+    categorical_features = categorical_features or []
+    for col in x.columns:
+        # 카테고리형 판단 (명시적 지정 또는 object 타입)
+        if col in categorical_features or x[col].dtype == "object":
+            if x[col].isnull().any():
+                # 이미 카테고리 타입인 경우
+                if str(x[col].dtype) == "category":
+                    if "__missing__" not in x[col].cat.categories:
+                        x[col] = x[col].cat.add_categories(["__missing__"])
+                    x[col] = x[col].fillna("__missing__")
+                else:
+                    x[col] = x[col].fillna("__missing__").astype("category")
+            else:
+                x[col] = x[col].astype("category")
+
+            # 정수 인코딩 요청 시 (sklearn용)
+            if encode_categories:
+                x[col] = x[col].cat.codes
+
+        # 수치형 결측치 처리
+        elif fill_na and pd.api.types.is_numeric_dtype(x[col]):
+            if x[col].isnull().any():
+                x[col] = x[col].fillna(x[col].median())
+
+    return x

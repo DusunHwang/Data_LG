@@ -29,8 +29,8 @@ interface ChatPanelProps {
 }
 
 export default function ChatPanel({ onArtifactsChange }: ChatPanelProps) {
-  const { sessionId, branchId, datasetId, targetColumn, targetColumnsByBranch } = useSessionStore()
-  const targetColumns = targetColumnsByBranch[branchId ?? ''] ?? (targetColumn ? [targetColumn] : [])
+  const { sessionId, branchId, datasetId, targetColumnsByBranch } = useSessionStore()
+  const targetColumns = targetColumnsByBranch[branchId ?? ''] ?? []
   const { histories, activeJobIds, addMessage, setActiveJob } = useChatStore()
 
   const [input, setInput] = useState('')

@@ -1,6 +1,5 @@
 """내장 데이터셋 레지스트리"""
 
-import io
 from pathlib import Path
 
 import pandas as pd

@@ -1,6 +1,5 @@
 """데이터셋 API 테스트"""
 
-import io
 import pytest
 
 

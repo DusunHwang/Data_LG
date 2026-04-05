@@ -1,0 +1,24 @@
+{
+  "row_signatures": {
+    "()": {
+      "count": 1599,
+      "ratio": 1.0,
+      "missing_cols": []
+    }
+  },
+  "co_missing_pairs": [],
+  "n_analysis_cols": 11,
+  "analysis_cols": [
+    "fixed acidity",
+    "volatile acidity",
+    "citric acid",
+    "residual sugar",
+    "chlorides",
+    "free sulfur dioxide",
+    "total sulfur dioxide",
+    "density",
+    "pH",
+    "sulphates",
+    "alcohol"
+  ]
+}

@@ -4,12 +4,10 @@ import enum
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, Enum, ForeignKey, Integer, String, Text
-from sqlalchemy import JSON
-from app.db.models.base import UUIDString
+from sqlalchemy import JSON, DateTime, Enum, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from app.db.models.base import BaseModel
+from app.db.models.base import BaseModel, UUIDString
 
 
 class JobStatus(str, enum.Enum):

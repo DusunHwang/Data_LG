@@ -54,8 +54,8 @@ def summarize_final_response(state: GraphState) -> GraphState:
         }
 
     # 실행 결과 수집
-    execution_result = state.get("execution_result", {})
-    planner_result = state.get("planner_result", {})
+    state.get("execution_result", {})
+    state.get("planner_result", {})
 
     # 요약을 위한 컨텍스트 구성
     summary_context = _build_summary_context(state)
@@ -138,7 +138,6 @@ def _build_summary_context(state: GraphState) -> str:
     if created_artifacts:
         parts.append(f"## 생성된 아티팩트: {len(created_artifacts)}개")
     if artifact_evaluations:
-        import json as _json
         eval_lines = []
         for ev in artifact_evaluations:
             name = ev.get("artifact_name", "")

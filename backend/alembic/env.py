@@ -2,8 +2,9 @@
 
 from logging.config import fileConfig
 
-from alembic import context
 from sqlalchemy import create_engine, pool
+
+from alembic import context
 
 config = context.config
 
@@ -14,10 +15,10 @@ from app.core.config import settings
 
 config.set_main_option("sqlalchemy.url", settings.sync_database_url)
 
-from app.db.models.base import Base
 from app.db.models.artifact import Artifact, ArtifactLineage  # noqa: F401
 from app.db.models.audit import AuditLog  # noqa: F401
 from app.db.models.auth import AuthRefreshToken  # noqa: F401
+from app.db.models.base import Base
 from app.db.models.branch import Branch  # noqa: F401
 from app.db.models.dataset import Dataset  # noqa: F401
 from app.db.models.job import JobRun  # noqa: F401

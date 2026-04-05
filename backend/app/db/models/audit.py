@@ -2,12 +2,10 @@
 
 import uuid
 
-from sqlalchemy import ForeignKey, String, Text
-from sqlalchemy import JSON
-from app.db.models.base import UUIDString
+from sqlalchemy import JSON, ForeignKey, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from app.db.models.base import BaseModel
+from app.db.models.base import BaseModel, UUIDString
 
 
 class AuditLog(BaseModel):

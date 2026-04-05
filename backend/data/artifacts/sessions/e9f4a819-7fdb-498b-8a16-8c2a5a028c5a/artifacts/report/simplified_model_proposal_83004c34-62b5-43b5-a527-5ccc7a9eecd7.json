@@ -1,0 +1,27 @@
+{
+  "recommendation": "top_3",
+  "message": "**3개 피처**만으로 기본 모델의 1.0% 수준의 RMSE를 달성할 수 있습니다. (기본: 16.8076 → 단순화: 0.1667)",
+  "recommended_k": 3,
+  "recommended_features": [
+    "CAT.MEDV",
+    "LSTAT",
+    "RM"
+  ],
+  "val_rmse": 0.166656,
+  "val_r2": 0.936348,
+  "rmse_drop_ratio": 0.0099,
+  "baseline_rmse": 16.807588,
+  "baseline_n_features": 14,
+  "top_features": [
+    "CAT.MEDV",
+    "LSTAT",
+    "RM",
+    "DIS",
+    "AGE",
+    "NOX",
+    "CRIM",
+    "PTRATIO",
+    "B",
+    "TAX"
+  ]
+}

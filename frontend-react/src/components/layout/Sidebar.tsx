@@ -29,12 +29,15 @@ export default function Sidebar() {
     sessionId,
     branchId,
     datasetId,
-    targetColumn,
+    targetColumnsByBranch,
     setSessionId,
     setBranchId,
     setDatasetId,
-    setTargetColumn,
+    setTargetColumns,
   } = useSessionStore()
+
+  const currentTargetColumns = branchId ? (targetColumnsByBranch[branchId] ?? []) : []
+  const firstTarget = currentTargetColumns[0] ?? ''
 
   const [newSessionName, setNewSessionName] = useState('')
   const [showNewSession, setShowNewSession] = useState(false)
@@ -312,8 +315,13 @@ export default function Sidebar() {
                 <span className="text-xs font-medium text-gray-500">Target Column</span>
               </div>
               <select
-                value={targetColumn ?? ''}
-                onChange={(e) => setTargetColumn(e.target.value || null)}
+                value={firstTarget}
+                onChange={(e) => {
+                  const val = e.target.value
+                  if (branchId) {
+                    setTargetColumns(branchId, val ? [val] : [])
+                  }
+                }}
                 className="w-full rounded border border-gray-300 px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-brand-red"
               >
                 <option value="">선택...</option>

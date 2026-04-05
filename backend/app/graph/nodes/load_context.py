@@ -1,12 +1,10 @@
 """세션 컨텍스트 로드 노드"""
 
 import json
-from datetime import datetime, timezone
-from typing import Any, Dict, Optional
+from typing import Optional
 
-from app.core.config import settings
 from app.core.logging import get_logger
-from app.graph.helpers import get_sync_db_session, update_progress
+from app.graph.helpers import update_progress
 from app.graph.state import GraphState
 from app.worker.job_runner import get_sync_db_connection
 
@@ -240,7 +238,11 @@ def load_session_context(state: GraphState) -> GraphState:
                 art_row = cur.fetchone()
                 if art_row and art_row[0]:
                     branch_dataset_path = art_row[0]
-                    logger.info("source_artifact_id로 dataset_path 해결", artifact_id=source_artifact_id, path=branch_dataset_path)
+                    logger.info(
+                        "source_artifact_id로 dataset_path 해결",
+                        artifact_id=source_artifact_id,
+                        path=branch_dataset_path,
+                    )
 
         if branch_dataset_path:
             dataset_path = branch_dataset_path

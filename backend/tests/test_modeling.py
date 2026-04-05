@@ -2,25 +2,24 @@
 
 import numpy as np
 import pandas as pd
-import pytest
 
 
 def make_regression_df(n=300, seed=42):
     """테스트용 회귀 데이터프레임"""
     rng = np.random.default_rng(seed)
-    X1 = rng.normal(0, 1, n)
-    X2 = rng.normal(0, 1, n)
-    X3 = rng.choice(["A", "B", "C"], n)
+    x1 = rng.normal(0, 1, n)
+    x2 = rng.normal(0, 1, n)
+    x3 = rng.choice(["A", "B", "C"], n)
     noise = rng.normal(0, 0.1, n)
-    y = 2 * X1 - 0.5 * X2 + noise
+    y = 2 * x1 - 0.5 * x2 + noise
     # 결측 주입
     mask1 = rng.random(n) < 0.1
-    X1_missing = X1.copy().astype(float)
-    X1_missing[mask1] = np.nan
+    x1_missing = x1.copy().astype(float)
+    x1_missing[mask1] = np.nan
     return pd.DataFrame({
-        "feature_1": X1_missing,
-        "feature_2": X2,
-        "category": X3,
+        "feature_1": x1_missing,
+        "feature_2": x2,
+        "category": x3,
         "target": y,
     })
 
@@ -33,9 +32,9 @@ class TestFeatureMatrixBuilder:
         from app.graph.subgraphs.modeling import build_feature_matrix
 
         df = make_regression_df()
-        X, feature_cols = build_feature_matrix(df, target_col="target")
+        x, feature_cols = build_feature_matrix(df, target_col="target")
 
-        assert X is not None
+        assert x is not None
         assert len(feature_cols) > 0
         assert "target" not in feature_cols
 
@@ -45,7 +44,7 @@ class TestFeatureMatrixBuilder:
 
         df = make_regression_df()
         df["constant_col"] = 5.0  # 상수 컬럼 추가
-        X, feature_cols = build_feature_matrix(df, target_col="target")
+        x, feature_cols = build_feature_matrix(df, target_col="target")
 
         assert "constant_col" not in feature_cols
 
@@ -64,21 +63,21 @@ class TestLightGBMTraining:
     def test_train_lightgbm_basic(self):
         """LightGBM 기본 학습"""
         import lightgbm as lgb
-        from sklearn.model_selection import train_test_split
-        from sklearn.metrics import mean_squared_error, r2_score
         import numpy as np
+        from sklearn.metrics import mean_squared_error, r2_score
+        from sklearn.model_selection import train_test_split
 
         df = make_regression_df(n=500)
         # 범주형 인코딩
         df["category"] = df["category"].astype("category")
 
-        X = df.drop("target", axis=1)
+        x = df.drop("target", axis=1)
         y = df["target"]
 
-        X_train, X_val, y_train, y_val = train_test_split(X, y, test_size=0.2, random_state=42)
+        x_train, x_val, y_train, y_val = train_test_split(x, y, test_size=0.2, random_state=42)
 
-        train_data = lgb.Dataset(X_train, label=y_train)
-        val_data = lgb.Dataset(X_val, label=y_val, reference=train_data)
+        train_data = lgb.Dataset(x_train, label=y_train)
+        val_data = lgb.Dataset(x_val, label=y_val, reference=train_data)
 
         params = {
             "objective": "regression",
@@ -96,7 +95,7 @@ class TestLightGBMTraining:
             callbacks=[lgb.early_stopping(10, verbose=False)],
         )
 
-        preds = model.predict(X_val)
+        preds = model.predict(x_val)
         rmse = float(np.sqrt(mean_squared_error(y_val, preds)))
         r2 = float(r2_score(y_val, preds))
 
@@ -124,12 +123,12 @@ class TestSHAPSampling:
         """5000행 초과 시 샘플링 적용"""
         from app.graph.subgraphs.shap_simplify import sample_for_shap
 
-        MAX_SHAP_ROWS = 5000
+        max_shap_rows = 5000
         df = make_regression_df(n=6000)
-        sampled, was_sampled = sample_for_shap(df, max_rows=MAX_SHAP_ROWS, seed=42)
+        sampled, was_sampled = sample_for_shap(df, max_rows=max_shap_rows, seed=42)
 
         assert was_sampled is True
-        assert len(sampled) == MAX_SHAP_ROWS
+        assert len(sampled) == max_shap_rows
 
     def test_no_sampling_under_limit(self):
         """5000행 이하는 샘플링 없음"""
@@ -143,20 +142,20 @@ class TestSHAPSampling:
 
     def test_shap_values_computed(self):
         """SHAP 값 계산"""
-        import shap
         import lightgbm as lgb
+        import shap
         from sklearn.model_selection import train_test_split
 
         df = make_regression_df(n=300)
-        X = df[["feature_1", "feature_2"]].fillna(df[["feature_1", "feature_2"]].mean())
+        x = df[["feature_1", "feature_2"]].fillna(df[["feature_1", "feature_2"]].mean())
         y = df["target"]
 
-        X_train, X_val, y_train, y_val = train_test_split(X, y, test_size=0.2, random_state=42)
+        x_train, x_val, y_train, y_val = train_test_split(x, y, test_size=0.2, random_state=42)
 
         model = lgb.LGBMRegressor(n_estimators=30, verbose=-1)
-        model.fit(X_train, y_train)
+        model.fit(x_train, y_train)
 
         explainer = shap.TreeExplainer(model)
-        shap_values = explainer.shap_values(X_val)
+        shap_values = explainer.shap_values(x_val)
 
-        assert shap_values.shape == X_val.shape
+        assert shap_values.shape == x_val.shape

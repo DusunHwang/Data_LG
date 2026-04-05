@@ -1,0 +1,20 @@
+{
+  "direction": "maximize",
+  "optimal_prediction": 37.648312061779045,
+  "baseline_prediction": 22.36689139178944,
+  "improvement": 15.281420669989604,
+  "optimal_features": {
+    "CAT.MEDV": 0.1567910750346303,
+    "LSTAT": -0.13058529272139552,
+    "CHAS": 0.9143034977080491
+  },
+  "fixed_features": {},
+  "selected_features": [
+    "CAT.MEDV",
+    "LSTAT",
+    "CHAS"
+  ],
+  "n_evaluations": 328,
+  "convergence": true,
+  "target_column": "MEDV"
+}

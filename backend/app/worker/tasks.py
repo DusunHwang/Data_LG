@@ -1,9 +1,9 @@
 """RQ 작업 엔트리포인트"""
 
-import traceback
-from uuid import UUID
+import pandas as pd
 
 from app.core.logging import get_logger
+from app.graph.helpers import prepare_feature_matrix
 from app.worker.cancellation import CancellationToken, clear_cancellation
 from app.worker.job_runner import update_job_status_sync
 from app.worker.progress import ProgressReporter, clear_progress
@@ -34,6 +34,7 @@ def run_analysis_task(
 
         # job_run 레코드에서 user_id 조회
         from app.worker.job_runner import get_sync_db_connection
+
         user_id = None
         try:
             conn = get_sync_db_connection()
@@ -63,7 +64,7 @@ def run_analysis_task(
         )
 
         # 타겟이 복수면 iterative 실행 (단, 타겟 무관 모드는 한 번만 실행)
-        TARGET_INDEPENDENT_MODES = {"dataset_profile", "subset_discovery", "create_dataframe"}
+        target_independent_modes = {"dataset_profile", "subset_discovery", "create_dataframe"}
 
         def _run_once(tc, skip_finalize=False):
             return run_analysis_graph(
@@ -79,12 +80,12 @@ def run_analysis_task(
                 skip_job_finalize=skip_finalize,
             )
 
-        if len(target_columns) > 1 and mode not in TARGET_INDEPENDENT_MODES:
+        if len(target_columns) > 1 and mode not in target_independent_modes:
             all_artifact_ids: list[str] = []
             all_messages: list[str] = []
             final_state = {}
             for i, tc in enumerate(target_columns):
-                is_last = (i == len(target_columns) - 1)
+                is_last = i == len(target_columns) - 1
                 reporter.update(20, f"타겟 '{tc}' 모델링 중... ({i+1}/{len(target_columns)})")
                 state = _run_once(tc, skip_finalize=not is_last)
                 final_state = state
@@ -93,7 +94,9 @@ def run_analysis_task(
                 if msg:
                     all_messages.append(f"[{tc}] {msg}")
             final_state["created_artifact_ids"] = all_artifact_ids
-            final_state["assistant_message"] = "\n\n".join(all_messages) or f"{len(target_columns)}개 타겟 모델링 완료"
+            final_state["assistant_message"] = (
+                "\n\n".join(all_messages) or f"{len(target_columns)}개 타겟 모델링 완료"
+            )
         else:
             final_state = _run_once(target_columns[0] if target_columns else None)
 
@@ -107,10 +110,7 @@ def run_analysis_task(
 
         # run_analysis_graph 내부에서 job 완료 처리를 하지 않았을 경우 보완
         if not final_state.get("error_code"):
-            update_job_status_sync(
-                job_run_id, "completed", 100,
-                "분석 완료", result=result
-            )
+            update_job_status_sync(job_run_id, "completed", 100, "분석 완료", result=result)
         clear_progress(job_run_id)
         return result
 
@@ -123,10 +123,7 @@ def run_analysis_task(
     except Exception as e:
         error_msg = str(e)
         logger.error("분석 작업 실패", job_run_id=job_run_id, error=error_msg)
-        update_job_status_sync(
-            job_run_id, "failed", 0,
-            "분석 실패", error_message=error_msg
-        )
+        update_job_status_sync(job_run_id, "failed", 0, "분석 실패", error_message=error_msg)
         clear_progress(job_run_id)
         raise
 
@@ -150,11 +147,8 @@ def run_baseline_modeling_task(
         update_job_status_sync(job_run_id, "running", 0, "모델링 준비 중...")
 
         import io
-        import numpy as np
+
         import pandas as pd
-        from sklearn.model_selection import KFold, cross_validate
-        from sklearn.preprocessing import LabelEncoder
-        import lightgbm as lgb
 
         reporter.update(5, "데이터 로드 중...")
 
@@ -168,19 +162,10 @@ def run_baseline_modeling_task(
         if feature_columns is None:
             feature_columns = [c for c in df.columns if c != target_column]
 
-        X = df[feature_columns].copy()
+        x = prepare_feature_matrix(df, feature_columns, encode_categories=True)
         y = df[target_column].copy()
-
-        # 결측값 처리
-        for col in X.columns:
-            if X[col].dtype == "object" or str(X[col].dtype) == "category":
-                X[col] = X[col].fillna("__missing__").astype(str)
-                le = LabelEncoder()
-                X[col] = le.fit_transform(X[col])
-            else:
-                X[col] = X[col].fillna(X[col].median())
-
-        y = y.fillna(y.median())
+        if y.isnull().any():
+            y = y.fillna(y.median())
 
         reporter.update(20, "교차 검증 실행 중...")
         token.check()
@@ -196,9 +181,7 @@ def run_baseline_modeling_task(
             reporter.update(progress, f"{model_name} 모델 훈련 중...")
 
             try:
-                model_result = _train_single_model(
-                    model_name, X, y, test_size, cv_folds
-                )
+                model_result = _train_single_model(model_name, x, y, test_size, cv_folds)
                 model_result["model_name"] = model_name
                 results.append(model_result)
             except Exception as e:
@@ -228,7 +211,6 @@ def run_baseline_modeling_task(
         return {"status": "cancelled"}
 
     except Exception as e:
-        error_msg = traceback.format_exc()
         logger.error("모델링 작업 실패", job_run_id=job_run_id, error=str(e))
         update_job_status_sync(job_run_id, "failed", 0, "모델링 실패", error_message=str(e))
         clear_progress(job_run_id)
@@ -237,22 +219,23 @@ def run_baseline_modeling_task(
 
 def _train_single_model(
     model_name: str,
-    X,
-    y,
+    x: "pd.DataFrame",
+    y: "pd.Series",
     test_size: float,
     cv_folds: int,
 ) -> dict:
     """단일 모델 훈련 및 평가"""
     import numpy as np
-    from sklearn.model_selection import train_test_split, cross_val_score
-    from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
+    from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
+    from sklearn.model_selection import cross_val_score, train_test_split
 
-    X_train, X_test, y_train, y_test = train_test_split(
-        X, y, test_size=test_size, random_state=42
+    x_train, x_test, y_train, y_test = train_test_split(
+        x, y, test_size=test_size, random_state=42
     )
 
     if model_name == "lightgbm":
         import lightgbm as lgb
+
         model = lgb.LGBMRegressor(
             n_estimators=200,
             learning_rate=0.05,
@@ -262,36 +245,38 @@ def _train_single_model(
         )
     elif model_name == "rf":
         from sklearn.ensemble import RandomForestRegressor
+
         model = RandomForestRegressor(n_estimators=100, random_state=42, n_jobs=-1)
     elif model_name == "ridge":
         from sklearn.linear_model import Ridge
+
         model = Ridge(alpha=1.0)
     elif model_name == "xgboost":
         import xgboost as xgb
+
         model = xgb.XGBRegressor(n_estimators=200, learning_rate=0.05, random_state=42)
     else:
         from sklearn.ensemble import GradientBoostingRegressor
+
         model = GradientBoostingRegressor(random_state=42)
 
     # CV 평가
     from sklearn.model_selection import KFold
+
     kf = KFold(n_splits=cv_folds, shuffle=True, random_state=42)
-    cv_rmse_scores = np.sqrt(-cross_val_score(
-        model, X_train, y_train, cv=kf,
-        scoring="neg_mean_squared_error", n_jobs=-1
-    ))
+    cv_rmse_scores = np.sqrt(
+        -cross_val_score(
+            model, x_train, y_train, cv=kf, scoring="neg_mean_squared_error", n_jobs=-1
+        )
+    )
     cv_mae_scores = -cross_val_score(
-        model, X_train, y_train, cv=kf,
-        scoring="neg_mean_absolute_error", n_jobs=-1
+        model, x_train, y_train, cv=kf, scoring="neg_mean_absolute_error", n_jobs=-1
     )
-    cv_r2_scores = cross_val_score(
-        model, X_train, y_train, cv=kf,
-        scoring="r2", n_jobs=-1
-    )
+    cv_r2_scores = cross_val_score(model, x_train, y_train, cv=kf, scoring="r2", n_jobs=-1)
 
     # 전체 훈련 및 테스트 평가
-    model.fit(X_train, y_train)
-    y_pred = model.predict(X_test)
+    model.fit(x_train, y_train)
+    y_pred = model.predict(x_test)
     test_rmse = float(np.sqrt(mean_squared_error(y_test, y_pred)))
     test_mae = float(mean_absolute_error(y_test, y_pred))
     test_r2 = float(r2_score(y_test, y_pred))
@@ -299,9 +284,9 @@ def _train_single_model(
     # 피처 중요도
     feature_importances = {}
     if hasattr(model, "feature_importances_"):
-        feature_importances = dict(zip(X.columns, model.feature_importances_.tolist()))
+        feature_importances = dict(zip(x.columns, model.feature_importances_.tolist()))
     elif hasattr(model, "coef_"):
-        feature_importances = dict(zip(X.columns, abs(model.coef_).tolist()))
+        feature_importances = dict(zip(x.columns, abs(model.coef_).tolist()))
 
     return {
         "cv_rmse": float(cv_rmse_scores.mean()),
@@ -310,9 +295,9 @@ def _train_single_model(
         "test_rmse": test_rmse,
         "test_mae": test_mae,
         "test_r2": test_r2,
-        "n_train": len(X_train),
-        "n_test": len(X_test),
-        "n_features": len(X.columns),
+        "n_train": len(x_train),
+        "n_test": len(x_test),
+        "n_features": len(x.columns),
         "feature_importances": feature_importances,
     }
 
@@ -326,8 +311,9 @@ def _save_model_results_sync(
     """동기 방식으로 모델 결과 DB 저장"""
     import json
     import uuid
-    from app.worker.job_runner import get_sync_db_connection
     from datetime import datetime, timezone
+
+    from app.worker.job_runner import get_sync_db_connection
 
     if not results:
         return
@@ -342,9 +328,10 @@ def _save_model_results_sync(
 
         for result in results:
             model_id = str(uuid.uuid4())
-            is_champion = (result == best_result)
+            is_champion = result == best_result
 
-            cur.execute("""
+            cur.execute(
+                """
                 INSERT INTO model_runs (
                     id, branch_id, job_run_id, model_name, model_type, status,
                     cv_rmse, cv_mae, cv_r2, test_rmse, test_mae, test_r2,
@@ -356,16 +343,29 @@ def _save_model_results_sync(
                     ?, ?, ?, ?,
                     ?, ?, ?, ?
                 )
-            """, (
-                model_id, branch_id, job_run_id,
-                result["model_name"], result["model_name"],
-                result.get("cv_rmse"), result.get("cv_mae"), result.get("cv_r2"),
-                result.get("test_rmse"), result.get("test_mae"), result.get("test_r2"),
-                result.get("n_train"), result.get("n_test"), result.get("n_features"),
-                target_column,
-                json.dumps(result.get("feature_importances", {})),
-                is_champion, now, now,
-            ))
+            """,
+                (
+                    model_id,
+                    branch_id,
+                    job_run_id,
+                    result["model_name"],
+                    result["model_name"],
+                    result.get("cv_rmse"),
+                    result.get("cv_mae"),
+                    result.get("cv_r2"),
+                    result.get("test_rmse"),
+                    result.get("test_mae"),
+                    result.get("test_r2"),
+                    result.get("n_train"),
+                    result.get("n_test"),
+                    result.get("n_features"),
+                    target_column,
+                    json.dumps(result.get("feature_importances", {})),
+                    is_champion,
+                    now,
+                    now,
+                ),
+            )
 
         conn.commit()
     except Exception as e:
@@ -395,12 +395,12 @@ def run_optimization_task(
         update_job_status_sync(job_run_id, "running", 0, "최적화 준비 중...")
 
         import io
-        import numpy as np
-        import pandas as pd
-        import optuna
+
         import lightgbm as lgb
+        import numpy as np
+        import optuna
+        import pandas as pd
         from sklearn.model_selection import KFold, cross_val_score
-        from sklearn.preprocessing import LabelEncoder
 
         optuna.logging.set_verbosity(optuna.logging.WARNING)
 
@@ -411,18 +411,10 @@ def run_optimization_task(
 
         token.check()
 
-        X = df[feature_columns].copy()
+        x = prepare_feature_matrix(df, feature_columns, encode_categories=True)
         y = df[target_column].copy()
-
-        # 전처리
-        for col in X.columns:
-            if X[col].dtype == "object" or str(X[col].dtype) == "category":
-                X[col] = X[col].fillna("__missing__").astype(str)
-                le = LabelEncoder()
-                X[col] = le.fit_transform(X[col])
-            else:
-                X[col] = X[col].fillna(X[col].median())
-        y = y.fillna(y.median())
+        if y.isnull().any():
+            y = y.fillna(y.median())
 
         completed_trials = [0]
         trials_history = []
@@ -448,15 +440,15 @@ def run_optimization_task(
             kf = KFold(n_splits=5, shuffle=True, random_state=42)
 
             if metric == "rmse":
-                scores = np.sqrt(-cross_val_score(
-                    model, X, y, cv=kf, scoring="neg_mean_squared_error", n_jobs=-1
-                ))
+                scores = np.sqrt(
+                    -cross_val_score(model, x, y, cv=kf, scoring="neg_mean_squared_error", n_jobs=-1)
+                )
             elif metric == "mae":
                 scores = -cross_val_score(
-                    model, X, y, cv=kf, scoring="neg_mean_absolute_error", n_jobs=-1
+                    model, x, y, cv=kf, scoring="neg_mean_absolute_error", n_jobs=-1
                 )
             else:
-                scores = cross_val_score(model, X, y, cv=kf, scoring="r2", n_jobs=-1)
+                scores = cross_val_score(model, x, y, cv=kf, scoring="r2", n_jobs=-1)
                 scores = -scores  # Optuna는 minimize
 
             score = float(scores.mean())
@@ -466,12 +458,16 @@ def run_optimization_task(
             reporter.update(progress, f"시도 {completed_trials[0]}/{n_trials} 완료")
 
             # 이력 기록
-            trials_history.append({
-                "trial_number": trial.number,
-                "score": score,
-                "params": {k: v for k, v in params.items() if k not in ("random_state", "verbose")},
-                "state": "completed",
-            })
+            trials_history.append(
+                {
+                    "trial_number": trial.number,
+                    "score": score,
+                    "params": {
+                        k: v for k, v in params.items() if k not in ("random_state", "verbose")
+                    },
+                    "state": "completed",
+                }
+            )
 
             # DB 업데이트
             _update_optimization_sync(
@@ -543,8 +539,9 @@ def _update_optimization_sync(
 ) -> None:
     """동기 방식으로 최적화 실행 DB 업데이트"""
     import json
-    from app.worker.job_runner import get_sync_db_connection
     from datetime import datetime, timezone
+
+    from app.worker.job_runner import get_sync_db_connection
 
     conn = get_sync_db_connection()
     try:

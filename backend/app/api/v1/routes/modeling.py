@@ -16,7 +16,6 @@ from app.schemas.common import ERROR_MESSAGES, ErrorCode, error_response, succes
 from app.schemas.modeling import (
     BaselineModelingRequest,
     ChampionSetRequest,
-    LeaderboardResponse,
     ModelRunResponse,
     SHAPRequest,
     SimplifyRequest,
@@ -109,8 +108,8 @@ async def run_baseline_modeling(
 
     # RQ 큐에 제출
     try:
-        from app.worker.tasks import run_baseline_modeling_task
         from app.worker.queue import enqueue_job
+        from app.worker.tasks import run_baseline_modeling_task
 
         rq_job = enqueue_job(
             run_baseline_modeling_task,
@@ -207,7 +206,7 @@ async def run_shap(
 
     service = SessionService(db)
     try:
-        session = await service.validate_session(session_id, current_user.id)
+        await service.validate_session(session_id, current_user.id)
     except ValueError as e:
         code = str(e)
         raise HTTPException(

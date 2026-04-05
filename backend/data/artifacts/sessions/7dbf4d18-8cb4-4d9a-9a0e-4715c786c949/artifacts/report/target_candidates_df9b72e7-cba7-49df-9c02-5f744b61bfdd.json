@@ -1,0 +1,32 @@
+[
+  {
+    "column": "wtd_gmean_ThermalConductivity",
+    "dtype": "float64",
+    "n_unique": 14152,
+    "missing_ratio": 0.0,
+    "mean": 27.3081,
+    "std": 40.1911,
+    "score": 0.6128,
+    "recommendation": "수치형 타겟 후보"
+  },
+  {
+    "column": "wtd_gmean_FusionHeat",
+    "dtype": "float64",
+    "n_unique": 14767,
+    "missing_ratio": 0.0,
+    "mean": 10.1412,
+    "std": 13.134,
+    "score": 0.5486,
+    "recommendation": "수치형 타겟 후보"
+  },
+  {
+    "column": "wtd_gmean_Density",
+    "dtype": "float64",
+    "n_unique": 15085,
+    "missing_ratio": 0.0,
+    "mean": 3117.2411,
+    "std": 3975.1226,
+    "score": 0.545,
+    "recommendation": "수치형 타겟 후보"
+  }
+]

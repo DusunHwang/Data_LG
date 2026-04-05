@@ -1,0 +1,36 @@
+{
+  "recommendation": "top_12",
+  "message": "**12개 피처**만으로 기본 모델의 108.0% 수준의 RMSE를 달성할 수 있습니다. (기본: 9.8255 → 단순화: 10.6113)",
+  "recommended_k": 12,
+  "recommended_features": [
+    "range_ThermalConductivity",
+    "wtd_gmean_ThermalConductivity",
+    "range_atomic_radius",
+    "wtd_gmean_Valence",
+    "wtd_std_ElectronAffinity",
+    "std_atomic_mass",
+    "wtd_entropy_ThermalConductivity",
+    "mean_Density",
+    "wtd_std_Valence",
+    "wtd_mean_ThermalConductivity",
+    "gmean_ElectronAffinity",
+    "gmean_Density"
+  ],
+  "val_rmse": 10.611281,
+  "val_r2": 0.902179,
+  "rmse_drop_ratio": 1.08,
+  "baseline_rmse": 9.825456,
+  "baseline_n_features": 81,
+  "top_features": [
+    "range_ThermalConductivity",
+    "wtd_gmean_ThermalConductivity",
+    "range_atomic_radius",
+    "wtd_gmean_Valence",
+    "wtd_std_ElectronAffinity",
+    "std_atomic_mass",
+    "wtd_entropy_ThermalConductivity",
+    "mean_Density",
+    "wtd_std_Valence",
+    "wtd_mean_ThermalConductivity"
+  ]
+}

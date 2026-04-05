@@ -1,0 +1,24 @@
+{
+  "direction": "minimize",
+  "target_column": "critical_temp",
+  "optimal_prediction": 8.689863939585411,
+  "baseline_prediction": 23.430404867043457,
+  "improvement": -14.740540927458046,
+  "optimal_features": {
+    "range_ThermalConductivity": 398.3031660329781,
+    "wtd_gmean_ThermalConductivity": 188.5556498350171,
+    "range_atomic_radius": 15.321149492833456
+  },
+  "fixed_features": {},
+  "selected_features": [
+    "range_ThermalConductivity",
+    "wtd_gmean_ThermalConductivity",
+    "range_atomic_radius"
+  ],
+  "n_evaluations": 640,
+  "convergence": false,
+  "constraint_target_column": null,
+  "constraint_type": null,
+  "constraint_threshold": null,
+  "constraint_prediction": null
+}

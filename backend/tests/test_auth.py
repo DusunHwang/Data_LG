@@ -1,7 +1,7 @@
 """인증 API 테스트"""
 
+import httpx
 import pytest
-from httpx import AsyncClient
 
 from app.main import app
 
@@ -9,7 +9,7 @@ from app.main import app
 @pytest.mark.asyncio
 async def test_login_success():
     """정상 로그인 테스트"""
-    async with AsyncClient(app=app, base_url="http://test") as client:
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
         response = await client.post(
             "/api/v1/auth/login",
             json={"username": "admin", "password": "Admin123!"},
@@ -23,7 +23,7 @@ async def test_login_success():
 @pytest.mark.asyncio
 async def test_login_invalid_credentials():
     """잘못된 자격증명 로그인 테스트"""
-    async with AsyncClient(app=app, base_url="http://test") as client:
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
         response = await client.post(
             "/api/v1/auth/login",
             json={"username": "nonexistent", "password": "wrongpass"},
@@ -37,7 +37,7 @@ async def test_login_invalid_credentials():
 @pytest.mark.asyncio
 async def test_me_unauthorized():
     """인증 없이 /me 접근 테스트"""
-    async with AsyncClient(app=app, base_url="http://test") as client:
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
         response = await client.get("/api/v1/auth/me")
     assert response.status_code == 401
 
@@ -45,7 +45,7 @@ async def test_me_unauthorized():
 @pytest.mark.asyncio
 async def test_health_check():
     """헬스 체크 테스트"""
-    async with AsyncClient(app=app, base_url="http://test") as client:
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
         response = await client.get("/api/v1/admin/health")
     # DB 없이도 응답해야 함
     assert response.status_code in (200, 500)

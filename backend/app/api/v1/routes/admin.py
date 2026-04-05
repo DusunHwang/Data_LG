@@ -3,7 +3,7 @@
 from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_admin_user, get_current_user, get_db
+from app.api.deps import get_admin_user, get_db
 from app.core.config import settings
 from app.core.logging import get_logger
 from app.db.models.user import User
@@ -76,9 +76,10 @@ async def get_stats(
 ):
     """시스템 통계 (관리자 전용)"""
     from sqlalchemy import func, select
-    from app.db.models.user import User as UserModel
-    from app.db.models.session import Session
+
     from app.db.models.job import JobRun, JobStatus
+    from app.db.models.session import Session
+    from app.db.models.user import User as UserModel
 
     # 사용자 수
     user_count = (await db.execute(select(func.count(UserModel.id)))).scalar_one()

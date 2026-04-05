@@ -1,0 +1,1000 @@
+{
+  "actual_importance": {
+    "range_ThermalConductivity": 17.564954321310598,
+    "wtd_gmean_ThermalConductivity": 3.107339424594211,
+    "range_atomic_radius": 3.058324432246915,
+    "wtd_gmean_Valence": 1.8844815506252652,
+    "wtd_std_ElectronAffinity": 1.4306003663952058,
+    "std_atomic_mass": 1.2483257276265733,
+    "wtd_entropy_ThermalConductivity": 1.1106154739605087,
+    "mean_Density": 1.0777026416007929,
+    "wtd_std_Valence": 0.9516562377075298,
+    "wtd_mean_ThermalConductivity": 0.9291726608373085,
+    "gmean_Density": 0.9004251582230005,
+    "gmean_ElectronAffinity": 0.8991264918083195,
+    "wtd_entropy_atomic_mass": 0.8603285594740115,
+    "std_Density": 0.8070284601641206,
+    "wtd_gmean_ElectronAffinity": 0.7602260424434423,
+    "wtd_mean_Valence": 0.7026667908961032,
+    "wtd_entropy_FusionHeat": 0.6400792674205814,
+    "wtd_entropy_Density": 0.6269817048127413,
+    "wtd_mean_atomic_mass": 0.5796457311881397,
+    "wtd_entropy_ElectronAffinity": 0.5378531018415045,
+    "wtd_std_ThermalConductivity": 0.43392648762559655,
+    "std_ElectronAffinity": 0.41499223475258085,
+    "range_atomic_mass": 0.3897196201145731,
+    "range_ElectronAffinity": 0.38172420804170354,
+    "range_fie": 0.37789157565015596,
+    "wtd_range_fie": 0.376605467287897,
+    "wtd_std_atomic_mass": 0.3721089845355277,
+    "wtd_range_Valence": 0.35325284551233954,
+    "entropy_Density": 0.3492802702336568,
+    "wtd_std_Density": 0.3364815930699168,
+    "wtd_std_FusionHeat": 0.3346293859076605,
+    "wtd_entropy_fie": 0.33051480971685093,
+    "entropy_FusionHeat": 0.3297242013712906,
+    "std_atomic_radius": 0.3246764237332969,
+    "wtd_mean_atomic_radius": 0.31902560350950393,
+    "wtd_range_atomic_mass": 0.31899973535492915,
+    "wtd_std_fie": 0.3185943904586073,
+    "wtd_mean_Density": 0.31408204605628653,
+    "wtd_entropy_atomic_radius": 0.2775664982627086,
+    "std_Valence": 0.2747630344418814,
+    "wtd_gmean_Density": 0.27272348871530366,
+    "wtd_mean_ElectronAffinity": 0.2561363579426575,
+    "std_FusionHeat": 0.22127264919075038,
+    "wtd_range_ElectronAffinity": 0.2052849973887143,
+    "mean_ThermalConductivity": 0.20430913618490254,
+    "entropy_ThermalConductivity": 0.20072282541382538,
+    "wtd_std_atomic_radius": 0.18903084064384423,
+    "entropy_ElectronAffinity": 0.18798626264322915,
+    "entropy_atomic_radius": 0.1869113045525202,
+    "std_ThermalConductivity": 0.18533066261280196,
+    "wtd_gmean_atomic_mass": 0.18009427840705072,
+    "wtd_mean_FusionHeat": 0.17485685741525395,
+    "wtd_range_Density": 0.15541153312793365,
+    "wtd_range_ThermalConductivity": 0.15519992420122133,
+    "mean_FusionHeat": 0.1515947771935447,
+    "wtd_entropy_Valence": 0.14657434234307065,
+    "mean_atomic_mass": 0.14636153870354998,
+    "mean_atomic_radius": 0.14370703841961666,
+    "wtd_gmean_atomic_radius": 0.14075592841743886,
+    "gmean_atomic_radius": 0.13546480978651868,
+    "mean_ElectronAffinity": 0.13119757346929742,
+    "gmean_Valence": 0.12441459920124161,
+    "gmean_fie": 0.12335551849781211,
+    "gmean_ThermalConductivity": 0.12252336426253582,
+    "range_FusionHeat": 0.11897111709768424,
+    "gmean_FusionHeat": 0.11570877692514764,
+    "mean_fie": 0.11169609258946503,
+    "wtd_mean_fie": 0.11025660517556847,
+    "entropy_Valence": 0.10524663204989519,
+    "wtd_gmean_FusionHeat": 0.09772612240532547,
+    "wtd_gmean_fie": 0.09674932794216176,
+    "entropy_fie": 0.0958865302418465,
+    "std_fie": 0.0943911718969996,
+    "wtd_range_atomic_radius": 0.0890975043697498,
+    "gmean_atomic_mass": 0.08756070799038092,
+    "entropy_atomic_mass": 0.07964801084082986,
+    "range_Density": 0.07937650092132388,
+    "wtd_range_FusionHeat": 0.07913562926936692,
+    "range_Valence": 0.07447561903084184,
+    "mean_Valence": 0.07080863475809819,
+    "number_of_elements": 0.0007443990073037741
+  },
+  "null_importance": {
+    "number_of_elements": {
+      "p5": 0.0,
+      "p50": 0.0,
+      "p90": 0.0,
+      "p95": 0.005266549951532367
+    },
+    "mean_atomic_mass": {
+      "p5": 0.21533107271746083,
+      "p50": 0.3310055886911583,
+      "p90": 0.6590758993651193,
+      "p95": 0.7248804083486821
+    },
+    "wtd_mean_atomic_mass": {
+      "p5": 0.24731720536646631,
+      "p50": 0.4254952955175472,
+      "p90": 0.5716262030898621,
+      "p95": 0.6605166120190199
+    },
+    "gmean_atomic_mass": {
+      "p5": 0.17577066711231867,
+      "p50": 0.353361317514188,
+      "p90": 0.6750227786871331,
+      "p95": 0.701626996319195
+    },
+    "wtd_gmean_atomic_mass": {
+      "p5": 0.18054842470885926,
+      "p50": 0.29564647971318475,
+      "p90": 0.5440881433751206,
+      "p95": 0.644250325035717
+    },
+    "entropy_atomic_mass": {
+      "p5": 0.17244853440978689,
+      "p50": 0.2697528556487737,
+      "p90": 0.6194914036498745,
+      "p95": 0.6703150765048341
+    },
+    "wtd_entropy_atomic_mass": {
+      "p5": 0.27508366796612876,
+      "p50": 0.4887746039862961,
+      "p90": 0.6702620832815124,
+      "p95": 0.6994690431199879
+    },
+    "range_atomic_mass": {
+      "p5": 0.12459789017993005,
+      "p50": 0.22676937221324805,
+      "p90": 0.37477235795387065,
+      "p95": 0.4222342374499015
+    },
+    "wtd_range_atomic_mass": {
+      "p5": 0.31425705096921996,
+      "p50": 0.6328731685681068,
+      "p90": 0.9797841542865655,
+      "p95": 1.2953322337800026
+    },
+    "std_atomic_mass": {
+      "p5": 0.13425936335854535,
+      "p50": 0.3449687501299048,
+      "p90": 0.514912087975603,
+      "p95": 0.5286385654310374
+    },
+    "wtd_std_atomic_mass": {
+      "p5": 0.2164762665568846,
+      "p50": 0.3429278884345781,
+      "p90": 0.5668697704478369,
+      "p95": 0.6084221977478019
+    },
+    "mean_fie": {
+      "p5": 0.1569724695684384,
+      "p50": 0.34574609677982737,
+      "p90": 0.7247606011411775,
+      "p95": 0.7964667256456036
+    },
+    "wtd_mean_fie": {
+      "p5": 0.20015041213878965,
+      "p50": 0.3282550713076061,
+      "p90": 0.7137283603124418,
+      "p95": 0.8774839217647425
+    },
+    "gmean_fie": {
+      "p5": 0.21537364780040477,
+      "p50": 0.3283528874943428,
+      "p90": 0.5564032304841445,
+      "p95": 0.5773351411226912
+    },
+    "wtd_gmean_fie": {
+      "p5": 0.2129035757197602,
+      "p50": 0.36603001763614884,
+      "p90": 0.5584161082333069,
+      "p95": 0.5864697031542235
+    },
+    "entropy_fie": {
+      "p5": 0.09806664539960273,
+      "p50": 0.22300026108968102,
+      "p90": 0.4013013504465161,
+      "p95": 0.5880777865322735
+    },
+    "wtd_entropy_fie": {
+      "p5": 0.2577634694567761,
+      "p50": 0.40917951261023067,
+      "p90": 0.6388276466923936,
+      "p95": 0.7303018887859549
+    },
+    "range_fie": {
+      "p5": 0.04122096475142363,
+      "p50": 0.16486730762797802,
+      "p90": 0.3470203458260543,
+      "p95": 0.37563934093119383
+    },
+    "wtd_range_fie": {
+      "p5": 0.24485925940293465,
+      "p50": 0.45404591345585466,
+      "p90": 0.812120157950609,
+      "p95": 0.9905221229733686
+    },
+    "std_fie": {
+      "p5": 0.07719425340195984,
+      "p50": 0.19267242353959374,
+      "p90": 0.37278032500978875,
+      "p95": 0.48178201606627985
+    },
+    "wtd_std_fie": {
+      "p5": 0.17993029883168413,
+      "p50": 0.30062605414707083,
+      "p90": 0.4250940999980156,
+      "p95": 0.45038089027857464
+    },
+    "mean_atomic_radius": {
+      "p5": 0.1705609165315133,
+      "p50": 0.38602650028311014,
+      "p90": 0.7159591011376948,
+      "p95": 0.7986679836609625
+    },
+    "wtd_mean_atomic_radius": {
+      "p5": 0.2128877360404797,
+      "p50": 0.3706565152955421,
+      "p90": 0.48485150941453525,
+      "p95": 0.5199352927791814
+    },
+    "gmean_atomic_radius": {
+      "p5": 0.17947785299619123,
+      "p50": 0.28081743963093886,
+      "p90": 0.5763280593816479,
+      "p95": 0.621306473299773
+    },
+    "wtd_gmean_atomic_radius": {
+      "p5": 0.13781361201304976,
+      "p50": 0.26526358208908196,
+      "p90": 0.47350709925515333,
+      "p95": 0.4865449482553625
+    },
+    "entropy_atomic_radius": {
+      "p5": 0.11131979191614139,
+      "p50": 0.2823441470367644,
+      "p90": 0.4310058690998431,
+      "p95": 0.4638232126559662
+    },
+    "wtd_entropy_atomic_radius": {
+      "p5": 0.18074329224082836,
+      "p50": 0.40836962835295276,
+      "p90": 0.6099326975398869,
+      "p95": 0.7060268827588334
+    },
+    "range_atomic_radius": {
+      "p5": 0.047493498274328014,
+      "p50": 0.13853608954300048,
+      "p90": 0.23253540919253066,
+      "p95": 0.2765333435001276
+    },
+    "wtd_range_atomic_radius": {
+      "p5": 0.3886277195848044,
+      "p50": 0.5704115079840936,
+      "p90": 1.15579403638297,
+      "p95": 1.1744944185469854
+    },
+    "std_atomic_radius": {
+      "p5": 0.11993452189062853,
+      "p50": 0.3025036232473105,
+      "p90": 0.4080163549074176,
+      "p95": 0.43950686687748375
+    },
+    "wtd_std_atomic_radius": {
+      "p5": 0.23651759792346008,
+      "p50": 0.38524133071680977,
+      "p90": 0.5779904539204967,
+      "p95": 0.6503106585622553
+    },
+    "mean_Density": {
+      "p5": 0.18053600006695178,
+      "p50": 0.3796511735561986,
+      "p90": 0.6183635868428478,
+      "p95": 0.7617341712860292
+    },
+    "wtd_mean_Density": {
+      "p5": 0.1947937017751169,
+      "p50": 0.35271755884778094,
+      "p90": 0.6085233327872145,
+      "p95": 0.6539106907187953
+    },
+    "gmean_Density": {
+      "p5": 0.1313679640062012,
+      "p50": 0.24785406691139167,
+      "p90": 0.3810780204852795,
+      "p95": 0.41582820011684957
+    },
+    "wtd_gmean_Density": {
+      "p5": 0.17288320430715634,
+      "p50": 0.3094014045730115,
+      "p90": 0.4653866482739376,
+      "p95": 0.5280054700790561
+    },
+    "entropy_Density": {
+      "p5": 0.15771779068183883,
+      "p50": 0.30175583549191376,
+      "p90": 0.4977203478343617,
+      "p95": 0.6468465358063233
+    },
+    "wtd_entropy_Density": {
+      "p5": 0.29645729521376063,
+      "p50": 0.5568407812082496,
+      "p90": 0.731032419516611,
+      "p95": 0.8058276425793041
+    },
+    "range_Density": {
+      "p5": 0.06496833368179943,
+      "p50": 0.17027349611575535,
+      "p90": 0.3525310376533003,
+      "p95": 0.43307563037119606
+    },
+    "wtd_range_Density": {
+      "p5": 0.23040760631643456,
+      "p50": 0.44888757633332654,
+      "p90": 0.7449931699046506,
+      "p95": 0.8676331082550207
+    },
+    "std_Density": {
+      "p5": 0.17722486137635504,
+      "p50": 0.32782075432560887,
+      "p90": 0.747742644202574,
+      "p95": 0.8540387635120468
+    },
+    "wtd_std_Density": {
+      "p5": 0.2611251455405246,
+      "p50": 0.42195100800432295,
+      "p90": 0.7146797728378778,
+      "p95": 1.0856089975602792
+    },
+    "mean_ElectronAffinity": {
+      "p5": 0.21892175432856892,
+      "p50": 0.409591558193241,
+      "p90": 0.6901958901255365,
+      "p95": 0.9536519553078922
+    },
+    "wtd_mean_ElectronAffinity": {
+      "p5": 0.2259919797142622,
+      "p50": 0.3522279955590889,
+      "p90": 0.6708610376070884,
+      "p95": 0.7868884087956485
+    },
+    "gmean_ElectronAffinity": {
+      "p5": 0.2009817182448863,
+      "p50": 0.3239689606961898,
+      "p90": 0.6075963541278544,
+      "p95": 0.7200117764328401
+    },
+    "wtd_gmean_ElectronAffinity": {
+      "p5": 0.1894012339546583,
+      "p50": 0.38840751599794254,
+      "p90": 0.6376535987779691,
+      "p95": 0.6989135215002489
+    },
+    "entropy_ElectronAffinity": {
+      "p5": 0.19582504580979399,
+      "p50": 0.34973006265720963,
+      "p90": 0.5739443392009228,
+      "p95": 0.5797985311327819
+    },
+    "wtd_entropy_ElectronAffinity": {
+      "p5": 0.2717201436334905,
+      "p50": 0.4866856465919963,
+      "p90": 0.6611807016418132,
+      "p95": 0.8343768064675396
+    },
+    "range_ElectronAffinity": {
+      "p5": 0.05388448420875454,
+      "p50": 0.1800208761677669,
+      "p90": 0.3687807547093149,
+      "p95": 0.44076455851967833
+    },
+    "wtd_range_ElectronAffinity": {
+      "p5": 0.27378536759181576,
+      "p50": 0.3805722563488353,
+      "p90": 0.6521498999491584,
+      "p95": 0.7875085943252969
+    },
+    "std_ElectronAffinity": {
+      "p5": 0.13263379073886766,
+      "p50": 0.28787657274173095,
+      "p90": 0.7054180190994174,
+      "p95": 0.7988208774066664
+    },
+    "wtd_std_ElectronAffinity": {
+      "p5": 0.17922586908252627,
+      "p50": 0.35805793068960223,
+      "p90": 0.7194311294569528,
+      "p95": 0.9602585167570674
+    },
+    "mean_FusionHeat": {
+      "p5": 0.15027082116334592,
+      "p50": 0.335007309745152,
+      "p90": 0.7553714555221185,
+      "p95": 1.1167448653506553
+    },
+    "wtd_mean_FusionHeat": {
+      "p5": 0.15237232870746806,
+      "p50": 0.29231406277987193,
+      "p90": 0.4951240582459389,
+      "p95": 0.5583454807826552
+    },
+    "gmean_FusionHeat": {
+      "p5": 0.1706967083075743,
+      "p50": 0.3105930480752327,
+      "p90": 0.506019566606505,
+      "p95": 0.5614147724138532
+    },
+    "wtd_gmean_FusionHeat": {
+      "p5": 0.17380345282644777,
+      "p50": 0.26535674433456946,
+      "p90": 0.7589447352233271,
+      "p95": 0.7762300139189511
+    },
+    "entropy_FusionHeat": {
+      "p5": 0.17932842251517891,
+      "p50": 0.35868606262178404,
+      "p90": 0.558578315687075,
+      "p95": 0.5944858664536675
+    },
+    "wtd_entropy_FusionHeat": {
+      "p5": 0.30170696685609893,
+      "p50": 0.513442921228705,
+      "p90": 0.7557856496864516,
+      "p95": 0.7711079948564119
+    },
+    "range_FusionHeat": {
+      "p5": 0.09853096810531531,
+      "p50": 0.19238235988645816,
+      "p90": 0.3033942577317629,
+      "p95": 0.33734104014057203
+    },
+    "wtd_range_FusionHeat": {
+      "p5": 0.2160571513700121,
+      "p50": 0.3080758999551469,
+      "p90": 0.446859180439122,
+      "p95": 0.5717515783151467
+    },
+    "std_FusionHeat": {
+      "p5": 0.14052126659691086,
+      "p50": 0.25727423636033114,
+      "p90": 0.4740527574233535,
+      "p95": 0.5569740323104476
+    },
+    "wtd_std_FusionHeat": {
+      "p5": 0.22644475503843398,
+      "p50": 0.3839063002714127,
+      "p90": 0.5924281943453575,
+      "p95": 0.6490918355483172
+    },
+    "mean_ThermalConductivity": {
+      "p5": 0.19277187738024584,
+      "p50": 0.335297192610564,
+      "p90": 0.6848767012207211,
+      "p95": 0.7744118774923819
+    },
+    "wtd_mean_ThermalConductivity": {
+      "p5": 0.25678632304192966,
+      "p50": 0.4004147823406635,
+      "p90": 0.7756912606561297,
+      "p95": 0.8753836496941934
+    },
+    "gmean_ThermalConductivity": {
+      "p5": 0.15933120074312274,
+      "p50": 0.3118217524580731,
+      "p90": 0.44511518687334,
+      "p95": 0.5027440195544806
+    },
+    "wtd_gmean_ThermalConductivity": {
+      "p5": 0.20431828796902532,
+      "p50": 0.38348841324859506,
+      "p90": 0.5831418673645299,
+      "p95": 0.627723704476302
+    },
+    "entropy_ThermalConductivity": {
+      "p5": 0.1890816061137336,
+      "p50": 0.3500713233796826,
+      "p90": 0.5400874189742396,
+      "p95": 0.5914854138951953
+    },
+    "wtd_entropy_ThermalConductivity": {
+      "p5": 0.30897327332342683,
+      "p50": 0.4671991540819131,
+      "p90": 0.8490314569643516,
+      "p95": 0.9256275154941307
+    },
+    "range_ThermalConductivity": {
+      "p5": 0.019312779522349045,
+      "p50": 0.13371528410734568,
+      "p90": 0.33940063871358467,
+      "p95": 0.4345265213370383
+    },
+    "wtd_range_ThermalConductivity": {
+      "p5": 0.1935210759746957,
+      "p50": 0.3669395047330415,
+      "p90": 0.6660395430589742,
+      "p95": 0.6756129854155846
+    },
+    "std_ThermalConductivity": {
+      "p5": 0.07002303025631351,
+      "p50": 0.18266580364801177,
+      "p90": 0.3538568350706331,
+      "p95": 0.39522969444663614
+    },
+    "wtd_std_ThermalConductivity": {
+      "p5": 0.18180943052261925,
+      "p50": 0.36654840723285953,
+      "p90": 0.663680360202364,
+      "p95": 0.8760833808580051
+    },
+    "mean_Valence": {
+      "p5": 0.045099102943283564,
+      "p50": 0.1018746562715071,
+      "p90": 0.2355384552091525,
+      "p95": 0.26902941526303753
+    },
+    "wtd_mean_Valence": {
+      "p5": 0.12190897095698433,
+      "p50": 0.2988082899757609,
+      "p90": 0.5602935442380785,
+      "p95": 0.6704299768072166
+    },
+    "gmean_Valence": {
+      "p5": 0.060871640001641684,
+      "p50": 0.20812351499153628,
+      "p90": 0.39059605004767467,
+      "p95": 0.4342565504782968
+    },
+    "wtd_gmean_Valence": {
+      "p5": 0.13936565347014376,
+      "p50": 0.24110233062330497,
+      "p90": 0.3908035153784024,
+      "p95": 0.4988400626773337
+    },
+    "entropy_Valence": {
+      "p5": 0.08107389939436097,
+      "p50": 0.1919411684099098,
+      "p90": 0.3956106512642113,
+      "p95": 0.4195332297626176
+    },
+    "wtd_entropy_Valence": {
+      "p5": 0.23529867185211747,
+      "p50": 0.39611733734923926,
+      "p90": 0.6523695912281146,
+      "p95": 0.7015586580396047
+    },
+    "range_Valence": {
+      "p5": 0.0,
+      "p50": 0.014350867668974341,
+      "p90": 0.040992922101323076,
+      "p95": 0.07410039446171446
+    },
+    "wtd_range_Valence": {
+      "p5": 0.2680310150187898,
+      "p50": 0.44903715080341666,
+      "p90": 0.7256509681998748,
+      "p95": 0.7480883380722043
+    },
+    "std_Valence": {
+      "p5": 0.0987343037260403,
+      "p50": 0.23265917899170824,
+      "p90": 0.3723794575737401,
+      "p95": 0.5268894485419408
+    },
+    "wtd_std_Valence": {
+      "p5": 0.26872521176256625,
+      "p50": 0.4044660233232863,
+      "p90": 0.6387571554532283,
+      "p95": 0.7749386654079136
+    }
+  },
+  "recommended_features": [
+    "range_ThermalConductivity",
+    "wtd_gmean_ThermalConductivity",
+    "range_atomic_radius",
+    "wtd_gmean_Valence",
+    "wtd_std_ElectronAffinity",
+    "std_atomic_mass",
+    "wtd_entropy_ThermalConductivity",
+    "mean_Density",
+    "wtd_std_Valence",
+    "wtd_mean_ThermalConductivity",
+    "gmean_Density",
+    "gmean_ElectronAffinity",
+    "wtd_entropy_atomic_mass",
+    "std_Density",
+    "wtd_gmean_ElectronAffinity"
+  ],
+  "recommended_n": 15,
+  "feature_ranges": {
+    "number_of_elements": [
+      1.0,
+      9.0
+    ],
+    "mean_atomic_mass": [
+      6.941,
+      208.9804
+    ],
+    "wtd_mean_atomic_mass": [
+      6.423452,
+      208.9804
+    ],
+    "gmean_atomic_mass": [
+      5.32057317119124,
+      208.9804
+    ],
+    "wtd_gmean_atomic_mass": [
+      1.96084911435585,
+      208.9804
+    ],
+    "entropy_atomic_mass": [
+      0.0,
+      1.98379733934683
+    ],
+    "wtd_entropy_atomic_mass": [
+      0.0,
+      1.95820337089713
+    ],
+    "range_atomic_mass": [
+      0.0,
+      207.97246
+    ],
+    "wtd_range_atomic_mass": [
+      0.0,
+      205.58991
+    ],
+    "std_atomic_mass": [
+      0.0,
+      101.0197
+    ],
+    "wtd_std_atomic_mass": [
+      0.0,
+      101.0197
+    ],
+    "mean_fie": [
+      375.5,
+      1313.1
+    ],
+    "wtd_mean_fie": [
+      375.5,
+      1348.02898550725
+    ],
+    "gmean_fie": [
+      375.5,
+      1313.1
+    ],
+    "wtd_gmean_fie": [
+      375.5,
+      1327.59338127497
+    ],
+    "entropy_fie": [
+      0.0,
+      2.15777657240244
+    ],
+    "wtd_entropy_fie": [
+      0.0,
+      2.03856025300207
+    ],
+    "range_fie": [
+      0.0,
+      1304.5
+    ],
+    "wtd_range_fie": [
+      0.0,
+      1251.85507246377
+    ],
+    "std_fie": [
+      0.0,
+      499.67194925771
+    ],
+    "wtd_std_fie": [
+      0.0,
+      479.162305267108
+    ],
+    "mean_atomic_radius": [
+      48.0,
+      298.0
+    ],
+    "wtd_mean_atomic_radius": [
+      48.0,
+      298.0
+    ],
+    "gmean_atomic_radius": [
+      48.0,
+      298.0
+    ],
+    "wtd_gmean_atomic_radius": [
+      48.0,
+      298.0
+    ],
+    "entropy_atomic_radius": [
+      0.0,
+      2.14196070533239
+    ],
+    "wtd_entropy_atomic_radius": [
+      0.0,
+      1.90374818834238
+    ],
+    "range_atomic_radius": [
+      0.0,
+      256.0
+    ],
+    "wtd_range_atomic_radius": [
+      0.0,
+      240.164343938996
+    ],
+    "std_atomic_radius": [
+      0.0,
+      115.5
+    ],
+    "wtd_std_atomic_radius": [
+      0.0,
+      97.1407108700226
+    ],
+    "mean_Density": [
+      1.429,
+      22590.0
+    ],
+    "wtd_mean_Density": [
+      1.429,
+      22590.0
+    ],
+    "gmean_Density": [
+      1.429,
+      22590.0
+    ],
+    "wtd_gmean_Density": [
+      0.686244596122796,
+      22590.0
+    ],
+    "entropy_Density": [
+      0.0,
+      1.9542965723777
+    ],
+    "wtd_entropy_Density": [
+      0.0,
+      1.70342035029737
+    ],
+    "range_Density": [
+      0.0,
+      22588.571
+    ],
+    "wtd_range_Density": [
+      0.0,
+      22434.16
+    ],
+    "std_Density": [
+      0.0,
+      10724.3745
+    ],
+    "wtd_std_Density": [
+      0.0,
+      10410.9320049395
+    ],
+    "mean_ElectronAffinity": [
+      1.5,
+      326.1
+    ],
+    "wtd_mean_ElectronAffinity": [
+      1.5,
+      326.1
+    ],
+    "gmean_ElectronAffinity": [
+      1.5,
+      326.1
+    ],
+    "wtd_gmean_ElectronAffinity": [
+      1.5,
+      326.1
+    ],
+    "entropy_ElectronAffinity": [
+      0.0,
+      1.76773180911287
+    ],
+    "wtd_entropy_ElectronAffinity": [
+      0.0,
+      1.67539975792966
+    ],
+    "range_ElectronAffinity": [
+      0.0,
+      349.0
+    ],
+    "wtd_range_ElectronAffinity": [
+      0.0,
+      218.6966
+    ],
+    "std_ElectronAffinity": [
+      0.0,
+      162.895331083763
+    ],
+    "wtd_std_ElectronAffinity": [
+      0.0,
+      169.075861752682
+    ],
+    "mean_FusionHeat": [
+      0.222,
+      105.0
+    ],
+    "wtd_mean_FusionHeat": [
+      0.222,
+      105.0
+    ],
+    "gmean_FusionHeat": [
+      0.222,
+      105.0
+    ],
+    "wtd_gmean_FusionHeat": [
+      0.222,
+      105.0
+    ],
+    "entropy_FusionHeat": [
+      0.0,
+      2.03441025240924
+    ],
+    "wtd_entropy_FusionHeat": [
+      0.0,
+      1.7471647643042
+    ],
+    "range_FusionHeat": [
+      0.0,
+      104.778
+    ],
+    "wtd_range_FusionHeat": [
+      0.0,
+      102.675
+    ],
+    "std_FusionHeat": [
+      0.0,
+      51.635
+    ],
+    "wtd_std_FusionHeat": [
+      0.0,
+      51.6804823183885
+    ],
+    "mean_ThermalConductivity": [
+      0.02658,
+      332.5
+    ],
+    "wtd_mean_ThermalConductivity": [
+      0.02658,
+      406.96
+    ],
+    "gmean_ThermalConductivity": [
+      0.02658,
+      317.883626505047
+    ],
+    "wtd_gmean_ThermalConductivity": [
+      0.0229515567322566,
+      376.032877586072
+    ],
+    "entropy_ThermalConductivity": [
+      0.0,
+      1.63397718517195
+    ],
+    "wtd_entropy_ThermalConductivity": [
+      0.0,
+      1.6129885131651
+    ],
+    "range_ThermalConductivity": [
+      0.0,
+      429.97417
+    ],
+    "wtd_range_ThermalConductivity": [
+      0.0,
+      401.44
+    ],
+    "std_ThermalConductivity": [
+      0.0,
+      214.98615
+    ],
+    "wtd_std_ThermalConductivity": [
+      0.0,
+      213.300451957452
+    ],
+    "mean_Valence": [
+      1.0,
+      7.0
+    ],
+    "wtd_mean_Valence": [
+      1.0,
+      7.0
+    ],
+    "gmean_Valence": [
+      1.0,
+      7.0
+    ],
+    "wtd_gmean_Valence": [
+      1.0,
+      7.0
+    ],
+    "entropy_Valence": [
+      0.0,
+      2.14196333177366
+    ],
+    "wtd_entropy_Valence": [
+      0.0,
+      1.94973862250667
+    ],
+    "range_Valence": [
+      0.0,
+      6.0
+    ],
+    "wtd_range_Valence": [
+      0.0,
+      6.9922
+    ],
+    "std_Valence": [
+      0.0,
+      3.0
+    ],
+    "wtd_std_Valence": [
+      0.0,
+      3.0
+    ]
+  },
+  "feature_names": [
+    "number_of_elements",
+    "mean_atomic_mass",
+    "wtd_mean_atomic_mass",
+    "gmean_atomic_mass",
+    "wtd_gmean_atomic_mass",
+    "entropy_atomic_mass",
+    "wtd_entropy_atomic_mass",
+    "range_atomic_mass",
+    "wtd_range_atomic_mass",
+    "std_atomic_mass",
+    "wtd_std_atomic_mass",
+    "mean_fie",
+    "wtd_mean_fie",
+    "gmean_fie",
+    "wtd_gmean_fie",
+    "entropy_fie",
+    "wtd_entropy_fie",
+    "range_fie",
+    "wtd_range_fie",
+    "std_fie",
+    "wtd_std_fie",
+    "mean_atomic_radius",
+    "wtd_mean_atomic_radius",
+    "gmean_atomic_radius",
+    "wtd_gmean_atomic_radius",
+    "entropy_atomic_radius",
+    "wtd_entropy_atomic_radius",
+    "range_atomic_radius",
+    "wtd_range_atomic_radius",
+    "std_atomic_radius",
+    "wtd_std_atomic_radius",
+    "mean_Density",
+    "wtd_mean_Density",
+    "gmean_Density",
+    "wtd_gmean_Density",
+    "entropy_Density",
+    "wtd_entropy_Density",
+    "range_Density",
+    "wtd_range_Density",
+    "std_Density",
+    "wtd_std_Density",
+    "mean_ElectronAffinity",
+    "wtd_mean_ElectronAffinity",
+    "gmean_ElectronAffinity",
+    "wtd_gmean_ElectronAffinity",
+    "entropy_ElectronAffinity",
+    "wtd_entropy_ElectronAffinity",
+    "range_ElectronAffinity",
+    "wtd_range_ElectronAffinity",
+    "std_ElectronAffinity",
+    "wtd_std_ElectronAffinity",
+    "mean_FusionHeat",
+    "wtd_mean_FusionHeat",
+    "gmean_FusionHeat",
+    "wtd_gmean_FusionHeat",
+    "entropy_FusionHeat",
+    "wtd_entropy_FusionHeat",
+    "range_FusionHeat",
+    "wtd_range_FusionHeat",
+    "std_FusionHeat",
+    "wtd_std_FusionHeat",
+    "mean_ThermalConductivity",
+    "wtd_mean_ThermalConductivity",
+    "gmean_ThermalConductivity",
+    "wtd_gmean_ThermalConductivity",
+    "entropy_ThermalConductivity",
+    "wtd_entropy_ThermalConductivity",
+    "range_ThermalConductivity",
+    "wtd_range_ThermalConductivity",
+    "std_ThermalConductivity",
+    "wtd_std_ThermalConductivity",
+    "mean_Valence",
+    "wtd_mean_Valence",
+    "gmean_Valence",
+    "wtd_gmean_Valence",
+    "entropy_Valence",
+    "wtd_entropy_Valence",
+    "range_Valence",
+    "wtd_range_Valence",
+    "std_Valence",
+    "wtd_std_Valence"
+  ]
+}

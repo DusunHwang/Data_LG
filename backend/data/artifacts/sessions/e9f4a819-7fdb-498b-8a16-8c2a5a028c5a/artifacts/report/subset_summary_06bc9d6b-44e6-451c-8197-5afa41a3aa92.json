@@ -1,0 +1,47 @@
+{
+  "total_candidates_generated": 1,
+  "top_subsets": [
+    {
+      "subset_no": 1,
+      "name": "서명 그룹 (506행)",
+      "strategy": "row_signature",
+      "description": "동일 결측 패턴: 0개 컬럼 결측",
+      "score": 0.866667,
+      "n_rows": 506,
+      "n_cols": 13,
+      "row_coverage": 1.0,
+      "feature_coverage": 0.8667,
+      "mean_missingness": 0.0,
+      "target_completeness": 1.0,
+      "cols": [
+        "CRIM",
+        "ZN",
+        "INDUS",
+        "NOX",
+        "RM",
+        "AGE",
+        "DIS",
+        "RAD",
+        "TAX",
+        "PTRATIO",
+        "B",
+        "LSTAT",
+        "MEDV"
+      ]
+    }
+  ],
+  "col_classification_summary": {
+    "constant": 0,
+    "near_constant": 2,
+    "id_like": 0,
+    "high_missing": 0,
+    "low_cardinality": 0,
+    "target": 1,
+    "numeric": 12,
+    "categorical": 0
+  },
+  "missing_structure_summary": {
+    "n_row_signatures": 1,
+    "n_co_missing_pairs": 0
+  }
+}

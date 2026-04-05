@@ -33,6 +33,7 @@ def _suppress_pandasai_file_logging() -> None:
 def _run_vllm_sync(prompt: str) -> str:
     """VLLMClient를 동기적으로 호출 (enable_thinking=False 보장)"""
     import asyncio
+
     from app.graph.llm_client import VLLMClient
 
     async def _call():
@@ -94,6 +95,7 @@ def _patch_pipeline_context() -> None:
     """
     try:
         import uuid as _uuid
+
         from pandasai.pipelines.pipeline_context import PipelineContext
 
         if not hasattr(PipelineContext, "prompt_id"):

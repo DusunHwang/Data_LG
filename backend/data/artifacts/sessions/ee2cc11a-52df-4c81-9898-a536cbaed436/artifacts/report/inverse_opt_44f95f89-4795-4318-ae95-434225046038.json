@@ -1,0 +1,26 @@
+{
+  "direction": "maximize",
+  "target_column": "quality",
+  "optimal_prediction": 7.02170924752978,
+  "baseline_prediction": 5.730428641547278,
+  "improvement": 1.291280605982502,
+  "optimal_features": {
+    "alcohol": 12.780886310156461,
+    "sulphates": 0.873068981121331,
+    "volatile acidity": 0.3518984467497496,
+    "total sulfur dioxide": 9.830095042395044
+  },
+  "fixed_features": {},
+  "selected_features": [
+    "alcohol",
+    "sulphates",
+    "volatile acidity",
+    "total sulfur dioxide"
+  ],
+  "n_evaluations": 1829,
+  "convergence": true,
+  "constraint_target_column": null,
+  "constraint_type": null,
+  "constraint_threshold": null,
+  "constraint_prediction": null
+}

@@ -2,12 +2,10 @@
 
 import uuid
 
-from sqlalchemy import Boolean, ForeignKey, String, Text
-from sqlalchemy import JSON
-from app.db.models.base import UUIDString
+from sqlalchemy import JSON, Boolean, ForeignKey, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from app.db.models.base import BaseModel
+from app.db.models.base import BaseModel, UUIDString
 
 
 class Branch(BaseModel):

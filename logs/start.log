@@ -1,0 +1,85 @@
+
+========================================================
+   Data_LG — 직접 실행 모드 (uv + SQLite)
+========================================================
+[0;32m[OK][0m    uv: uv 0.10.12 (x86_64-unknown-linux-gnu)
+[0;32m[OK][0m    vLLM: http://dusun.iptime.org:27800/v1  /  Qwen/Qwen3-30B-A3B-FP8
+[0;36m[INFO][0m  백엔드 의존성 설치 중...
+[0;32m[OK][0m    백엔드 의존성 설치 완료
+[0;36m[INFO][0m  DB 초기화 중...
+INFO  [alembic.runtime.migration] Context impl SQLiteImpl.
+INFO  [alembic.runtime.migration] Will assume non-transactional DDL.
+[0;32m[OK][0m    DB 마이그레이션 완료
+[0;36m[INFO][0m  시드 데이터 입력 중...
+[2m2026-04-03T09:47:24.276097Z[0m [[32m[1minfo     [0m] [1m시드 데이터 입력 시작                  [0m [[0m[1m[34m__main__[0m][0m
+[2m2026-04-03T09:47:24.331807Z[0m [[32m[1minfo     [0m] [1m이미 존재하는 사용자                   [0m [[0m[1m[34m__main__[0m][0m [36musername[0m=[35madmin[0m
+[2m2026-04-03T09:47:24.333501Z[0m [[32m[1minfo     [0m] [1m이미 존재하는 사용자                   [0m [[0m[1m[34m__main__[0m][0m [36musername[0m=[35mdemo_user_1[0m
+[2m2026-04-03T09:47:24.335004Z[0m [[32m[1minfo     [0m] [1m이미 존재하는 사용자                   [0m [[0m[1m[34m__main__[0m][0m [36musername[0m=[35mdemo_user_2[0m
+[2m2026-04-03T09:47:24.336272Z[0m [[32m[1minfo     [0m] [1m시드 데이터 입력 완료                  [0m [[0m[1m[34m__main__[0m][0m
+[2m2026-04-03T09:47:24.336611Z[0m [[32m[1minfo     [0m] [1m시드 데이터 입력 완료!                 [0m [[0m[1m[34m__main__[0m][0m
+
+=== 시드 계정 정보 ===
+관리자: admin / Admin123!
+데모 1: demo_user_1 / Demo123!
+데모 2: demo_user_2 / Demo123!
+[0;32m[OK][0m    시드 데이터 완료
+[0;36m[INFO][0m  프론트엔드 의존성 설치 중...
+[0;32m[OK][0m    프론트엔드 의존성 설치 완료
+
+[0;36m[INFO][0m  서비스 시작 중...
+[0;32m[OK][0m    백엔드 시작 (PID: 3878377)
+.
+[0;36m[INFO][0m  프론트엔드 시작 (Ctrl+C로 전체 종료)
+
+========================================================
+[0;32m  서비스 시작 완료![0m
+========================================================
+  프론트엔드:  http://localhost:8501
+  백엔드 API:  http://localhost:8000/docs
+  로그:        logs/backend.log
+  종료:        Ctrl+C
+========================================================
+
+
+Collecting usage statistics. To deactivate, set browser.gatherUsageStats to false.
+
+
+  You can now view your Streamlit app in your browser.
+
+  Local URL: http://localhost:8501
+  Network URL: http://192.168.64.116:8501
+  External URL: http://125.191.145.14:8501
+
+2026-04-03 18:57:38.573 Please replace `use_container_width` with `width`.
+
+`use_container_width` will be removed after 2025-12-31.
+
+For `use_container_width=True`, use `width='stretch'`. For `use_container_width=False`, use `width='content'`.
+2026-04-03 18:57:56.255 Please replace `use_container_width` with `width`.
+
+`use_container_width` will be removed after 2025-12-31.
+
+For `use_container_width=True`, use `width='stretch'`. For `use_container_width=False`, use `width='content'`.
+2026-04-03 18:57:57.050 Please replace `use_container_width` with `width`.
+
+`use_container_width` will be removed after 2025-12-31.
+
+For `use_container_width=True`, use `width='stretch'`. For `use_container_width=False`, use `width='content'`.
+2026-04-03 18:58:02.712 Please replace `use_container_width` with `width`.
+
+`use_container_width` will be removed after 2025-12-31.
+
+For `use_container_width=True`, use `width='stretch'`. For `use_container_width=False`, use `width='content'`.
+2026-04-03 18:58:08.378 Please replace `use_container_width` with `width`.
+
+`use_container_width` will be removed after 2025-12-31.
+
+For `use_container_width=True`, use `width='stretch'`. For `use_container_width=False`, use `width='content'`.
+2026-04-03 18:58:09.180 Please replace `use_container_width` with `width`.
+
+`use_container_width` will be removed after 2025-12-31.
+
+For `use_container_width=True`, use `width='stretch'`. For `use_container_width=False`, use `width='content'`.
+
+[0;36m[INFO][0m  서비스 종료 중...
+[0;32m[OK][0m    종료 완료

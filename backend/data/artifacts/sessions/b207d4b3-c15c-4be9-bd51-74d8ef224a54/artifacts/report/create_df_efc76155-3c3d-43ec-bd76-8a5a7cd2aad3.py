@@ -1,5 +1,4 @@
 import pandas as pd
-import numpy as np
 
 df = pd.read_parquet('data.parquet')
 result_df = df[df['RAD'] == 1].copy()

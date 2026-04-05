@@ -1,0 +1,5 @@
+df = pd.read_parquet('data.parquet')
+threshold = df['MEDV'].quantile(0.9)
+result_df = df[df['MEDV'] < threshold].copy()
+result_df.to_parquet('result_1.parquet', index=False)
+print(f"Result shape: {result_df.shape}")

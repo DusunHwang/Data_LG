@@ -2,7 +2,6 @@
 
 from typing import Any
 
-import numpy as np
 import pandas as pd
 
 from app.core.logging import get_logger
@@ -88,7 +87,7 @@ def compute_target_candidates(df: pd.DataFrame) -> list[TargetCandidate]:
 
         null_pct = float(series.isna().mean() * 100)
         unique_count = int(series.nunique(dropna=True))
-        total = len(series)
+        len(series)
 
         # 결측값이 50% 이상이면 제외
         if null_pct > 50:

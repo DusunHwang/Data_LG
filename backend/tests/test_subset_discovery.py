@@ -2,7 +2,6 @@
 
 import numpy as np
 import pandas as pd
-import pytest
 
 
 def make_manufacturing_df(n=500, seed=42):
@@ -141,7 +140,17 @@ class TestSubsetDiscoveryPipeline:
         target_col = "quality_score"
 
         # 후보 생성
-        candidates = generate_subset_candidates(df, target_col=target_col)
+        col_classification = {
+            "usable": list(df.columns),
+            "redundant": [],
+            "low_variance": [],
+            "constant": [],
+            "near_constant": [],
+            "id_like": [],
+            "high_missing": [],
+        }
+        missing_structure = {"row_signatures": {}, "co_missing_pairs": []}
+        candidates = generate_subset_candidates(df, col_classification, missing_structure, target_col=target_col)
         assert isinstance(candidates, list)
         assert len(candidates) > 0
 
@@ -158,7 +167,17 @@ class TestSubsetDiscoveryPipeline:
         from app.graph.subgraphs.subset_discovery import generate_subset_candidates
 
         df = make_manufacturing_df(n=200)
-        candidates = generate_subset_candidates(df, target_col="quality_score")
+        col_classification = {
+            "usable": list(df.columns),
+            "redundant": [],
+            "low_variance": [],
+            "constant": [],
+            "near_constant": [],
+            "id_like": [],
+            "high_missing": [],
+        }
+        missing_structure = {"row_signatures": {}, "co_missing_pairs": []}
+        candidates = generate_subset_candidates(df, col_classification, missing_structure, target_col="quality_score")
 
         for c in candidates:
             assert "row_indices" in c or "rows" in c or "name" in c

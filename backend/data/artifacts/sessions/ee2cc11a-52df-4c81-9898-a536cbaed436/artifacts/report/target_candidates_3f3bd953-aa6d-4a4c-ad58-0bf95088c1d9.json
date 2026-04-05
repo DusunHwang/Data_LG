@@ -1,0 +1,32 @@
+[
+  {
+    "column": "total sulfur dioxide",
+    "dtype": "float64",
+    "n_unique": 144,
+    "missing_ratio": 0.0,
+    "mean": 46.4678,
+    "std": 32.8953,
+    "score": 0.1929,
+    "recommendation": "수치형 타겟 후보"
+  },
+  {
+    "column": "citric acid",
+    "dtype": "float64",
+    "n_unique": 80,
+    "missing_ratio": 0.0,
+    "mean": 0.271,
+    "std": 0.1948,
+    "score": 0.1887,
+    "recommendation": "수치형 타겟 후보"
+  },
+  {
+    "column": "free sulfur dioxide",
+    "dtype": "float64",
+    "n_unique": 60,
+    "missing_ratio": 0.0,
+    "mean": 15.8749,
+    "std": 10.4602,
+    "score": 0.1709,
+    "recommendation": "수치형 타겟 후보"
+  }
+]

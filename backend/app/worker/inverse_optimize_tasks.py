@@ -14,6 +14,7 @@ import numpy as np
 import pandas as pd
 
 from app.core.logging import get_logger
+from app.graph.helpers import prepare_feature_matrix
 from app.worker.job_runner import get_sync_db_connection, update_job_status_sync
 from app.worker.progress import ProgressReporter
 
@@ -58,43 +59,32 @@ def run_null_importance_task(
         df = pd.read_parquet(dataset_path)
 
         # 피처 준비
-        available = [f for f in feature_names if f in df.columns]
-        if not available:
-            raise ValueError("데이터셋에 모델 피처가 없습니다.")
-
-        X = df[available].copy()
+        x = prepare_feature_matrix(df, feature_names, categorical_features)
         y = df[target_column].copy() if target_column in df.columns else None
-
-        # 범주형 처리
-        for col in categorical_features:
-            if col in X.columns:
-                X[col] = X[col].astype("category")
-
-        X = X.fillna(X.median(numeric_only=True))
 
         # 샘플링 (SHAP 계산 비용)
         max_rows = 3000
-        if len(X) > max_rows:
-            idx = np.random.choice(len(X), max_rows, replace=False)
-            X_shap = X.iloc[idx].reset_index(drop=True)
+        if len(x) > max_rows:
+            idx = np.random.choice(len(x), max_rows, replace=False)
+            x_shap = x.iloc[idx].reset_index(drop=True)
             y_shap = y.iloc[idx].reset_index(drop=True) if y is not None else None
         else:
-            X_shap = X
+            x_shap = x
             y_shap = y
 
         reporter.update(15, "실제 SHAP 중요도 계산 중...")
         explainer = shap.TreeExplainer(model)
-        shap_vals = explainer.shap_values(X_shap)
+        shap_vals = explainer.shap_values(x_shap)
         actual_importance = {
             feat: float(np.abs(shap_vals[:, i]).mean())
-            for i, feat in enumerate(available)
+            for i, feat in enumerate(x.columns)
         }
         actual_sorted = sorted(actual_importance.items(), key=lambda x: -x[1])
 
         reporter.update(25, f"Null Importance 순열 {n_permutations}회 시작...")
 
         # Null 분포 계산
-        null_scores = {feat: [] for feat in available}
+        null_scores = {feat: [] for feat in x.columns}
 
         lgb_params = {
             "objective": "regression",
@@ -104,7 +94,7 @@ def run_null_importance_task(
             "verbosity": -1,
             "random_state": 42,
         }
-        cat_idx = [available.index(c) for c in categorical_features if c in available]
+        cat_idx = [x.columns.tolist().index(c) for c in categorical_features if c in x.columns]
 
         for perm_i in range(n_permutations):
             pct = 25 + int(60 * perm_i / n_permutations)
@@ -117,12 +107,12 @@ def run_null_importance_task(
             try:
                 perm_model = lgb.LGBMRegressor(**lgb_params)
                 perm_model.fit(
-                    X_shap, y_perm,
+                    x_shap, y_perm,
                     categorical_feature=cat_idx if cat_idx else "auto",
                 )
                 perm_explainer = shap.TreeExplainer(perm_model)
-                perm_shap = perm_explainer.shap_values(X_shap)
-                for i, feat in enumerate(available):
+                perm_shap = perm_explainer.shap_values(x_shap)
+                for i, feat in enumerate(x.columns):
                     null_scores[feat].append(float(np.abs(perm_shap[:, i]).mean()))
             except Exception as e:
                 logger.warning(f"순열 {perm_i} 실패", error=str(e))
@@ -132,7 +122,7 @@ def run_null_importance_task(
         # 유의성 판단: 실제 중요도 > null 90th percentile
         null_importance = {}
         significant = []
-        for feat in available:
+        for feat in x.columns:
             nulls = null_scores[feat]
             if nulls:
                 p5 = float(np.percentile(nulls, 5))
@@ -158,8 +148,8 @@ def run_null_importance_task(
 
         # 피처 범위 (역최적화 탐색 공간용)
         feature_ranges = {}
-        for feat in available:
-            col_data = X[feat].dropna()
+        for feat in x.columns:
+            col_data = x[feat].dropna()
             if pd.api.types.is_numeric_dtype(col_data):
                 feature_ranges[feat] = [float(col_data.min()), float(col_data.max())]
 
@@ -169,7 +159,7 @@ def run_null_importance_task(
             "recommended_features": recommended_features,
             "recommended_n": recommended_n,
             "feature_ranges": feature_ranges,
-            "feature_names": available,
+            "feature_names": x.columns.tolist(),
         }
 
         update_job_status_sync(job_run_id, "completed", 100, "Null Importance 분석 완료", result=result)
@@ -216,11 +206,7 @@ def run_inverse_optimize_task(
 
         reporter.update(10, "데이터 로드 및 탐색 공간 구성 중...")
         df = pd.read_parquet(dataset_path)
-        X_ref = df[feature_names].copy()
-        for col in categorical_features:
-            if col in X_ref.columns:
-                X_ref[col] = X_ref[col].astype("category")
-        X_ref = X_ref.fillna(X_ref.median(numeric_only=True))
+        x_ref = prepare_feature_matrix(df, feature_names, categorical_features)
 
         # 탐색 공간: selected_features에 대해 [min*(1-r), max*(1+r)]
         bounds = []
@@ -228,7 +214,7 @@ def run_inverse_optimize_task(
             if feat in feature_ranges:
                 lo, hi = feature_ranges[feat]
             else:
-                col_data = X_ref[feat].dropna()
+                col_data = x_ref[feat].dropna()
                 lo, hi = float(col_data.min()), float(col_data.max())
 
             spread = (hi - lo) * expand_ratio
@@ -237,11 +223,11 @@ def run_inverse_optimize_task(
             bounds.append((lo_exp, hi_exp))
 
         # 기준 벡터 (고정 피처 포함한 전체 피처 행)
-        base_row = X_ref.median().to_dict()
+        base_row = x_ref.median(numeric_only=True).to_dict()
         base_row.update(fixed_values)
 
         # 범주형 피처는 선택 불가 (고정값 강제)
-        cat_in_selected = [f for f in selected_features if f in categorical_features]
+        [f for f in selected_features if f in categorical_features]
         opt_features = [f for f in selected_features if f not in categorical_features]
 
         if not opt_features:
@@ -266,11 +252,12 @@ def run_inverse_optimize_task(
                 row[feat] = val
 
             try:
+                # prepare_feature_matrix 사용
                 input_df = pd.DataFrame([row])[feature_names]
-                for col in categorical_features:
-                    if col in input_df.columns:
-                        input_df[col] = input_df[col].astype("category")
-                pred = model.predict(input_df)[0]
+                input_processed = prepare_feature_matrix(
+                    input_df, feature_names, categorical_features, fill_na=False
+                )
+                pred = model.predict(input_processed)[0]
                 return sign * float(pred)
             except Exception:
                 return 1e9
@@ -296,20 +283,20 @@ def run_inverse_optimize_task(
         # 최적 예측값
         try:
             input_df = pd.DataFrame([optimal_row])[feature_names]
-            for col in categorical_features:
-                if col in input_df.columns:
-                    input_df[col] = input_df[col].astype("category")
-            optimal_prediction = float(model.predict(input_df)[0])
-        except Exception as e:
+            input_processed = prepare_feature_matrix(
+                input_df, feature_names, categorical_features, fill_na=False
+            )
+            optimal_prediction = float(model.predict(input_processed)[0])
+        except Exception:
             optimal_prediction = -sign * result_opt.fun
 
         # 베이스라인 (데이터 중앙값)
         try:
             base_input = pd.DataFrame([base_row])[feature_names]
-            for col in categorical_features:
-                if col in base_input.columns:
-                    base_input[col] = base_input[col].astype("category")
-            baseline_prediction = float(model.predict(base_input)[0])
+            base_processed = prepare_feature_matrix(
+                base_input, feature_names, categorical_features, fill_na=False
+            )
+            baseline_prediction = float(model.predict(base_processed)[0])
         except Exception:
             baseline_prediction = None
 
@@ -400,17 +387,10 @@ def run_constrained_inverse_optimize_task(
         reporter.update(10, "데이터 로드 및 탐색 공간 구성 중...")
         df = pd.read_parquet(dataset_path)
 
-        # 공통 전처리 함수
-        def prepare_X(df_, feat_list, cat_feats):
-            X_ = df_[feat_list].copy()
-            for col in cat_feats:
-                if col in X_.columns:
-                    X_[col] = X_[col].astype("category")
-            return X_.fillna(X_.median(numeric_only=True))
-
-        X_ref = prepare_X(df, feature_names, categorical_features)
+        x_ref = prepare_feature_matrix(df, feature_names, categorical_features)
         c_feat_names = constraint_feature_names or feature_names
-        X_ref_c = prepare_X(df, c_feat_names, categorical_features) if constraint_model else None
+        if constraint_model:
+            prepare_feature_matrix(df, c_feat_names, categorical_features)
 
         # BCM 모델 구성 (요청 시)
         if model_type == "bcm":
@@ -425,7 +405,7 @@ def run_constrained_inverse_optimize_task(
                 reporter.update(mapped, f"[BCM] {msg}")
 
             bcm = BCMModel(lgbm_model, categorical_features=categorical_features)
-            bcm.fit(X_ref, y_col.values, progress_cb=bcm_progress)
+            bcm.fit(x_ref, y_col.values, progress_cb=bcm_progress)
             model = bcm
         else:
             model = lgbm_model
@@ -439,7 +419,7 @@ def run_constrained_inverse_optimize_task(
             if feat in feature_ranges:
                 lo, hi = feature_ranges[feat]
             else:
-                col_data = X_ref[feat].dropna()
+                col_data = x_ref[feat].dropna()
                 lo, hi = float(col_data.min()), float(col_data.max())
             spread = (hi - lo) * expand_ratio
             bounds.append((lo - spread, hi + spread))
@@ -447,7 +427,7 @@ def run_constrained_inverse_optimize_task(
         if not opt_features:
             raise ValueError("선택된 피처 중 수치형 피처가 없습니다.")
 
-        base_row = X_ref.median().to_dict()
+        base_row = x_ref.median(numeric_only=True).to_dict()
         base_row.update(fixed_values)
 
         sign = -1.0 if direction == "maximize" else 1.0
@@ -456,10 +436,8 @@ def run_constrained_inverse_optimize_task(
 
         def build_input(row, feat_list, cat_feats):
             input_df = pd.DataFrame([row])[feat_list]
-            for col in cat_feats:
-                if col in input_df.columns:
-                    input_df[col] = input_df[col].astype("category")
-            return input_df
+            # prepare_feature_matrix 사용 (카테고리 변환 및 필요시 결측치 채우기)
+            return prepare_feature_matrix(input_df, feat_list, cat_feats, fill_na=False)
 
         def objective(x):
             call_count[0] += 1

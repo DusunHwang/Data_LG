@@ -1,8 +1,6 @@
 """분석 E2E 통합 테스트: 로그인 → 세션 → 데이터셋 → 타겟 → 분석 요청 → 폴링 → 결과"""
 
-import time
 import pytest
-
 
 # ─── 유틸 ──────────────────────────────────────────────────────────────────────
 
@@ -71,11 +69,12 @@ class TestDatasetFlow:
         _skip_if_no_session(test_session_id)
 
         r = client.get(
-            f"/api/v1/sessions/{test_session_id}/datasets/builtin",
+            f"/api/v1/sessions/{test_session_id}/datasets/builtin-list",
             headers=auth_headers,
         )
         _skip_if_401(r)
         assert r.status_code == 200
+
         data = r.json()
         assert data["success"] is True
         assert isinstance(data["data"], list)

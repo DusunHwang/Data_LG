@@ -4,13 +4,11 @@ import asyncio
 import json
 import os
 import shutil
-import uuid
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import List, Optional
 
 import pandas as pd
 
-from app.core.config import settings
 from app.core.logging import get_logger
 from app.graph.helpers import (
     check_cancellation,
@@ -226,8 +224,7 @@ def run_eda_subgraph(state: GraphState) -> GraphState:
 
 async def _plan_eda(df: pd.DataFrame, dataset: dict, user_message: str) -> dict:
     """vLLM으로 EDA 계획 수립"""
-    from pydantic import BaseModel, Field
-    from typing import List
+    from pydantic import BaseModel
 
     class EDAAnalysis(BaseModel):
         name: str
@@ -348,8 +345,9 @@ def _run_basic_eda(df: pd.DataFrame, dataset_path: str) -> dict:
     """기본 EDA 실행 (코드 생성 없이 직접 실행)"""
     import matplotlib
     matplotlib.use("Agg")
-    import matplotlib.pyplot as plt
     import tempfile
+
+    import matplotlib.pyplot as plt
 
     from app.graph.helpers import setup_korean_font
     setup_korean_font()
@@ -394,7 +392,6 @@ def _run_basic_eda(df: pd.DataFrame, dataset_path: str) -> dict:
 
         # 3. 상관관계 히트맵
         if len(numeric_cols) >= 2:
-            import numpy as np
             corr = df[numeric_cols[:15]].corr()
             fig, ax = plt.subplots(figsize=(10, 8))
             im = ax.imshow(corr.values, cmap="RdBu_r", vmin=-1, vmax=1)

@@ -2,16 +2,14 @@
 
 import json
 import os
-import uuid
 from datetime import datetime, timezone
 from itertools import product
-from typing import Any, Dict, List, Optional, Tuple
+from typing import List, Optional, Tuple
 
 import joblib
 import numpy as np
 import pandas as pd
 
-from app.core.config import settings
 from app.core.logging import get_logger
 from app.graph.helpers import (
     check_cancellation,
@@ -98,25 +96,22 @@ def run_optimization_subgraph(state: GraphState) -> GraphState:
         categorical_features = champion_info.get("categorical_features", []) if champion_info else []
         model_run_id = champion_info.get("model_run_id") if champion_info else None
 
+        from app.graph.helpers import prepare_feature_matrix
+
         if not feature_names:
             # 피처 없으면 전체 컬럼 사용
             from app.graph.subgraphs.modeling import build_feature_matrix
-            X, feature_names = build_feature_matrix(df, target_col)
-            if X is not None:
-                categorical_features = [c for c in feature_names if str(X[c].dtype) == "category"]
+            x, feature_names = build_feature_matrix(df, target_col)
+            if x is not None:
+                categorical_features = [c for c in feature_names if str(x[c].dtype) == "category"]
             else:
                 return {**state, "error_code": "NO_FEATURES", "error_message": "피처 구성 실패"}
         else:
             avail = [f for f in feature_names if f in df.columns]
-            X = df.dropna(subset=[target_col])[avail].copy()
-            for col in X.columns:
-                if col in categorical_features or X[col].dtype == "object":
-                    X[col] = X[col].fillna("__missing__").astype("category")
-                elif str(X[col].dtype) == "category" and X[col].isnull().any():
-                    X[col] = X[col].cat.add_categories(["__missing__"])
-                    X[col] = X[col].fillna("__missing__")
+            df_clean = df.dropna(subset=[target_col]).copy()
+            x = prepare_feature_matrix(df_clean, avail, categorical_features)
 
-        y = df.loc[X.index, target_col].fillna(df[target_col].median())
+        y = df.loc[x.index, target_col].fillna(df[target_col].median())
 
         check_cancellation(state)
         state = update_progress(state, 25, "최적화", "탐색 공간 분석 중...")
@@ -131,9 +126,9 @@ def run_optimization_subgraph(state: GraphState) -> GraphState:
 
         # 3. 최적화 실행
         if use_grid:
-            opt_result = _run_grid_search(X, y, search_space, categorical_features, state)
+            opt_result = _run_grid_search(x, y, search_space, categorical_features, state)
         else:
-            opt_result = _run_optuna(X, y, categorical_features, state)
+            opt_result = _run_optuna(x, y, categorical_features, state)
 
         check_cancellation(state)
         state = update_progress(state, 85, "최적화", "최적화 결과 저장 중...")
@@ -168,7 +163,11 @@ def run_optimization_subgraph(state: GraphState) -> GraphState:
         raise
     except Exception as e:
         logger.error("최적화 서브그래프 실패", error=str(e))
-        return {**state, "error_code": "OPTIMIZATION_ERROR", "error_message": f"최적화 중 오류: {str(e)}"}
+        return {
+            **state,
+            "error_code": "OPTIMIZATION_ERROR",
+            "error_message": f"최적화 중 오류: {str(e)}",
+        }
 
 
 def _determine_search_space(user_message: str) -> Tuple[dict, bool, int]:
@@ -188,7 +187,7 @@ def _determine_search_space(user_message: str) -> Tuple[dict, bool, int]:
 
 
 def _run_grid_search(
-    X: pd.DataFrame,
+    x: pd.DataFrame,
     y: pd.Series,
     search_space: dict,
     categorical_features: List[str],
@@ -199,9 +198,13 @@ def _run_grid_search(
     from sklearn.metrics import mean_squared_error
     from sklearn.model_selection import train_test_split
 
-    from app.graph.subgraphs.modeling import LGBM_PARAMS, NUM_BOOST_ROUND, EARLY_STOPPING_ROUNDS
+    from app.graph.subgraphs.modeling import (
+        EARLY_STOPPING_ROUNDS,
+        LGBM_PARAMS,
+        NUM_BOOST_ROUND,
+    )
 
-    X_train, X_val, y_train, y_val = train_test_split(X, y, test_size=0.2, random_state=42)
+    x_train, x_val, y_train, y_val = train_test_split(x, y, test_size=0.2, random_state=42)
 
     all_combos = list(product(*[v for v in search_space.values()]))
     param_keys = list(search_space.keys())
@@ -213,7 +216,7 @@ def _run_grid_search(
     best_params = {}
     best_model = None
 
-    cat_feats = [c for c in X_train.columns if str(X_train[c].dtype) == "category"]
+    cat_feats = [c for c in x_train.columns if str(x_train[c].dtype) == "category"]
 
     for i, combo in enumerate(all_combos):
         check_cancellation(state)
@@ -224,9 +227,9 @@ def _run_grid_search(
         params = {**LGBM_PARAMS, **trial_params}
 
         try:
-            train_data = lgb.Dataset(X_train, label=y_train,
+            train_data = lgb.Dataset(x_train, label=y_train,
                                      categorical_feature=cat_feats if cat_feats else "auto")
-            val_data = lgb.Dataset(X_val, label=y_val, reference=train_data,
+            val_data = lgb.Dataset(x_val, label=y_val, reference=train_data,
                                    categorical_feature=cat_feats if cat_feats else "auto")
 
             callbacks = [
@@ -242,7 +245,7 @@ def _run_grid_search(
                 callbacks=callbacks,
             )
 
-            y_pred = model.predict(X_val)
+            y_pred = model.predict(x_val)
             score = float(np.sqrt(mean_squared_error(y_val, y_pred)))
 
             trials_history.append({
@@ -287,7 +290,7 @@ def _run_grid_search(
 
 
 def _run_optuna(
-    X: pd.DataFrame,
+    x: pd.DataFrame,
     y: pd.Series,
     categorical_features: List[str],
     state: GraphState,
@@ -295,17 +298,21 @@ def _run_optuna(
     timeout: int = 300,
 ) -> dict:
     """Optuna 최적화"""
-    import optuna
     import lightgbm as lgb
+    import optuna
     from sklearn.metrics import mean_squared_error
     from sklearn.model_selection import train_test_split
 
-    from app.graph.subgraphs.modeling import LGBM_PARAMS, NUM_BOOST_ROUND, EARLY_STOPPING_ROUNDS
+    from app.graph.subgraphs.modeling import (
+        EARLY_STOPPING_ROUNDS,
+        LGBM_PARAMS,
+        NUM_BOOST_ROUND,
+    )
 
     optuna.logging.set_verbosity(optuna.logging.WARNING)
 
-    X_train, X_val, y_train, y_val = train_test_split(X, y, test_size=0.2, random_state=42)
-    cat_feats = [c for c in X_train.columns if str(X_train[c].dtype) == "category"]
+    x_train, x_val, y_train, y_val = train_test_split(x, y, test_size=0.2, random_state=42)
+    cat_feats = [c for c in x_train.columns if str(x_train[c].dtype) == "category"]
 
     completed_trials = [0]
     trials_history = []
@@ -327,9 +334,9 @@ def _run_optuna(
 
         params = {**LGBM_PARAMS, **trial_params}
 
-        train_data = lgb.Dataset(X_train, label=y_train,
+        train_data = lgb.Dataset(x_train, label=y_train,
                                  categorical_feature=cat_feats if cat_feats else "auto")
-        val_data = lgb.Dataset(X_val, label=y_val, reference=train_data,
+        val_data = lgb.Dataset(x_val, label=y_val, reference=train_data,
                                categorical_feature=cat_feats if cat_feats else "auto")
 
         callbacks = [
@@ -345,11 +352,10 @@ def _run_optuna(
             callbacks=callbacks,
         )
 
-        y_pred = model.predict(X_val)
+        y_pred = model.predict(x_val)
         score = float(np.sqrt(mean_squared_error(y_val, y_pred)))
 
         completed_trials[0] += 1
-        progress = 30 + int(55 * completed_trials[0] / n_trials)
 
         trials_history.append({
             "trial_number": trial.number,
@@ -511,6 +517,10 @@ def _save_optimization_artifacts(
             # optimization_runs 테이블 저장
             optimization_run_id = str(uuid_module.uuid4())
             trials_history = opt_result.get("trials_history", [])
+            # 최대 100개
+            history_summary = (
+                trials_history[-100:] if len(trials_history) > 100 else trials_history
+            )
             cur.execute(
                 """
                 INSERT INTO optimization_runs (
@@ -528,7 +538,7 @@ def _save_optimization_artifacts(
                     opt_result.get("n_trials", 0),
                     opt_result.get("best_score"),
                     json.dumps(opt_result.get("best_params", {})),
-                    json.dumps(trials_history[-100:] if len(trials_history) > 100 else trials_history),  # 최대 100개
+                    json.dumps(history_summary),
                     f"opt_{optimization_run_id[:8]}",
                     now,
                     now,
@@ -545,7 +555,9 @@ def _save_optimization_artifacts(
                 history_data.append(row_data)
 
             history_df = pd.DataFrame(history_data)
-            history_path = os.path.join(df_dir, f"optimization_history_{step_id or 'default'}.parquet")
+            history_path = os.path.join(
+                df_dir, f"optimization_history_{step_id or 'default'}.parquet"
+            )
             history_df.to_parquet(history_path, index=False)
 
             artifact_id = save_artifact_to_db(

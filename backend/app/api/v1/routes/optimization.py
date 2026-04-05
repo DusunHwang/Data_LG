@@ -134,8 +134,8 @@ async def run_optimization(
 
     # RQ 큐에 제출
     try:
-        from app.worker.tasks import run_optimization_task
         from app.worker.queue import enqueue_job
+        from app.worker.tasks import run_optimization_task
 
         rq_job = enqueue_job(
             run_optimization_task,

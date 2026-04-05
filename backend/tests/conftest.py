@@ -2,6 +2,7 @@
 
 import asyncio
 import os
+
 import pytest
 
 # 테스트용 환경 변수 설정 (DB 없이 실행 가능하도록)
@@ -30,6 +31,7 @@ def client():
     """FastAPI 테스트 클라이언트"""
     try:
         from fastapi.testclient import TestClient
+
         from app.main import create_app
         app = create_app()
         with TestClient(app, raise_server_exceptions=False) as c:

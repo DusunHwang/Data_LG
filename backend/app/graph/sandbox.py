@@ -5,7 +5,6 @@ import subprocess
 import sys
 import tempfile
 import textwrap
-from pathlib import Path
 from typing import Any, Optional
 
 from app.core.logging import get_logger

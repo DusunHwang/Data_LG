@@ -1,0 +1,32 @@
+[
+  {
+    "column": "CHAS",
+    "dtype": "int64",
+    "n_unique": 2,
+    "missing_ratio": 0.0,
+    "mean": 0.05,
+    "std": 0.2236,
+    "score": 0.55,
+    "recommendation": "수치형 타겟 후보"
+  },
+  {
+    "column": "CAT.MEDV",
+    "dtype": "int64",
+    "n_unique": 2,
+    "missing_ratio": 0.0,
+    "mean": 0.2,
+    "std": 0.4104,
+    "score": 0.55,
+    "recommendation": "수치형 타겟 후보"
+  },
+  {
+    "column": "INDUS",
+    "dtype": "float64",
+    "n_unique": 12,
+    "missing_ratio": 0.0,
+    "mean": 5.066,
+    "std": 4.2812,
+    "score": 0.338,
+    "recommendation": "수치형 타겟 후보"
+  }
+]

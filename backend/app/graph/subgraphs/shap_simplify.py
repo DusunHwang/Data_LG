@@ -2,9 +2,8 @@
 
 import json
 import os
-import uuid
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Optional, Tuple
 
 import joblib
 import numpy as np
@@ -17,6 +16,7 @@ from app.graph.helpers import (
     dataframe_to_preview,
     get_artifact_dir,
     load_dataframe,
+    prepare_feature_matrix,
     save_artifact_to_db,
     update_progress,
 )
@@ -29,7 +29,9 @@ logger = get_logger(__name__)
 TOP_K_CANDIDATES = [3, 5, 8, 12]
 
 
-def sample_for_shap(df: pd.DataFrame, max_rows: int = 5000, seed: int = 42) -> Tuple[pd.DataFrame, bool]:
+def sample_for_shap(
+    df: pd.DataFrame, max_rows: int = 5000, seed: int = 42
+) -> Tuple[pd.DataFrame, bool]:
     """SHAP 분석용 샘플링 (max_rows 초과 시 랜덤 샘플 반환)"""
     if len(df) > max_rows:
         return df.sample(n=max_rows, random_state=seed), True
@@ -62,17 +64,28 @@ def run_shap_simplify_subgraph(state: GraphState) -> GraphState:
     )
 
     if not dataset_path:
-        return {**state, "error_code": "NO_DATASET", "error_message": "데이터셋 경로를 찾을 수 없습니다."}
+        return {
+            **state,
+            "error_code": "NO_DATASET",
+            "error_message": "데이터셋 경로를 찾을 수 없습니다.",
+        }
 
     if not target_col:
-        return {**state, "error_code": "NO_TARGET", "error_message": "타겟 컬럼이 지정되지 않았습니다."}
+        return {
+            **state,
+            "error_code": "NO_TARGET",
+            "error_message": "타겟 컬럼이 지정되지 않았습니다.",
+        }
 
     try:
         # 1. 챔피언 모델 로드
         champion_info = _load_champion_model(branch_id)
         if not champion_info:
-            return {**state, "error_code": "NO_CHAMPION_MODEL",
-                    "error_message": "챔피언 모델을 찾을 수 없습니다. 먼저 모델링을 실행하세요."}
+            return {
+                **state,
+                "error_code": "NO_CHAMPION_MODEL",
+                "error_message": "챔피언 모델을 찾을 수 없습니다. 먼저 모델링을 실행하세요.",
+            }
 
         model = champion_info["model"]
         feature_names = champion_info["feature_names"]
@@ -87,41 +100,45 @@ def run_shap_simplify_subgraph(state: GraphState) -> GraphState:
         df_clean = df.dropna(subset=[target_col]).copy()
 
         # 피처 준비
-        X = _prepare_features_for_shap(df_clean, feature_names, categorical_features)
-        y = df_clean.loc[X.index, target_col]
+        x = prepare_feature_matrix(df_clean, feature_names, categorical_features)
+        y = df_clean.loc[x.index, target_col]
 
         # 3. SHAP 샘플링 (max 5000행)
         max_shap_rows = settings.max_shap_rows
-        if len(X) > max_shap_rows:
-            logger.info("SHAP 샘플링", original=len(X), sample=max_shap_rows)
-            sample_idx = X.sample(n=max_shap_rows, random_state=42).index
-            X_shap = X.loc[sample_idx]
-            y_shap = y.loc[sample_idx]
+        if len(x) > max_shap_rows:
+            logger.info("SHAP 샘플링", original=len(x), sample=max_shap_rows)
+            sample_idx = x.sample(n=max_shap_rows, random_state=42).index
+            x_shap = x.loc[sample_idx]
+            y.loc[sample_idx]
         else:
-            X_shap = X
-            y_shap = y
+            x_shap = x
 
         check_cancellation(state)
-        state = update_progress(state, 40, "SHAP_분석", f"SHAP 값 계산 중... ({len(X_shap)}행)")
+        state = update_progress(state, 40, "SHAP_분석", f"SHAP 값 계산 중... ({len(x_shap)}행)")
 
         # 4. SHAP 계산
         import shap
+
         explainer = shap.TreeExplainer(model)
-        shap_values = explainer.shap_values(X_shap)
+        shap_values = explainer.shap_values(x_shap)
 
         # 5. 피처 중요도 랭킹 (mean |SHAP|)
         mean_abs_shap = np.abs(shap_values).mean(axis=0)
-        feature_importance = pd.DataFrame({
-            "feature": feature_names if len(feature_names) == len(mean_abs_shap) else X_shap.columns.tolist(),
-            "mean_abs_shap": mean_abs_shap,
-        }).sort_values("mean_abs_shap", ascending=False).reset_index(drop=True)
+        feature_importance = pd.DataFrame(
+            {
+                "feature": feature_names
+                if len(feature_names) == len(mean_abs_shap)
+                else x_shap.columns.tolist(),
+                "mean_abs_shap": mean_abs_shap,
+            }
+        ).sort_values("mean_abs_shap", ascending=False).reset_index(drop=True)
 
         check_cancellation(state)
         state = update_progress(state, 60, "SHAP_분석", "단순화 모델 평가 중...")
 
         # 6. top-k 후보 평가
         simplification_results = _evaluate_top_k_features(
-            X, y, feature_importance, model, target_col
+            x, y, feature_importance, model, target_col
         )
 
         check_cancellation(state)
@@ -129,9 +146,16 @@ def run_shap_simplify_subgraph(state: GraphState) -> GraphState:
 
         # 7. 결과 저장
         artifact_ids = _save_shap_artifacts(
-            feature_importance, shap_values, X_shap,
-            simplification_results, session_id, branch_id,
-            dataset, target_col, model_run_id, state
+            feature_importance,
+            shap_values,
+            x_shap,
+            simplification_results,
+            session_id,
+            branch_id,
+            dataset,
+            target_col,
+            model_run_id,
+            state,
         )
 
         logger.info("SHAP 분석 완료", n_features=len(feature_importance))
@@ -142,9 +166,7 @@ def run_shap_simplify_subgraph(state: GraphState) -> GraphState:
             "created_artifact_ids": artifact_ids.get("artifact_ids", []),
             "execution_result": {
                 "top_features": feature_importance.head(10)["feature"].tolist(),
-                "simplification_results": {
-                    str(k): v for k, v in simplification_results.items()
-                },
+                "simplification_results": {str(k): v for k, v in simplification_results.items()},
                 "artifact_count": len(artifact_ids.get("artifact_ids", [])),
             },
         }
@@ -153,7 +175,11 @@ def run_shap_simplify_subgraph(state: GraphState) -> GraphState:
         raise
     except Exception as e:
         logger.error("SHAP 서브그래프 실패", error=str(e))
-        return {**state, "error_code": "SHAP_ERROR", "error_message": f"SHAP 분석 중 오류: {str(e)}"}
+        return {
+            **state,
+            "error_code": "SHAP_ERROR",
+            "error_message": f"SHAP 분석 중 오류: {str(e)}",
+        }
 
 
 def _load_champion_model(branch_id: Optional[str]) -> Optional[dict]:
@@ -208,6 +234,7 @@ def _load_champion_model(branch_id: Optional[str]) -> Optional[dict]:
 
         model = joblib.load(model_path)
         import json as _json
+
         if isinstance(meta, str):
             try:
                 meta = _json.loads(meta)
@@ -232,33 +259,8 @@ def _load_champion_model(branch_id: Optional[str]) -> Optional[dict]:
             conn.close()
 
 
-def _prepare_features_for_shap(
-    df: pd.DataFrame,
-    feature_names: List[str],
-    categorical_features: List[str],
-) -> pd.DataFrame:
-    """SHAP용 피처 준비 - 카테고리형 인코딩"""
-    # 사용 가능한 피처만 선택
-    avail_features = [f for f in feature_names if f in df.columns]
-    if not avail_features:
-        avail_features = [c for c in df.columns]
-
-    X = df[avail_features].copy()
-
-    # 카테고리형 처리
-    for col in X.columns:
-        if col in categorical_features or X[col].dtype == "object":
-            X[col] = X[col].fillna("__missing__").astype("category")
-        elif str(X[col].dtype) == "category":
-            if X[col].isnull().any():
-                X[col] = X[col].cat.add_categories(["__missing__"])
-                X[col] = X[col].fillna("__missing__")
-
-    return X
-
-
 def _evaluate_top_k_features(
-    X: pd.DataFrame,
+    x: pd.DataFrame,
     y: pd.Series,
     feature_importance: pd.DataFrame,
     base_model,
@@ -269,18 +271,18 @@ def _evaluate_top_k_features(
     from sklearn.metrics import mean_squared_error, r2_score
     from sklearn.model_selection import train_test_split
 
-    from app.graph.subgraphs.modeling import LGBM_PARAMS, NUM_BOOST_ROUND, EARLY_STOPPING_ROUNDS
+    from app.graph.subgraphs.modeling import EARLY_STOPPING_ROUNDS, LGBM_PARAMS, NUM_BOOST_ROUND
 
     results = {}
 
     # 기본 모델 성능 (전체 피처)
-    X_train, X_val, y_train, y_val = train_test_split(X, y, test_size=0.2, random_state=42)
-    base_pred = base_model.predict(X_val)
+    x_train, x_val, y_train, y_val = train_test_split(x, y, test_size=0.2, random_state=42)
+    base_pred = base_model.predict(x_val)
     base_rmse = float(np.sqrt(mean_squared_error(y_val, base_pred)))
     base_r2 = float(r2_score(y_val, base_pred))
 
     results["baseline"] = {
-        "n_features": len(X.columns),
+        "n_features": len(x.columns),
         "val_rmse": round(base_rmse, 6),
         "val_r2": round(base_r2, 6),
         "rmse_drop_ratio": 1.0,
@@ -293,23 +295,30 @@ def _evaluate_top_k_features(
             continue
 
         top_k_features = ranked_features[:k]
-        avail_features = [f for f in top_k_features if f in X.columns]
+        avail_features = [f for f in top_k_features if f in x.columns]
 
         if len(avail_features) < 2:
             continue
 
         try:
-            X_k = X[avail_features].copy()
-            X_k_train, X_k_val, y_k_train, y_k_val = train_test_split(
-                X_k, y, test_size=0.2, random_state=42
+            x_k = x[avail_features].copy()
+            x_k_train, x_k_val, y_k_train, y_k_val = train_test_split(
+                x_k, y, test_size=0.2, random_state=42
             )
 
-            cat_features = [c for c in avail_features if str(X_k[c].dtype) == "category"]
+            cat_features = [c for c in avail_features if str(x_k[c].dtype) == "category"]
 
-            train_data = lgb.Dataset(X_k_train, label=y_k_train,
-                                     categorical_feature=cat_features if cat_features else "auto")
-            val_data = lgb.Dataset(X_k_val, label=y_k_val, reference=train_data,
-                                   categorical_feature=cat_features if cat_features else "auto")
+            train_data = lgb.Dataset(
+                x_k_train,
+                label=y_k_train,
+                categorical_feature=cat_features if cat_features else "auto",
+            )
+            val_data = lgb.Dataset(
+                x_k_val,
+                label=y_k_val,
+                reference=train_data,
+                categorical_feature=cat_features if cat_features else "auto",
+            )
 
             callbacks = [
                 lgb.early_stopping(EARLY_STOPPING_ROUNDS, verbose=False),
@@ -324,7 +333,7 @@ def _evaluate_top_k_features(
                 callbacks=callbacks,
             )
 
-            pred_k = model_k.predict(X_k_val)
+            pred_k = model_k.predict(x_k_val)
             rmse_k = float(np.sqrt(mean_squared_error(y_k_val, pred_k)))
             r2_k = float(r2_score(y_k_val, pred_k))
             drop_ratio = rmse_k / base_rmse if base_rmse > 0 else 1.0
@@ -347,7 +356,7 @@ def _evaluate_top_k_features(
 def _save_shap_artifacts(
     feature_importance: pd.DataFrame,
     shap_values: np.ndarray,
-    X_shap: pd.DataFrame,
+    x_shap: pd.DataFrame,
     simplification_results: dict,
     session_id: str,
     branch_id: Optional[str],
@@ -358,7 +367,9 @@ def _save_shap_artifacts(
 ) -> dict:
     """SHAP 아티팩트 저장"""
     import uuid as uuid_module
+
     import matplotlib
+
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
 
@@ -390,10 +401,12 @@ def _save_shap_artifacts(
                     branch_id,
                     f"SHAP 피처 중요도 분석 [{target_col}]",
                     json.dumps({"model_run_id": model_run_id, "target_column": target_col}),
-                    json.dumps({
-                        "top_features": feature_importance.head(10)["feature"].tolist(),
-                        "simplification_keys": list(simplification_results.keys()),
-                    }),
+                    json.dumps(
+                        {
+                            "top_features": feature_importance.head(10)["feature"].tolist(),
+                            "simplification_keys": list(simplification_results.keys()),
+                        }
+                    ),
                     now,
                     now,
                 ),
@@ -406,24 +419,31 @@ def _save_shap_artifacts(
         top_feature_table.to_parquet(top_feature_path, index=False)
 
         artifact_id = save_artifact_to_db(
-            conn, step_id, session_id,
-            "feature_importance", f"상위 피처 테이블 [{target_col}]",
-            top_feature_path, "application/parquet",
+            conn,
+            step_id,
+            session_id,
+            "feature_importance",
+            f"상위 피처 테이블 [{target_col}]",
+            top_feature_path,
+            "application/parquet",
             os.path.getsize(top_feature_path),
             dataframe_to_preview(top_feature_table, max_rows=20),
             {"type": "top_feature_table"},
         )
         created_artifact_ids.append(artifact_id)
 
-        # 2. SHAP Swarm plot — 상위 10개가 한눈에 보이는 높이로 저장, 카드에서 스크롤로 하위 피처 확인
+        # 2. SHAP Swarm plot
         try:
-            import shap as shap_lib
             import base64
+
+            import shap as shap_lib
+
             from app.graph.helpers import setup_korean_font
+
             setup_korean_font()
 
             n_features = len(feature_importance)
-            # 피처당 0.55인치, 상위 10개가 뷰포트에 맞는 전체 높이
+            # 피처당 0.55인치
             row_height = 0.55
             fig_height = n_features * row_height + 2.0
             fig_width = 9
@@ -432,14 +452,16 @@ def _save_shap_artifacts(
             fig = plt.figure(figsize=(fig_width, fig_height))
             shap_lib.summary_plot(
                 shap_values,
-                X_shap,
+                x_shap,
                 plot_type="dot",
                 max_display=n_features,
                 show=False,
                 plot_size=(fig_width, fig_height),
             )
             ax = plt.gca()
-            ax.set_title(f"SHAP Swarm Plot [{target_col}]", fontsize=11, fontweight="bold", pad=10)
+            ax.set_title(
+                f"SHAP Swarm Plot [{target_col}]", fontsize=11, fontweight="bold", pad=10
+            )
             plt.tight_layout()
 
             swarm_path = os.path.join(plot_dir, f"shap_swarm_{step_id or 'default'}.png")
@@ -450,9 +472,13 @@ def _save_shap_artifacts(
                 data_url = "data:image/png;base64," + base64.b64encode(f.read()).decode()
 
             artifact_id = save_artifact_to_db(
-                conn, step_id, session_id,
-                "shap", f"SHAP Swarm Plot [{target_col}]",
-                swarm_path, "image/png",
+                conn,
+                step_id,
+                session_id,
+                "shap",
+                f"SHAP Swarm Plot [{target_col}]",
+                swarm_path,
+                "image/png",
                 os.path.getsize(swarm_path),
                 {"data_url": data_url},
                 {"type": "shap_swarm_plot", "model_run_id": model_run_id},
@@ -465,23 +491,31 @@ def _save_shap_artifacts(
         # 4. 단순화 모델 비교 테이블
         comparison_data = []
         for key, val in simplification_results.items():
-            comparison_data.append({
-                "모델": key,
-                "피처 수": val.get("n_features", 0),
-                "RMSE (검증)": val.get("val_rmse", 0),
-                "R² (검증)": val.get("val_r2", 0),
-                "RMSE 증가율": val.get("rmse_drop_ratio", 1.0),
-                "허용 가능": "✓" if val.get("acceptable", False) else "✗",
-            })
+            comparison_data.append(
+                {
+                    "모델": key,
+                    "피처 수": val.get("n_features", 0),
+                    "RMSE (검증)": val.get("val_rmse", 0),
+                    "R² (검증)": val.get("val_r2", 0),
+                    "RMSE 증가율": val.get("rmse_drop_ratio", 1.0),
+                    "허용 가능": "✓" if val.get("acceptable", False) else "✗",
+                }
+            )
 
         comparison_df = pd.DataFrame(comparison_data)
-        comparison_path = os.path.join(df_dir, f"simplified_model_comparison_{step_id or 'default'}.parquet")
+        comparison_path = os.path.join(
+            df_dir, f"simplified_model_comparison_{step_id or 'default'}.parquet"
+        )
         comparison_df.to_parquet(comparison_path, index=False)
 
         artifact_id = save_artifact_to_db(
-            conn, step_id, session_id,
-            "dataframe", f"단순화 모델 비교 [{target_col}]",
-            comparison_path, "application/parquet",
+            conn,
+            step_id,
+            session_id,
+            "dataframe",
+            f"단순화 모델 비교 [{target_col}]",
+            comparison_path,
+            "application/parquet",
             os.path.getsize(comparison_path),
             dataframe_to_preview(comparison_df),
             {"type": "simplified_model_comparison"},
@@ -490,14 +524,20 @@ def _save_shap_artifacts(
 
         # 5. 단순화 모델 제안 텍스트 (JSON)
         proposal = _generate_simplification_proposal(simplification_results, feature_importance)
-        proposal_path = os.path.join(report_dir, f"simplified_model_proposal_{step_id or 'default'}.json")
+        proposal_path = os.path.join(
+            report_dir, f"simplified_model_proposal_{step_id or 'default'}.json"
+        )
         with open(proposal_path, "w", encoding="utf-8") as f:
             json.dump(proposal, f, ensure_ascii=False, indent=2)
 
         artifact_id = save_artifact_to_db(
-            conn, step_id, session_id,
-            "report", f"단순화 모델 제안 [{target_col}]",
-            proposal_path, "application/json",
+            conn,
+            step_id,
+            session_id,
+            "report",
+            f"단순화 모델 제안 [{target_col}]",
+            proposal_path,
+            "application/json",
             os.path.getsize(proposal_path),
             proposal,
             {"type": "simplified_model_proposal"},
@@ -526,7 +566,8 @@ def _generate_simplification_proposal(
     """단순화 모델 제안 생성"""
     # 허용 가능한 단순화 찾기
     acceptable = [
-        (k, v) for k, v in simplification_results.items()
+        (k, v)
+        for k, v in simplification_results.items()
         if k != "baseline" and v.get("acceptable", False)
     ]
 
@@ -535,7 +576,7 @@ def _generate_simplification_proposal(
     baseline_n_features = baseline.get("n_features", 0)
 
     if not acceptable:
-        best_k_result = min(
+        min(
             [(k, v) for k, v in simplification_results.items() if k != "baseline"],
             key=lambda x: x[1].get("rmse_drop_ratio", float("inf")),
             default=None,
@@ -544,7 +585,7 @@ def _generate_simplification_proposal(
         return {
             "recommendation": "none",
             "message": f"모든 단순화 시도에서 성능 저하가 10%를 초과했습니다. "
-                       f"현재 모델 ({baseline_n_features}개 피처)을 유지하는 것을 권장합니다.",
+            f"현재 모델 ({baseline_n_features}개 피처)을 유지하는 것을 권장합니다.",
             "baseline_rmse": baseline_rmse,
             "top_features": feature_importance.head(5)["feature"].tolist(),
         }

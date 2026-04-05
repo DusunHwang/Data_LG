@@ -1,0 +1,22 @@
+{
+  "model_run_id": "0c7866b3-7518-4599-a263-a71aae8d259a",
+  "name": "전체 데이터",
+  "val_rmse": 0.562494,
+  "val_mae": 0.439491,
+  "val_r2": 0.515844,
+  "n_features": 11,
+  "feature_names": [
+    "fixed acidity",
+    "volatile acidity",
+    "citric acid",
+    "residual sugar",
+    "chlorides",
+    "free sulfur dioxide",
+    "total sulfur dioxide",
+    "density",
+    "pH",
+    "sulphates",
+    "alcohol"
+  ],
+  "best_iteration": 88
+}

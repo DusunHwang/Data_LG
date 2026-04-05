@@ -2,16 +2,15 @@
 
 import numpy as np
 import pandas as pd
-import pytest
 
 
 def make_simple_dataset(n=200, seed=42):
     """단순 회귀 데이터셋"""
     rng = np.random.default_rng(seed)
-    X1 = rng.normal(0, 1, n)
-    X2 = rng.normal(0, 1, n)
-    y = 3 * X1 - 2 * X2 + rng.normal(0, 0.1, n)
-    return pd.DataFrame({"f1": X1, "f2": X2, "target": y})
+    x1 = rng.normal(0, 1, n)
+    x2 = rng.normal(0, 1, n)
+    y = 3 * x1 - 2 * x2 + rng.normal(0, 0.1, n)
+    return pd.DataFrame({"f1": x1, "f2": x2, "target": y})
 
 
 class TestOptimizerRouting:
@@ -72,14 +71,13 @@ class TestGridSearch:
 
     def test_grid_search_finds_best(self):
         """Grid Search가 최적 파라미터 반환"""
-        import lightgbm as lgb
         from itertools import product
+
+        import lightgbm as lgb
         from sklearn.model_selection import cross_val_score
-        from sklearn.metrics import make_scorer, mean_squared_error
-        import numpy as np
 
         df = make_simple_dataset(n=300)
-        X = df[["f1", "f2"]]
+        x = df[["f1", "f2"]]
         y = df["target"]
 
         search_space = {
@@ -100,7 +98,7 @@ class TestGridSearch:
                 **params,
             )
             scores = cross_val_score(
-                model, X, y, cv=3, scoring="neg_root_mean_squared_error"
+                model, x, y, cv=3, scoring="neg_root_mean_squared_error"
             )
             rmse = float(-scores.mean())
             if rmse < best_rmse:
@@ -117,15 +115,14 @@ class TestOptunaSearch:
 
     def test_optuna_minimizes_rmse(self):
         """Optuna 실행 후 RMSE 개선 확인"""
-        import optuna
         import lightgbm as lgb
+        import optuna
         from sklearn.model_selection import cross_val_score
-        import numpy as np
 
         optuna.logging.set_verbosity(optuna.logging.WARNING)
 
         df = make_simple_dataset(n=300)
-        X = df[["f1", "f2"]]
+        x = df[["f1", "f2"]]
         y = df["target"]
 
         def objective(trial):
@@ -136,7 +133,7 @@ class TestOptunaSearch:
                 "bagging_fraction": trial.suggest_float("bagging_fraction", 0.5, 1.0),
             }
             model = lgb.LGBMRegressor(verbose=-1, n_estimators=30, **params)
-            scores = cross_val_score(model, X, y, cv=3, scoring="neg_root_mean_squared_error")
+            scores = cross_val_score(model, x, y, cv=3, scoring="neg_root_mean_squared_error")
             return float(-scores.mean())
 
         study = optuna.create_study(direction="minimize")

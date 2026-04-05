@@ -1,0 +1,25 @@
+{
+  "model_run_id": "3d267032-cda0-4152-a224-d9fc0a522e5c",
+  "name": "전체 데이터",
+  "val_rmse": 2.696618,
+  "val_mae": 2.03045,
+  "val_r2": 0.90084,
+  "n_features": 14,
+  "feature_names": [
+    "CRIM",
+    "ZN",
+    "INDUS",
+    "CHAS",
+    "NOX",
+    "RM",
+    "AGE",
+    "DIS",
+    "RAD",
+    "TAX",
+    "PTRATIO",
+    "B",
+    "LSTAT",
+    "CAT.MEDV"
+  ],
+  "best_iteration": 143
+}

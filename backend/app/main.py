@@ -1,7 +1,6 @@
 """FastAPI 애플리케이션 진입점"""
 
 from contextlib import asynccontextmanager
-from typing import Any
 
 from fastapi import FastAPI, Request, status
 from fastapi.middleware.cors import CORSMiddleware
@@ -11,7 +10,7 @@ from pydantic import ValidationError
 from app.api.v1.router import api_router
 from app.core.config import settings
 from app.core.logging import get_logger, setup_logging
-from app.schemas.common import error_response, ErrorCode
+from app.schemas.common import ErrorCode, error_response
 
 # 로깅 초기화
 setup_logging()
@@ -68,6 +67,25 @@ def create_app() -> FastAPI:
                 "입력 데이터가 유효하지 않습니다.",
                 {"errors": exc.errors()},
             ),
+        )
+
+    from fastapi import HTTPException
+
+    @app.exception_handler(HTTPException)
+    async def http_exception_handler(request: Request, exc: HTTPException):
+        if isinstance(exc.detail, dict) and "success" in exc.detail:
+            return JSONResponse(
+                status_code=exc.status_code,
+                content=exc.detail,
+                headers=exc.headers,
+            )
+        return JSONResponse(
+            status_code=exc.status_code,
+            content=error_response(
+                ErrorCode.INTERNAL_ERROR,
+                str(exc.detail),
+            ),
+            headers=exc.headers,
         )
 
     @app.exception_handler(Exception)

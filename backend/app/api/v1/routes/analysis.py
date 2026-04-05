@@ -87,8 +87,8 @@ async def analyze(
 
     # RQ 큐에 작업 제출
     try:
-        from app.worker.tasks import run_analysis_task
         from app.worker.queue import enqueue_job
+        from app.worker.tasks import run_analysis_task
 
         rq_job = enqueue_job(
             run_analysis_task,

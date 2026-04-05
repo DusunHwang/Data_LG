@@ -4,12 +4,10 @@ import json
 import os
 import uuid
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any
 
-import numpy as np
 import pandas as pd
 
-from app.core.config import settings
 from app.core.logging import get_logger
 from app.graph.helpers import (
     check_cancellation,
@@ -403,8 +401,8 @@ def _recommend_target_candidates(df: pd.DataFrame, max_candidates: int = 3) -> l
 
 def _get_recommendation(col: str, series: pd.Series) -> str:
     """컬럼에 대한 타겟 추천 이유"""
-    mean_val = series.mean()
-    std_val = series.std()
+    series.mean()
+    series.std()
     col_lower = col.lower()
 
     hints = []
