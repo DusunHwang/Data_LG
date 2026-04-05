@@ -71,16 +71,15 @@ def summarize_final_response(state: GraphState) -> GraphState:
         logger.error("요약 생성 실패", error=str(e))
         assistant_message = _build_fallback_message(state)
 
-    # job 완료 처리
-    result_data = {
-        "status": "completed",
-        "step_id": created_step_id,
-        "artifact_ids": created_artifact_ids,
-        "intent": intent,
-        "message": assistant_message,
-    }
-
-    if job_run_id:
+    # job 완료 처리 (iterative 실행 중간 run이면 건너뜀 — tasks.py에서 최종 처리)
+    if job_run_id and not state.get("skip_job_finalize"):
+        result_data = {
+            "status": "completed",
+            "step_id": created_step_id,
+            "artifact_ids": created_artifact_ids,
+            "intent": intent,
+            "message": assistant_message,
+        }
         update_job_status_sync(
             job_run_id, "completed", 100,
             "분석 완료",
@@ -112,6 +111,12 @@ def _build_summary_context(state: GraphState) -> str:
     intent = state.get("intent", "unknown")
     parts.append(f"## 분석 유형: {intent}")
 
+    target_column = state.get("target_column")
+    if not target_column:
+        target_column = (state.get("execution_result") or {}).get("target_column")
+    if target_column:
+        parts.append(f"## 타겟 컬럼: {target_column}")
+
     user_message = state.get("user_message", "")
     if user_message:
         parts.append(f"## 사용자 요청\n{user_message}")
@@ -121,7 +126,7 @@ def _build_summary_context(state: GraphState) -> str:
         # 핵심 결과만 포함
         result_summary = {}
         for key in ["summary", "metrics", "top_features", "n_subsets", "best_score",
-                    "champion_model", "artifact_count", "rows", "cols"]:
+                    "champion_model", "artifact_count", "rows", "cols", "target_column"]:
             if key in execution_result:
                 result_summary[key] = execution_result[key]
         if result_summary:

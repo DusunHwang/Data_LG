@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   Plus,
@@ -16,6 +16,8 @@ import {
   Loader2,
   AlertCircle,
   X,
+  Pencil,
+  Check,
 } from 'lucide-react'
 import { sessionsApi, datasetsApi, branchesApi } from '@/api'
 import { useSessionStore } from '@/store'
@@ -70,6 +72,13 @@ export default function Sidebar() {
     queryFn: () => branchesApi.list(sessionId!),
     enabled: !!sessionId,
   })
+
+  // Auto-select first branch when branches load and none is selected
+  useEffect(() => {
+    if (!branchId && branchesQuery.data && branchesQuery.data.length > 0) {
+      setBranchId(branchesQuery.data[0].id)
+    }
+  }, [branchId, branchesQuery.data, setBranchId])
 
   // ─── Mutations ────────────────────────────────────────────────────────────
 
@@ -373,6 +382,27 @@ function BranchItem({
   onSelect: () => void
   onToggle: () => void
 }) {
+  const qc = useQueryClient()
+  const [renaming, setRenaming] = useState(false)
+  const [renameValue, setRenameValue] = useState(branch.name)
+
+  const renameMutation = useMutation({
+    mutationFn: (name: string) => branchesApi.rename(sessionId, branch.id, name),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['branches', sessionId] })
+      setRenaming(false)
+    },
+  })
+
+  const commitRename = () => {
+    const trimmed = renameValue.trim()
+    if (trimmed && trimmed !== branch.name) {
+      renameMutation.mutate(trimmed)
+    } else {
+      setRenaming(false)
+    }
+  }
+
   const stepsQuery = useQuery({
     queryKey: ['steps', sessionId, branch.id],
     queryFn: () => branchesApi.getSteps(sessionId, branch.id),
@@ -401,13 +431,51 @@ function BranchItem({
         onClick={onSelect}
       >
         <GitBranch className={`h-3.5 w-3.5 shrink-0 ${isActive ? 'text-brand-red' : 'text-gray-400'}`} />
-        <span className="flex-1 text-xs truncate">{branch.name}</span>
+
+        {renaming ? (
+          <input
+            autoFocus
+            value={renameValue}
+            onChange={(e) => setRenameValue(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') commitRename()
+              if (e.key === 'Escape') { setRenaming(false); setRenameValue(branch.name) }
+            }}
+            onBlur={commitRename}
+            onClick={(e) => e.stopPropagation()}
+            className="flex-1 min-w-0 rounded border border-brand-red bg-white px-1 py-0.5 text-xs text-gray-800 focus:outline-none"
+          />
+        ) : (
+          <span className="flex-1 text-xs truncate">{branch.name}</span>
+        )}
+
+        {/* Rename 버튼 */}
+        <button
+          onClick={(e) => {
+            e.stopPropagation()
+            if (renaming) {
+              commitRename()
+            } else {
+              setRenameValue(branch.name)
+              setRenaming(true)
+            }
+          }}
+          className={`shrink-0 ${isActive ? 'text-gray-300 hover:text-white' : 'text-gray-400 hover:text-gray-600'}`}
+          title={renaming ? '확인' : '이름 변경'}
+        >
+          {renaming
+            ? <Check className="h-3 w-3" />
+            : <Pencil className="h-3 w-3" />
+          }
+        </button>
+
+        {/* 스텝 펼치기 버튼 */}
         <button
           onClick={(e) => {
             e.stopPropagation()
             onToggle()
           }}
-          className={`${isActive ? 'text-gray-300 hover:text-white' : 'text-gray-400 hover:text-gray-600'}`}
+          className={`shrink-0 ${isActive ? 'text-gray-300 hover:text-white' : 'text-gray-400 hover:text-gray-600'}`}
         >
           {isExpanded ? (
             <ChevronDown className="h-3 w-3" />

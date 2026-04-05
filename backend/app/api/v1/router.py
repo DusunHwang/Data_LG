@@ -11,6 +11,7 @@ from app.api.v1.routes import (
     datasets,
     jobs,
     modeling,
+    monitor,
     optimization,
     sessions,
     steps,
@@ -47,6 +48,9 @@ api_router.include_router(optimization.router)
 
 # 작업
 api_router.include_router(jobs.router)
+
+# 모니터
+api_router.include_router(monitor.router)
 
 # 관리자
 api_router.include_router(admin.router)

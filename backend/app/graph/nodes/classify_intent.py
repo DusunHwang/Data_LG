@@ -72,8 +72,8 @@ INTENT_SYSTEM_PROMPT = """/no_think
 - eda: 탐색적 데이터 분석 (분포, 상관관계, 시각화, 새 플롯 생성, 통계값 계산 등)
 - create_dataframe: 조건/필터로 서브 데이터셋 생성 또는 전체 데이터 출력 (예: "quality > 6인 데이터 만들어줘", "상위 10% 추출", "결측 제거한 데이터셋", "파생 변수 추가해줘", "데이터 출력해줘", "데이터 보여줘", "전체 데이터 보여줘")
 - subset_discovery: 밀집 서브셋 탐색 (결측 구조 기반 부분집합 찾기)
-- baseline_modeling: 기본 LightGBM 모델 훈련 및 평가
-- shap_analysis: SHAP 피처 중요도 분석
+- baseline_modeling: 기본 LightGBM 모델 훈련 및 평가 ("핵심인자 추출", "핵심인자를 추출해줘" 포함)
+- shap_analysis: SHAP 피처 중요도 분석 ("인자 최소화", "인자를 최소화해줘" 포함)
 - simplify_model: 모델 단순화 (적은 피처로 비슷한 성능)
 - optimization: 하이퍼파라미터 최적화 (Grid Search 또는 Optuna)
 - general_question: 일반 질문 또는 위 인텐트에 해당하지 않는 경우
@@ -216,6 +216,12 @@ async def _classify_with_llm(state: GraphState, user_message: str) -> GraphState
 def _keyword_classify(message: str) -> str:
     """키워드 기반 폴백 인텐트 분류"""
     msg = message.lower()
+    # 핵심인자 추출 → 모델링 (create_dataframe "추출" 키워드보다 먼저 체크)
+    if any(w in msg for w in ["핵심인자", "핵심 인자"]):
+        return "baseline_modeling"
+    # 인자 최소화 → shap (optimization "최적화"와 구분)
+    if any(w in msg for w in ["인자 최소화", "인자최소화", "인자를 최소화"]):
+        return "shap_analysis"
     if any(w in msg for w in ["프로파일", "요약", "profile", "overview", "컬럼"]):
         return "dataset_profile"
     if any(w in msg for w in ["만들어", "생성", "추출", "필터", "filter", "조건", "파생", "서브 데이터", "sub data", "새 컬럼", "제거한", "출력", "보여줘", "보여 줘", "전체 데이터", "데이터 출력", "데이터 보여"]):
@@ -226,7 +232,7 @@ def _keyword_classify(message: str) -> str:
         return "subset_discovery"
     if any(w in msg for w in ["모델링", "모델", "훈련", "train", "lgbm", "lightgbm"]):
         return "baseline_modeling"
-    if any(w in msg for w in ["shap", "중요도", "피처"]):
+    if any(w in msg for w in ["shap", "중요도", "피처", "최소화"]):
         return "shap_analysis"
     if any(w in msg for w in ["최적화", "optuna", "grid", "튜닝", "hyperparameter"]):
         return "optimization"

@@ -1,46 +1,52 @@
-import { useState, useCallback } from 'react'
-import { useMutation, useQueryClient } from '@tanstack/react-query'
+import { useState, useCallback, useEffect } from 'react'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import Header from '@/components/layout/Header'
 import Sidebar from '@/components/layout/Sidebar'
 import ChatPanel from '@/components/chat/ChatPanel'
 import ArtifactPanel from '@/components/artifacts/ArtifactPanel'
-import { useSessionStore, useChatStore, genId } from '@/store'
-import { branchesApi } from '@/api'
+import { useSessionStore, useChatStore, useArtifactStore } from '@/store'
+import { branchesApi, datasetsApi } from '@/api'
 import type { Artifact } from '@/types'
 
 export default function WorkspacePage() {
   const qc = useQueryClient()
-  const { sessionId, branchId, setBranchId } = useSessionStore()
-  const { histories, addMessage } = useChatStore()
+  const { sessionId, branchId, datasetId, setBranchId, targetColumnsByBranch, setTargetColumns } = useSessionStore()
+  const currentTargetColumns = targetColumnsByBranch[branchId ?? ''] ?? []
+  const { histories } = useChatStore()
+  const { cacheArtifact } = useArtifactStore()
 
-  // Artifact IDs to display in the panel
-  // Derived from all messages in the current branch
   const currentBranchId = branchId ?? 'global'
   const messages = histories[currentBranchId] ?? []
   const [displayedArtifactIds, setDisplayedArtifactIds] = useState<string[]>([])
 
-  // When chat notifies us of artifact changes, update panel
+  // 현재 브랜치 config 조회
+  const branchesQuery = useQuery({
+    queryKey: ['branches', sessionId],
+    queryFn: () => branchesApi.list(sessionId!),
+    enabled: !!sessionId,
+  })
+  const currentBranch = branchesQuery.data?.find((b) => b.id === branchId)
+  const branchSourceArtifactId = currentBranch?.config?.source_artifact_id as string | undefined
+
+  const baseDatasetArtifactId = branchSourceArtifactId ?? (datasetId ? `dataset-${datasetId}` : null)
+
+  // 브랜치 변경 시 표시 아티팩트 초기화 + 세션 데이터셋 preview fetch
+  useEffect(() => {
+    setDisplayedArtifactIds([])
+    if (!sessionId || !branchId) return
+    if (!branchSourceArtifactId && datasetId) {
+      datasetsApi.preview(sessionId, datasetId)
+        .then(cacheArtifact)
+        .catch(() => {})
+    }
+  }, [branchId, sessionId, datasetId, branchSourceArtifactId])
+
   const handleArtifactsChange = useCallback((ids: string[]) => {
     setDisplayedArtifactIds((prev) => {
       const combined = [...new Set([...prev, ...ids])]
       return combined
     })
   }, [])
-
-  // "Ask about this artifact" → prefill chat
-  const handleAskAbout = useCallback(
-    (artifact: Artifact) => {
-      if (!branchId) return
-      addMessage(currentBranchId, {
-        id: genId(),
-        role: 'user',
-        content: `아티팩트 "${artifact.name}"에 대해 분석해줘`,
-        artifact_ids: [artifact.id],
-        timestamp: new Date().toISOString(),
-      })
-    },
-    [branchId, currentBranchId, addMessage],
-  )
 
   // "New branch from artifact" → create branch
   const createBranch = useMutation({
@@ -63,32 +69,29 @@ export default function WorkspacePage() {
     [sessionId, createBranch],
   )
 
-  // Derive latest artifact IDs from messages too (on load)
   const allMsgArtifactIds = messages.flatMap((m) => m.artifact_ids ?? [])
-
-  // Combine: message-derived + explicitly set
-  const finalArtifactIds = [
-    ...new Set([...allMsgArtifactIds, ...displayedArtifactIds]),
-  ]
+  const otherIds = [...new Set([...allMsgArtifactIds, ...displayedArtifactIds])]
+  const finalArtifactIds = baseDatasetArtifactId
+    ? [baseDatasetArtifactId, ...otherIds.filter((id) => id !== baseDatasetArtifactId)]
+    : otherIds
 
   return (
     <div className="flex h-screen flex-col overflow-hidden bg-gray-50">
       <Header />
 
       <div className="flex flex-1 overflow-hidden">
-        {/* Sidebar */}
         <Sidebar />
 
-        {/* Chat panel — 3/5 of remaining space */}
         <div className="flex flex-1 flex-col min-w-0 border-r border-gray-200 bg-white" style={{ flex: '3' }}>
           <ChatPanel onArtifactsChange={handleArtifactsChange} />
         </div>
 
-        {/* Artifact panel — 2/5 of remaining space */}
         <div className="flex flex-col min-w-0" style={{ flex: '2', minWidth: 320, maxWidth: 480 }}>
           <ArtifactPanel
             artifactIds={finalArtifactIds}
-            onAskAbout={handleAskAbout}
+            baseArtifactId={baseDatasetArtifactId}
+            targetColumns={currentTargetColumns}
+            onSetTargetColumns={(cols) => branchId && setTargetColumns(branchId, cols)}
             onNewBranch={handleNewBranch}
           />
         </div>

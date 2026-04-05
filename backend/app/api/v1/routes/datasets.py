@@ -1,8 +1,9 @@
 """데이터셋 API 라우터"""
 
+import math
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, get_db
@@ -193,3 +194,69 @@ async def get_target_candidates(
         "dataset_id": str(dataset_id),
         "candidates": candidates,
     })
+
+
+@router.get("/{dataset_id}/preview", response_model=dict)
+async def get_dataset_preview(
+    session_id: UUID,
+    dataset_id: UUID,
+    n_rows: int = Query(default=100, ge=1, le=500),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """데이터셋 앞 N행을 아티팩트 형식으로 반환"""
+    await _get_validated_session(session_id, current_user, db)
+
+    repo = DatasetRepository(db)
+    dataset = await repo.get(dataset_id)
+
+    if not dataset or dataset.session_id != session_id:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=error_response(
+                ErrorCode.DATASET_NOT_FOUND,
+                ERROR_MESSAGES[ErrorCode.DATASET_NOT_FOUND],
+            ),
+        )
+
+    if not dataset.file_path:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=error_response(ErrorCode.DATASET_NOT_FOUND, "데이터 파일을 찾을 수 없습니다."),
+        )
+
+    try:
+        import pandas as pd
+        df = pd.read_parquet(dataset.file_path)
+        preview = df.head(n_rows)
+
+        columns = list(preview.columns)
+        rows = []
+        for _, row in preview.iterrows():
+            record = {}
+            for col in columns:
+                val = row[col]
+                if hasattr(val, 'item'):          # numpy scalar
+                    val = val.item()
+                if isinstance(val, float) and (math.isnan(val) or math.isinf(val)):
+                    val = None
+                record[col] = val
+            rows.append(record)
+
+        return success_response({
+            "id": f"dataset-{dataset_id}",
+            "artifact_type": "dataframe",
+            "name": "분석 데이터프레임",
+            "preview_json": {
+                "columns": columns,
+                "data": rows,
+                "total_rows": len(df),
+                "total_cols": len(columns),
+                "dataset_name": dataset.name,
+            },
+        })
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=error_response(ErrorCode.INTERNAL_ERROR, f"데이터 로드 실패: {e}"),
+        )

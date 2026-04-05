@@ -336,6 +336,112 @@ async def run_inverse_optimization(
     return success_response({"job_id": str(job_run.id), "message": "역최적화가 시작되었습니다."})
 
 
+@router.post("/constrained-inverse-run", response_model=dict)
+async def run_constrained_inverse_optimization(
+    body: dict,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """제약 조건부 역최적화 (단일/이중 타겟 지원)"""
+    session_id = UUID(body["session_id"])
+    branch_id = UUID(body["branch_id"])
+    opt_target = body.get("target_column")        # 최적화 대상 타겟
+    con_target = body.get("constraint_target_column")  # 제약 타겟 (선택)
+
+    service = SessionService(db)
+    try:
+        await service.validate_session(session_id, current_user.id)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=error_response(str(e), str(e)))
+
+    from app.db.repositories.artifact import ArtifactRepository
+    model_repo = ModelRunRepository(db)
+    art_repo = ArtifactRepository(db)
+
+    async def _get_model_info(target_col: str | None):
+        """타겟별 챔피언 모델 정보 반환"""
+        if target_col:
+            champ = await model_repo.get_champion_by_target(branch_id, target_col)
+        else:
+            champ = await model_repo.get_champion(branch_id)
+        if not champ:
+            raise HTTPException(
+                status_code=400,
+                detail=error_response("NO_CHAMPION_MODEL", f"챔피언 모델이 없습니다 (target={target_col})."),
+            )
+        art = await art_repo.get(champ.model_artifact_id)
+        if not art or not art.file_path:
+            raise HTTPException(status_code=400, detail=error_response("NO_MODEL_FILE", "모델 파일을 찾을 수 없습니다."))
+        m = art.meta or {}
+        if isinstance(m, str):
+            import json as _json
+            m = _json.loads(m)
+        return {
+            "model_path": art.file_path,
+            "feature_names": m.get("feature_names", []),
+            "categorical_features": m.get("categorical_features", []),
+            "target_column": m.get("target_column") or champ.target_column or target_col or "",
+        }
+
+    # 최적화 대상 모델
+    opt_info = await _get_model_info(opt_target)
+
+    # 제약 모델 (이중 타겟)
+    con_info = await _get_model_info(con_target) if con_target else None
+
+    # 데이터셋
+    session_obj = await service.validate_session(session_id, current_user.id)
+    ds_repo = DatasetRepository(db)
+    dataset = await ds_repo.get(session_obj.active_dataset_id)
+    dataset_path = dataset.file_path if dataset else None
+    if not dataset_path:
+        raise HTTPException(status_code=400, detail=error_response("NO_DATASET", "데이터셋이 없습니다."))
+
+    job_run = JobRun(
+        session_id=session_id,
+        user_id=current_user.id,
+        job_type=JobType.inverse_optimization,
+        status=JobStatus.pending,
+        params={"subtype": "constrained_inverse_optimize", "branch_id": str(branch_id)},
+    )
+    db.add(job_run)
+    await db.flush()
+    await db.refresh(job_run)
+
+    from app.worker.inverse_optimize_tasks import run_constrained_inverse_optimize_task
+    from app.worker.queue import enqueue_job
+    rq_job = enqueue_job(
+        run_constrained_inverse_optimize_task,
+        str(job_run.id),
+        str(session_id),
+        str(branch_id),
+        opt_info["model_path"],
+        opt_info["feature_names"],
+        opt_info["target_column"],
+        body.get("selected_features", opt_info["feature_names"][:8]),
+        body.get("fixed_values", {}),
+        body.get("feature_ranges", {}),
+        body.get("expand_ratio", 0.125),
+        body.get("direction", "maximize"),
+        opt_info["categorical_features"],
+        dataset_path,
+        body.get("n_calls", 300),
+        body.get("model_type", "lgbm"),
+        # 제약 조건
+        con_info["model_path"] if con_info else None,
+        con_info["feature_names"] if con_info else None,
+        con_info["target_column"] if con_info else None,
+        body.get("constraint_type"),
+        body.get("constraint_threshold"),
+        job_id=str(job_run.id),
+    )
+    job_run.rq_job_id = rq_job.id
+    db.add(job_run)
+    await db.flush()
+
+    return success_response({"job_id": str(job_run.id), "message": "제약 역최적화가 시작되었습니다."})
+
+
 @router.get("/results/{branch_id}", response_model=dict)
 async def get_optimization_results(
     branch_id: UUID,

@@ -429,8 +429,15 @@ def _load_champion_for_optimization(branch_id: Optional[str]) -> Optional[dict]:
             return None
 
         model_run_id, model_path, meta = row
-        feature_names = (meta or {}).get("feature_names", [])
-        categorical_features = (meta or {}).get("categorical_features", [])
+        import json as _json
+        if isinstance(meta, str):
+            try:
+                meta = _json.loads(meta)
+            except Exception:
+                meta = {}
+        meta = meta or {}
+        feature_names = meta.get("feature_names", [])
+        categorical_features = meta.get("categorical_features", [])
 
         return {
             "model_run_id": str(model_run_id),

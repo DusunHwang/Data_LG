@@ -11,6 +11,8 @@ import type {
   CreateBranchRequest,
   Step,
   Artifact,
+  ArtifactData,
+  ArtifactType,
   AnalyzeRequest,
   AnalyzeResponse,
   Job,
@@ -129,6 +131,13 @@ export const datasetsApi = {
     )
     return unwrap(res)
   },
+  preview: async (sessionId: string, datasetId: string): Promise<Artifact> => {
+    const res = await http.get<ApiSuccess<Record<string, unknown>>>(
+      `/sessions/${sessionId}/datasets/${datasetId}/preview`,
+    )
+    const raw = unwrap(res)
+    return mapArtifactPreview(raw, sessionId)
+  },
 }
 
 // ─── Branches ─────────────────────────────────────────────────────────────────
@@ -140,6 +149,13 @@ export const branchesApi = {
   },
   create: async (sessionId: string, req: CreateBranchRequest): Promise<Branch> => {
     const res = await http.post<ApiSuccess<Branch>>(`/sessions/${sessionId}/branches`, req)
+    return unwrap(res)
+  },
+  rename: async (sessionId: string, branchId: string, name: string): Promise<Branch> => {
+    const res = await http.patch<ApiSuccess<Branch>>(
+      `/sessions/${sessionId}/branches/${branchId}/rename`,
+      { name },
+    )
     return unwrap(res)
   },
   getSteps: async (sessionId: string, branchId: string): Promise<Step[]> => {
@@ -156,10 +172,65 @@ export const branchesApi = {
 
 // ─── Artifacts ────────────────────────────────────────────────────────────────
 
+function mapArtifactPreview(raw: Record<string, unknown>, sessionId: string): Artifact {
+  const artifactType = String(raw.artifact_type ?? 'text') as ArtifactType
+  const pj = (raw.preview_json ?? {}) as Record<string, unknown>
+
+  let data: ArtifactData = {}
+
+  switch (artifactType) {
+    case 'dataframe':
+    case 'table':
+    case 'leaderboard':
+    case 'feature_importance':
+      data = {
+        rows: (pj.data ?? []) as Record<string, unknown>[],
+        columns: (pj.columns ?? []) as string[],
+      }
+      break
+    case 'plot':
+      data = {
+        data_url: pj.data_url as string | undefined,
+        plotly_json: pj.plotly_json as Record<string, unknown> | undefined,
+      }
+      break
+    case 'code':
+      data = {
+        code: (pj.code ?? pj.text) as string | undefined,
+      }
+      break
+    default: {
+      // report, metric, shap_summary, model, text
+      const metrics: Record<string, number | string> = {}
+      for (const [k, v] of Object.entries(pj)) {
+        if ((typeof v === 'number' || typeof v === 'string') && !Array.isArray(v)) {
+          metrics[k] = v
+        }
+      }
+      data = {
+        metrics: Object.keys(metrics).length > 0 ? metrics : undefined,
+        text: Object.keys(pj).length > 0 ? JSON.stringify(pj, null, 2) : undefined,
+      }
+    }
+  }
+
+  return {
+    id: String(raw.id),
+    session_id: sessionId,
+    type: artifactType,
+    name: String(raw.name ?? ''),
+    data,
+    created_at: String(raw.created_at ?? new Date().toISOString()),
+  }
+}
+
 export const artifactsApi = {
   preview: async (sessionId: string, artifactId: string): Promise<Artifact> => {
-    const res = await http.get<ApiSuccess<Artifact>>(`/sessions/${sessionId}/artifacts/${artifactId}/preview`)
-    return unwrap(res)
+    const res = await http.get<ApiSuccess<Record<string, unknown>>>(
+      `/sessions/${sessionId}/artifacts/${artifactId}/preview`,
+    )
+    const raw = unwrap(res)
+    return mapArtifactPreview(raw, sessionId)
   },
   downloadUrl: (sessionId: string, artifactId: string): string =>
     `${BASE_URL}/sessions/${sessionId}/artifacts/${artifactId}/download`,
@@ -199,6 +270,10 @@ export const optimizationApi = {
   },
   inverseRun: async (req: InverseRunRequest): Promise<AnalyzeResponse> => {
     const res = await http.post<ApiSuccess<AnalyzeResponse>>('/optimization/inverse-run', req)
+    return unwrap(res)
+  },
+  constrainedInverseRun: async (req: import('@/types').ConstrainedInverseRunRequest): Promise<AnalyzeResponse> => {
+    const res = await http.post<ApiSuccess<AnalyzeResponse>>('/optimization/constrained-inverse-run', req)
     return unwrap(res)
   },
 }

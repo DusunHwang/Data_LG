@@ -10,7 +10,6 @@ import joblib
 import numpy as np
 import pandas as pd
 
-from app.core.config import settings
 from app.core.logging import get_logger
 from app.graph.helpers import (
     check_cancellation,
@@ -64,10 +63,14 @@ def run_modeling_subgraph(state: GraphState) -> GraphState:
     dataset = state.get("dataset", {})
     branch_id = active_branch.get("id")
     branch_config = active_branch.get("config", {}) or {}
-    # branch_config → 요청 파라미터(state) → dataset 순으로 타겟 컬럼 탐색
+    # dataset_path는 load_context에서 결정됨:
+    # 브랜치에 source_artifact_id/dataset_path가 명시적으로 설정된 경우에만 오버라이드되고,
+    # 그 외에는 항상 세션의 active_dataset을 사용함.
+    # 요청 파라미터(state) → branch_config → dataset 순으로 타겟 컬럼 탐색
+    # state.target_column이 iterative 실행마다 다른 값으로 주입되므로 최우선
     target_col = (
-        branch_config.get("target_column")
-        or state.get("target_column")
+        state.get("target_column")
+        or branch_config.get("target_column")
         or dataset.get("target_column")
     )
 
@@ -99,13 +102,10 @@ def run_modeling_subgraph(state: GraphState) -> GraphState:
         check_cancellation(state)
         state = update_progress(state, 25, "모델링", "훈련 데이터 준비 중...")
 
-        # 3. 서브셋 정보 로드 (있는 경우)
-        subsets = _load_available_subsets(session_id, branch_id, df, target_col)
-
-        # 훈련할 데이터셋 목록 구성
+        # 브랜치의 dataset_path(= 세션 활성 데이터셋 또는 명시적으로 지정된 서브셋 브랜치)만 사용.
+        # 서브셋 탐색 결과물은 별도 브랜치로 이동 후에만 기준 데이터셋으로 사용 가능.
         training_datasets = []
 
-        # 전체 데이터로 훈련
         full_data_features, feature_names = build_feature_matrix(df, target_col)
         if full_data_features is not None:
             training_datasets.append({
@@ -115,19 +115,6 @@ def run_modeling_subgraph(state: GraphState) -> GraphState:
                 "y": df.loc[full_data_features.index, target_col].fillna(df[target_col].median()),
                 "feature_names": feature_names,
             })
-
-        # 서브셋 데이터로 훈련 (최대 3개)
-        for subset_info in subsets[:3]:
-            subset_df = subset_info["df"]
-            subset_features, sub_feature_names = build_feature_matrix(subset_df, target_col)
-            if subset_features is not None and len(subset_features) >= 50:
-                training_datasets.append({
-                    "name": f"서브셋 {subset_info['subset_no']}: {subset_info['name']}",
-                    "subset_no": subset_info["subset_no"],
-                    "X": subset_features,
-                    "y": subset_df.loc[subset_features.index, target_col].fillna(subset_df[target_col].median()),
-                    "feature_names": sub_feature_names,
-                })
 
         if not training_datasets:
             return {**state, "error_code": "NO_TRAINING_DATA",
@@ -298,10 +285,19 @@ def _train_lgbm(
     y_pred_val = model.predict(X_val)
     y_pred_train = model.predict(X_train)
 
-    val_rmse = float(np.sqrt(mean_squared_error(y_val, y_pred_val)))
-    val_mae = float(mean_absolute_error(y_val, y_pred_val))
-    val_r2 = float(r2_score(y_val, y_pred_val))
+    def _mape(y_true, y_pred):
+        mask = np.abs(y_true) > 1e-8
+        return float(np.mean(np.abs((y_true[mask] - y_pred[mask]) / y_true[mask])) * 100) if mask.any() else float("nan")
+
     train_rmse = float(np.sqrt(mean_squared_error(y_train, y_pred_train)))
+    train_mae  = float(mean_absolute_error(y_train, y_pred_train))
+    train_mape = _mape(y_train.values, y_pred_train)
+    train_r2   = float(r2_score(y_train, y_pred_train))
+
+    val_rmse = float(np.sqrt(mean_squared_error(y_val, y_pred_val)))
+    val_mae  = float(mean_absolute_error(y_val, y_pred_val))
+    val_mape = _mape(y_val.values, y_pred_val)
+    val_r2   = float(r2_score(y_val, y_pred_val))
 
     # 잔차
     residuals = pd.DataFrame({
@@ -317,10 +313,16 @@ def _train_lgbm(
         "name": name,
         "subset_no": subset_no,
         "model": model,
+        # train metrics
         "train_rmse": round(train_rmse, 6),
+        "train_mae":  round(train_mae, 6),
+        "train_mape": round(train_mape, 4) if not np.isnan(train_mape) else None,
+        "train_r2":   round(train_r2, 6),
+        # val metrics
         "val_rmse": round(val_rmse, 6),
-        "val_mae": round(val_mae, 6),
-        "val_r2": round(val_r2, 6),
+        "val_mae":  round(val_mae, 6),
+        "val_mape": round(val_mape, 4) if not np.isnan(val_mape) else None,
+        "val_r2":   round(val_r2, 6),
         "n_train": len(X_train),
         "n_val": len(X_val),
         "n_features": len(feature_names),
@@ -329,60 +331,14 @@ def _train_lgbm(
         "residuals_df": residuals,
         "feature_names": feature_names,
         "categorical_features": categorical_features,
+        # prediction arrays for comparison plot
+        "y_train_true": y_train.values,
+        "y_train_pred": y_pred_train,
+        "y_val_true":   y_val.values,
+        "y_val_pred":   y_pred_val,
         "X_val": X_val,  # SHAP을 위해 보관
         "is_champion": False,
     }
-
-
-def _load_available_subsets(
-    session_id: str,
-    branch_id: Optional[str],
-    df: pd.DataFrame,
-    target_col: str,
-) -> list:
-    """이전 서브셋 탐색 결과 로드"""
-    subsets = []
-    if not branch_id:
-        return subsets
-
-    try:
-        from app.worker.job_runner import get_sync_db_connection
-        conn = get_sync_db_connection()
-        try:
-            cur = conn.cursor()
-            # 서브셋 레지스트리 아티팩트 찾기
-            cur.execute(
-                """
-                SELECT a.file_path, a.meta
-                FROM artifacts a
-                JOIN steps s ON a.step_id = s.id
-                WHERE s.branch_id = ?
-                  AND a.meta->>'type' LIKE 'subset_%%_df'
-                  AND a.file_path IS NOT NULL
-                ORDER BY s.created_at DESC, a.name ASC
-                LIMIT 5
-                """,
-                (branch_id,),
-            )
-            for row in cur.fetchall():
-                fpath, meta = row
-                if meta and os.path.exists(fpath or ""):
-                    try:
-                        subset_df = pd.read_parquet(fpath)
-                        subset_no = meta.get("subset_no", 0)
-                        subsets.append({
-                            "subset_no": subset_no,
-                            "name": meta.get("name", f"서브셋 {subset_no}"),
-                            "df": subset_df,
-                        })
-                    except Exception as e:
-                        logger.warning("서브셋 로드 실패", path=fpath, error=str(e))
-        finally:
-            conn.close()
-    except Exception as e:
-        logger.warning("서브셋 조회 실패", error=str(e))
-
-    return subsets
 
 
 def _save_modeling_artifacts(
@@ -404,6 +360,7 @@ def _save_modeling_artifacts(
     model_dir = get_artifact_dir(session_id, "model")
     df_dir = get_artifact_dir(session_id, "dataframe")
     report_dir = get_artifact_dir(session_id, "report")
+    plot_dir = get_artifact_dir(session_id, "plot")
 
     conn = None
     try:
@@ -424,7 +381,7 @@ def _save_modeling_artifacts(
                 (
                     step_id,
                     branch_id,
-                    "LightGBM 기본 모델링",
+                    f"LightGBM 기본 모델링 [{target_col}]",
                     json.dumps({"target_column": target_col, "dataset_id": dataset.get("id")}),
                     json.dumps({
                         "n_models": len(model_results),
@@ -442,10 +399,14 @@ def _save_modeling_artifacts(
         for r in model_results:
             leaderboard_data.append({
                 "모델명": r["name"],
-                "RMSE (검증)": r["val_rmse"],
-                "MAE (검증)": r["val_mae"],
-                "R² (검증)": r["val_r2"],
-                "RMSE (훈련)": r["train_rmse"],
+                "Train R²": r["train_r2"],
+                "Train RMSE": r["train_rmse"],
+                "Train MAE": r["train_mae"],
+                "Train MAPE(%)": r["train_mape"],
+                "Val R²": r["val_r2"],
+                "Val RMSE": r["val_rmse"],
+                "Val MAE": r["val_mae"],
+                "Val MAPE(%)": r["val_mape"],
                 "훈련 샘플": r["n_train"],
                 "검증 샘플": r["n_val"],
                 "피처 수": r["n_features"],
@@ -459,7 +420,7 @@ def _save_modeling_artifacts(
 
         artifact_id = save_artifact_to_db(
             conn, step_id, session_id,
-            "leaderboard", "모델 리더보드",
+            "leaderboard", f"모델 리더보드 [{target_col}]",
             leaderboard_path, "application/parquet",
             os.path.getsize(leaderboard_path),
             dataframe_to_preview(leaderboard_df),
@@ -480,7 +441,7 @@ def _save_modeling_artifacts(
             # 모델 아티팩트 DB 저장
             model_artifact_id = save_artifact_to_db(
                 conn, step_id, session_id,
-                "model", f"LightGBM 모델: {r['name']}",
+                "model", f"LightGBM 모델 [{target_col}]: {r['name']}",
                 model_path, "application/octet-stream",
                 os.path.getsize(model_path),
                 None,
@@ -496,6 +457,22 @@ def _save_modeling_artifacts(
             )
             created_artifact_ids.append(model_artifact_id)
 
+            # ── Comparison plot (Real vs Predicted, train/val 색 구분) ──────
+            plot_artifact_id = _save_comparison_plot(
+                r, target_col, model_run_id, session_id,
+                conn, step_id, plot_dir,
+            )
+            if plot_artifact_id:
+                created_artifact_ids.append(plot_artifact_id)
+
+            # ── Train / Val 메트릭 요약 테이블 ──────────────────────────────
+            metrics_artifact_id = _save_metrics_table(
+                r, target_col, model_run_id, session_id,
+                conn, step_id, df_dir,
+            )
+            if metrics_artifact_id:
+                created_artifact_ids.append(metrics_artifact_id)
+
             # 잔차 데이터프레임 저장
             residuals_df = r.get("residuals_df")
             if residuals_df is not None:
@@ -504,7 +481,7 @@ def _save_modeling_artifacts(
 
                 resid_artifact_id = save_artifact_to_db(
                     conn, step_id, session_id,
-                    "dataframe", f"잔차: {r['name']}",
+                    "dataframe", f"잔차 [{target_col}]: {r['name']}",
                     resid_path, "application/parquet",
                     os.path.getsize(resid_path),
                     dataframe_to_preview(residuals_df),
@@ -521,7 +498,7 @@ def _save_modeling_artifacts(
 
             fi_artifact_id = save_artifact_to_db(
                 conn, step_id, session_id,
-                "feature_importance", f"피처 중요도: {r['name']}",
+                "feature_importance", f"피처 중요도 [{target_col}]: {r['name']}",
                 fi_path, "application/parquet",
                 os.path.getsize(fi_path),
                 dataframe_to_preview(fi_df, max_rows=30),
@@ -584,7 +561,7 @@ def _save_modeling_artifacts(
 
         champion_artifact_id = save_artifact_to_db(
             conn, step_id, session_id,
-            "report", "챔피언 모델 정보",
+            "report", f"챔피언 모델 정보 [{target_col}]",
             champion_path, "application/json",
             os.path.getsize(champion_path),
             champion_meta,
@@ -614,3 +591,134 @@ def _save_modeling_artifacts(
         "artifact_ids": created_artifact_ids,
         "model_run_ids": model_run_ids,
     }
+
+
+def _save_comparison_plot(
+    r: dict,
+    target_col: str,
+    model_run_id: str,
+    session_id: str,
+    conn,
+    step_id: Optional[str],
+    plot_dir: str,
+) -> Optional[str]:
+    """Train / Validation Real vs Predicted 산점도 저장 후 artifact_id 반환"""
+    try:
+        import matplotlib
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+        from app.graph.helpers import setup_korean_font
+        setup_korean_font()
+
+        y_train_true = r.get("y_train_true")
+        y_train_pred = r.get("y_train_pred")
+        y_val_true   = r.get("y_val_true")
+        y_val_pred   = r.get("y_val_pred")
+
+        if y_train_true is None or y_val_true is None:
+            return None
+
+        fig, ax = plt.subplots(figsize=(7, 6))
+
+        # Train scatter
+        ax.scatter(y_train_true, y_train_pred,
+                   alpha=0.45, s=18, color="#4C9BE8",
+                   label=f"Train (n={len(y_train_true)})", zorder=2)
+        # Validation scatter
+        ax.scatter(y_val_true, y_val_pred,
+                   alpha=0.65, s=22, color="#F97316", edgecolors="white", linewidths=0.4,
+                   label=f"Validation (n={len(y_val_true)})", zorder=3)
+
+        # Perfect prediction line
+        all_vals = np.concatenate([y_train_true, y_train_pred, y_val_true, y_val_pred])
+        mn, mx = float(all_vals.min()), float(all_vals.max())
+        margin = (mx - mn) * 0.05
+        line_range = [mn - margin, mx + margin]
+        ax.plot(line_range, line_range, "k--", linewidth=1.2, alpha=0.6, label="Perfect fit", zorder=1)
+
+        # Annotations
+        val_r2   = r.get("val_r2", float("nan"))
+        val_rmse = r.get("val_rmse", float("nan"))
+        train_r2 = r.get("train_r2", float("nan"))
+        annotation = (
+            f"Train  R²={train_r2:.3f}\n"
+            f"Val    R²={val_r2:.3f}  RMSE={val_rmse:.4f}"
+        )
+        ax.text(0.03, 0.97, annotation, transform=ax.transAxes,
+                fontsize=8, verticalalignment="top",
+                bbox=dict(boxstyle="round,pad=0.4", facecolor="white", alpha=0.8, edgecolor="#ccc"))
+
+        ax.set_xlabel(f"Actual ({target_col})", fontsize=10)
+        ax.set_ylabel(f"Predicted ({target_col})", fontsize=10)
+        ax.set_title(f"Real vs Predicted [{target_col}] — {r['name']}", fontsize=11, fontweight="bold")
+        ax.legend(fontsize=8, loc="lower right")
+        ax.set_xlim(line_range)
+        ax.set_ylim(line_range)
+        plt.tight_layout()
+
+        plot_path = os.path.join(plot_dir, f"comparison_plot_{model_run_id}.png")
+        plt.savefig(plot_path, dpi=110, bbox_inches="tight")
+        plt.close(fig)
+
+        # base64 data_url for inline preview
+        import base64
+        with open(plot_path, "rb") as f:
+            data_url = "data:image/png;base64," + base64.b64encode(f.read()).decode()
+
+        return save_artifact_to_db(
+            conn, step_id, session_id,
+            "plot", f"Real vs Predicted [{target_col}]: {r['name']}",
+            plot_path, "image/png",
+            os.path.getsize(plot_path),
+            {"data_url": data_url},
+            {"type": "comparison_plot", "model_run_id": model_run_id},
+        )
+    except Exception as e:
+        logger.warning("Comparison plot 생성 실패", error=str(e))
+        return None
+
+
+def _save_metrics_table(
+    r: dict,
+    target_col: str,
+    model_run_id: str,
+    session_id: str,
+    conn,
+    step_id: Optional[str],
+    df_dir: str,
+) -> Optional[str]:
+    """Train / Validation 메트릭 요약 테이블 저장 후 artifact_id 반환"""
+    try:
+        rows = [
+            {
+                "구분": "Train",
+                "R²":       r.get("train_r2"),
+                "RMSE":     r.get("train_rmse"),
+                "MAE":      r.get("train_mae"),
+                "MAPE (%)": r.get("train_mape"),
+                "샘플 수":  r.get("n_train"),
+            },
+            {
+                "구분": "Validation",
+                "R²":       r.get("val_r2"),
+                "RMSE":     r.get("val_rmse"),
+                "MAE":      r.get("val_mae"),
+                "MAPE (%)": r.get("val_mape"),
+                "샘플 수":  r.get("n_val"),
+            },
+        ]
+        metrics_df = pd.DataFrame(rows)
+        metrics_path = os.path.join(df_dir, f"metrics_summary_{model_run_id}.parquet")
+        metrics_df.to_parquet(metrics_path, index=False)
+
+        return save_artifact_to_db(
+            conn, step_id, session_id,
+            "table", f"Train/Val 성능 지표 [{target_col}]: {r['name']}",
+            metrics_path, "application/parquet",
+            os.path.getsize(metrics_path),
+            dataframe_to_preview(metrics_df),
+            {"type": "metrics_summary", "model_run_id": model_run_id, "target_column": target_col},
+        )
+    except Exception as e:
+        logger.warning("Metrics table 생성 실패", error=str(e))
+        return None

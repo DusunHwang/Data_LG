@@ -91,19 +91,45 @@ def run_subset_subgraph(state: GraphState) -> GraphState:
         # 5. 점수 계산
         scored_candidates = score_subset_candidates(df, candidates, target_col)
 
-        # 6. 상위 5개 선택
-        top_subsets = select_top_k(scored_candidates, k=settings.default_subset_limit)
+        # 6. 전체 데이터와 유의미한 차이가 없는 후보 제거
+        #    row_coverage >= 0.95 AND feature_coverage >= 0.95 → 사실상 전체와 동일
+        meaningful = [
+            c for c in scored_candidates
+            if not (c.get("row_coverage", 1.0) >= 0.95 and c.get("feature_coverage", 1.0) >= 0.95)
+        ]
+
+        if not meaningful:
+            full_missing = float(df.isnull().mean().mean())
+            logger.info("의미 있는 서브셋 없음 — 전체 데이터와 유의미한 차이 없음",
+                        n_candidates=len(scored_candidates), full_missing=round(full_missing, 4))
+            return {
+                **state,
+                "assistant_message": (
+                    f"서브셋 탐색을 완료했지만, 발견된 서브셋({len(scored_candidates)}개)이 "
+                    f"전체 데이터(결측률 {full_missing:.1%})와 유의미한 차이가 없어 별도 구분이 불필요합니다. "
+                    "전체 데이터 그대로 모델링하는 것을 권장합니다."
+                ),
+                "execution_result": {
+                    "n_subsets": 0,
+                    "message": "전체 데이터와 유의미한 차이 없음",
+                    "full_missing_rate": round(full_missing, 4),
+                },
+            }
+
+        # 7. 상위 5개 선택
+        top_subsets = select_top_k(meaningful, k=settings.default_subset_limit)
 
         check_cancellation(state)
         state = update_progress(state, 82, "서브셋_탐색", "서브셋 결과 저장 중...")
 
-        # 7. DB 저장
+        # 8. DB 저장
         artifact_ids = _save_subset_artifacts(
             df, top_subsets, col_classification, missing_structure,
-            session_id, branch_id, dataset, state
+            session_id, branch_id, dataset, state, target_col
         )
 
-        logger.info("서브셋 탐색 완료", n_subsets=len(top_subsets))
+        logger.info("서브셋 탐색 완료", n_subsets=len(top_subsets),
+                    n_filtered=len(scored_candidates) - len(meaningful))
 
         return {
             **state,
@@ -113,6 +139,7 @@ def run_subset_subgraph(state: GraphState) -> GraphState:
                 "n_subsets": len(top_subsets),
                 "top_subset_scores": [s["score"] for s in top_subsets],
                 "artifact_count": len(artifact_ids.get("artifact_ids", [])),
+                "target_column": target_col,
                 "col_classification_summary": {
                     k: len(v) for k, v in col_classification.items()
                 },
@@ -518,10 +545,12 @@ def _save_subset_artifacts(
     branch_id: Optional[str],
     dataset: dict,
     state: GraphState,
+    target_col: Optional[str] = None,
 ) -> dict:
     """서브셋 아티팩트 저장"""
     import uuid as uuid_module
 
+    tc_suffix = f" [{target_col}]" if target_col else ""
     created_artifact_ids = []
     step_id = None
     df_dir = get_artifact_dir(session_id, "dataframe")
@@ -546,7 +575,7 @@ def _save_subset_artifacts(
                 (
                     step_id,
                     branch_id,
-                    "밀집 서브셋 탐색",
+                    f"밀집 서브셋 탐색{tc_suffix}",
                     json.dumps({"dataset_id": dataset.get("id")}),
                     json.dumps({
                         "n_subsets": len(top_subsets),
@@ -569,7 +598,7 @@ def _save_subset_artifacts(
 
         artifact_id = save_artifact_to_db(
             conn, step_id, session_id,
-            "dataframe", "컬럼 분류 결과",
+            "dataframe", f"컬럼 분류 결과{tc_suffix}",
             col_class_path, "application/parquet",
             os.path.getsize(col_class_path),
             dataframe_to_preview(col_class_df),
@@ -584,7 +613,7 @@ def _save_subset_artifacts(
 
         artifact_id = save_artifact_to_db(
             conn, step_id, session_id,
-            "report", "결측 구조 분석",
+            "report", f"결측 구조 분석{tc_suffix}",
             missing_path, "application/json",
             os.path.getsize(missing_path),
             {"n_signatures": len(missing_structure.get("row_signatures", {})),
@@ -617,7 +646,7 @@ def _save_subset_artifacts(
 
         artifact_id = save_artifact_to_db(
             conn, step_id, session_id,
-            "dataframe", "서브셋 레지스트리",
+            "dataframe", f"서브셋 레지스트리{tc_suffix}",
             registry_path, "application/parquet",
             os.path.getsize(registry_path),
             dataframe_to_preview(registry_df),
@@ -634,7 +663,7 @@ def _save_subset_artifacts(
 
         artifact_id = save_artifact_to_db(
             conn, step_id, session_id,
-            "dataframe", "서브셋 점수 테이블",
+            "dataframe", f"서브셋 점수 테이블{tc_suffix}",
             score_path, "application/parquet",
             os.path.getsize(score_path),
             dataframe_to_preview(score_df),
@@ -659,7 +688,7 @@ def _save_subset_artifacts(
 
             artifact_id = save_artifact_to_db(
                 conn, step_id, session_id,
-                "dataframe", f"서브셋 {i} 데이터",
+                "dataframe", f"서브셋 {i} 데이터{tc_suffix}",
                 subset_path, "application/parquet",
                 os.path.getsize(subset_path),
                 dataframe_to_preview(subset_df),
@@ -690,7 +719,7 @@ def _save_subset_artifacts(
 
         artifact_id = save_artifact_to_db(
             conn, step_id, session_id,
-            "report", "서브셋 탐색 요약",
+            "report", f"서브셋 탐색 요약{tc_suffix}",
             summary_path, "application/json",
             os.path.getsize(summary_path),
             {"n_subsets": len(top_subsets), "top_score": top_subsets[0]["score"] if top_subsets else 0},

@@ -267,7 +267,14 @@ async def _plan_eda(df: pd.DataFrame, dataset: dict, user_message: str) -> dict:
 
     try:
         plan = await client.structured_complete(messages, EDAPlan)
-        return plan.model_dump()
+        plan_dict = plan.model_dump()
+        # Validate that column names in the plan actually exist in the dataframe
+        actual_cols = set(df.columns)
+        numeric_fallback = df.select_dtypes(include="number").columns.tolist()[:5]
+        for analysis in plan_dict.get("analyses", []):
+            valid = [c for c in analysis.get("columns", []) if c in actual_cols]
+            analysis["columns"] = valid if valid else numeric_fallback
+        return plan_dict
     except Exception as e:
         logger.warning("EDA 계획 수립 실패, 기본 계획 사용", error=str(e))
         return _default_eda_plan(df)
@@ -309,13 +316,17 @@ async def _generate_eda_code(df: pd.DataFrame, eda_plan: dict, dataset_path: str
     user_request_section = ""
     if user_message:
         user_request_section = f"User's original request: {user_message}\nIMPORTANT: Honor the user's specific visualization request above all else.\n\n"
+    all_cols = list(df.columns)
+    numeric_cols = df.select_dtypes(include="number").columns.tolist()
     prompt = (
         f"{user_request_section}"
         f"Write Python code for the following EDA plan.\n\n"
         f"EDA plan:\n{json.dumps(eda_plan, ensure_ascii=False, indent=2)}\n\n"
         f"Data info: rows={len(df)}, cols={len(df.columns)}\n"
-        f"Columns: {list(df.columns[:20])}\n"
-        f"Numeric: {df.select_dtypes(include='number').columns.tolist()[:10]}\n\n"
+        f"EXACT column names (use ONLY these, never invent names): {all_cols}\n"
+        f"Numeric columns: {numeric_cols}\n\n"
+        f"CRITICAL: Only reference column names from the list above. "
+        f"Using any other column name will cause a KeyError.\n\n"
         f"Save each result as plot_N.png or result_N.json. Use English labels only."
     )
     return await client.generate_code(prompt)

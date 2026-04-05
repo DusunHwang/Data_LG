@@ -1,5 +1,6 @@
 """PandasAI 실행기 - vLLM 어댑터를 통한 자연어 데이터 분석"""
 
+import logging
 import os
 import shutil
 import tempfile
@@ -10,6 +11,19 @@ import pandas as pd
 from app.core.logging import get_logger
 
 logger = get_logger(__name__)
+
+
+def _suppress_pandasai_file_logging() -> None:
+    """pandasai가 CWD에 쓰는 파일 로그 핸들러를 제거한다."""
+    for name in ("pandasai", "pandasai.helpers.logger"):
+        lg = logging.getLogger(name)
+        for h in lg.handlers[:]:
+            if isinstance(h, logging.FileHandler):
+                try:
+                    h.close()
+                except Exception:
+                    pass
+                lg.removeHandler(h)
 
 
 # ---------------------------------------------------------------------------
@@ -137,6 +151,9 @@ def run_pandasai(
     if llm is None:
         result_base["error"] = "PandasAI LLM 어댑터를 생성할 수 없습니다."
         return result_base
+
+    # pandasai 파일 로그 핸들러 제거 (권한 없는 파일에 쓰기 방지)
+    _suppress_pandasai_file_logging()
 
     # pandasai 2.0.24 버그 픽스 적용
     _patch_pipeline_context()

@@ -28,10 +28,11 @@ def _parse_json(value, default):
         return default
     if isinstance(value, str):
         try:
-            return json.loads(value)
+            result = json.loads(value)
+            return result if result is not None else default
         except (json.JSONDecodeError, ValueError):
             return default
-    return value
+    return value if value is not None else default
 
 
 def load_session_context(state: GraphState) -> GraphState:
@@ -124,19 +125,31 @@ def load_session_context(state: GraphState) -> GraphState:
                 }
                 dataset_path = ds_row[4]  # file_path가 파케이 경로
 
-        # 3. 활성 브랜치 로드 (is_active=True인 가장 최근 브랜치)
+        # 3. 활성 브랜치 로드: state에 branch_id가 있으면 해당 브랜치, 없으면 is_active=True
         active_branch_data: dict = {}
-        cur.execute(
-            """
-            SELECT id, name, description, is_active, config, parent_branch_id,
-                   created_at, updated_at
-            FROM branches
-            WHERE session_id = ? AND is_active = true
-            ORDER BY created_at DESC
-            LIMIT 1
-            """,
-            (session_id,),
-        )
+        requested_branch_id = state.get("branch_id")
+        if requested_branch_id:
+            cur.execute(
+                """
+                SELECT id, name, description, is_active, config, parent_branch_id,
+                       created_at, updated_at
+                FROM branches
+                WHERE id = ? AND session_id = ?
+                """,
+                (requested_branch_id, session_id),
+            )
+        else:
+            cur.execute(
+                """
+                SELECT id, name, description, is_active, config, parent_branch_id,
+                       created_at, updated_at
+                FROM branches
+                WHERE session_id = ? AND is_active = true
+                ORDER BY created_at DESC
+                LIMIT 1
+                """,
+                (session_id,),
+            )
         br_row = cur.fetchone()
         if br_row:
             active_branch_data = {
@@ -213,8 +226,22 @@ def load_session_context(state: GraphState) -> GraphState:
         if job_row and not state.get("user_id"):
             state = {**state, "user_id": str(job_row[0])}
 
-        # 브랜치 config에 dataset_path가 지정된 경우 오버라이드 (필터링된 DataFrame 브랜치)
-        branch_dataset_path = active_branch_data.get("config", {}).get("dataset_path")
+        # 브랜치 config에 dataset_path 또는 source_artifact_id가 지정된 경우 오버라이드
+        branch_config = active_branch_data.get("config") or {}
+        branch_dataset_path = branch_config.get("dataset_path")
+
+        if not branch_dataset_path:
+            source_artifact_id = branch_config.get("source_artifact_id")
+            if source_artifact_id:
+                cur.execute(
+                    "SELECT file_path FROM artifacts WHERE id = ?",
+                    (source_artifact_id,),
+                )
+                art_row = cur.fetchone()
+                if art_row and art_row[0]:
+                    branch_dataset_path = art_row[0]
+                    logger.info("source_artifact_id로 dataset_path 해결", artifact_id=source_artifact_id, path=branch_dataset_path)
+
         if branch_dataset_path:
             dataset_path = branch_dataset_path
             logger.info("브랜치 dataset_path 오버라이드", path=branch_dataset_path)

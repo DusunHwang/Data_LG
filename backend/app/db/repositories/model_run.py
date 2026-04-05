@@ -41,6 +41,20 @@ class ModelRunRepository(BaseRepository[ModelRun]):
         )
         return result.scalars().first()
 
+    async def get_champion_by_target(self, branch_id: UUID, target_column: str) -> ModelRun | None:
+        """특정 타겟 컬럼의 챔피언 모델 조회"""
+        result = await self.session.execute(
+            select(ModelRun)
+            .where(
+                ModelRun.branch_id == branch_id,
+                ModelRun.is_champion == True,  # noqa: E712
+                ModelRun.target_column == target_column,
+            )
+            .order_by(ModelRun.created_at.desc())
+            .limit(1)
+        )
+        return result.scalars().first()
+
     async def clear_champion(self, branch_id: UUID) -> None:
         """브랜치의 챔피언 상태 초기화"""
         models = await self.get_branch_models(branch_id)

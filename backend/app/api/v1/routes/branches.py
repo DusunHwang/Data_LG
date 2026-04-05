@@ -26,6 +26,11 @@ class BranchCreate(BaseModel):
     config: dict | None = None
 
 
+class BranchRename(BaseModel):
+    """브랜치 이름 변경 요청"""
+    name: str = Field(..., min_length=1, max_length=256)
+
+
 class BranchResponse(BaseModel):
     """브랜치 응답"""
     id: UUID
@@ -124,6 +129,39 @@ async def get_branch(
             ),
         )
 
+    return success_response(BranchResponse.model_validate(branch).model_dump())
+
+
+@router.patch("/{branch_id}/rename", response_model=dict)
+async def rename_branch(
+    session_id: UUID,
+    branch_id: UUID,
+    body: BranchRename,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """브랜치 이름 변경"""
+    await _validate_session(session_id, current_user, db)
+
+    result = await db.execute(
+        select(Branch).where(Branch.id == branch_id, Branch.session_id == session_id)
+    )
+    branch = result.scalar_one_or_none()
+
+    if not branch:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=error_response(
+                ErrorCode.BRANCH_NOT_FOUND,
+                ERROR_MESSAGES[ErrorCode.BRANCH_NOT_FOUND],
+            ),
+        )
+
+    branch.name = body.name
+    db.add(branch)
+    await db.flush()
+    await db.refresh(branch)
+    logger.info("브랜치 이름 변경", branch_id=str(branch_id), name=body.name)
     return success_response(BranchResponse.model_validate(branch).model_dump())
 
 

@@ -148,7 +148,6 @@ def run_null_importance_task(
         # 추천: 유의미한 피처 중 상위 N (최소 3, 최대 15)
         recommended_features = [f for f, _ in actual_sorted if f in significant]
         if len(recommended_features) < 3:
-            # 유의미하지 않아도 상위 피처 보완
             for f, _ in actual_sorted:
                 if f not in recommended_features:
                     recommended_features.append(f)
@@ -276,11 +275,13 @@ def run_inverse_optimize_task(
             except Exception:
                 return 1e9
 
+        popsize = 12
+        maxiter = max(10, n_calls // (popsize * len(opt_bounds)))
         result_opt = differential_evolution(
             objective,
             bounds=opt_bounds,
-            maxiter=max(50, n_calls // len(opt_bounds)),
-            popsize=12,
+            maxiter=maxiter,
+            popsize=popsize,
             seed=42,
             tol=1e-6,
             workers=1,
@@ -350,6 +351,220 @@ def run_inverse_optimize_task(
 
     except Exception as e:
         logger.error("역최적화 실패", error=str(e))
+        update_job_status_sync(job_run_id, "failed", 0, f"오류: {str(e)}")
+        raise
+
+
+def run_constrained_inverse_optimize_task(
+    job_run_id: str,
+    session_id: str,
+    branch_id: str,
+    # 최적화 대상 모델
+    model_path: str,
+    feature_names: list,
+    target_column: str,
+    # 최적화 파라미터
+    selected_features: list,
+    fixed_values: dict,
+    feature_ranges: dict,
+    expand_ratio: float,
+    direction: str,                 # "maximize" | "minimize"
+    categorical_features: list,
+    dataset_path: str,
+    n_calls: int = 300,
+    model_type: str = "lgbm",          # "lgbm" | "bcm"
+    # 제약 조건 (선택, 이중 타겟용)
+    constraint_model_path: Optional[str] = None,
+    constraint_feature_names: Optional[list] = None,
+    constraint_target_column: Optional[str] = None,
+    constraint_type: Optional[str] = None,   # "gte" | "lte"
+    constraint_threshold: Optional[float] = None,
+    constraint_penalty: float = 1e6,
+) -> dict:
+    """
+    제약 조건부 역최적화.
+    - 단일 타겟: 기존과 동일 (constraint 파라미터 없음)
+    - 이중 타겟: constraint_model이 정의하는 타겟을 threshold 기준으로 제약하면서
+                 primary model의 타겟을 maximize/minimize
+    """
+    reporter = ProgressReporter(job_run_id)
+    update_job_status_sync(job_run_id, "running", 0, "역최적화 준비 중...")
+
+    try:
+        from scipy.optimize import differential_evolution
+
+        reporter.update(5, "모델 로드 중...")
+        lgbm_model = joblib.load(model_path)
+        constraint_model = joblib.load(constraint_model_path) if constraint_model_path else None
+
+        reporter.update(10, "데이터 로드 및 탐색 공간 구성 중...")
+        df = pd.read_parquet(dataset_path)
+
+        # 공통 전처리 함수
+        def prepare_X(df_, feat_list, cat_feats):
+            X_ = df_[feat_list].copy()
+            for col in cat_feats:
+                if col in X_.columns:
+                    X_[col] = X_[col].astype("category")
+            return X_.fillna(X_.median(numeric_only=True))
+
+        X_ref = prepare_X(df, feature_names, categorical_features)
+        c_feat_names = constraint_feature_names or feature_names
+        X_ref_c = prepare_X(df, c_feat_names, categorical_features) if constraint_model else None
+
+        # BCM 모델 구성 (요청 시)
+        if model_type == "bcm":
+            from app.worker.bcm_model import BCMModel
+            y_col = df[target_column] if target_column in df.columns else None
+            if y_col is None:
+                raise ValueError(f"데이터셋에 타겟 컬럼 '{target_column}'이 없습니다.")
+
+            def bcm_progress(pct: int, msg: str):
+                # BCM 학습은 전체 진행률 12~25% 구간에 매핑
+                mapped = 12 + int(pct * 13 / 100)
+                reporter.update(mapped, f"[BCM] {msg}")
+
+            bcm = BCMModel(lgbm_model, categorical_features=categorical_features)
+            bcm.fit(X_ref, y_col.values, progress_cb=bcm_progress)
+            model = bcm
+        else:
+            model = lgbm_model
+
+        # 탐색 공간
+        bounds, opt_features = [], []
+        for feat in selected_features:
+            if feat in categorical_features:
+                continue
+            opt_features.append(feat)
+            if feat in feature_ranges:
+                lo, hi = feature_ranges[feat]
+            else:
+                col_data = X_ref[feat].dropna()
+                lo, hi = float(col_data.min()), float(col_data.max())
+            spread = (hi - lo) * expand_ratio
+            bounds.append((lo - spread, hi + spread))
+
+        if not opt_features:
+            raise ValueError("선택된 피처 중 수치형 피처가 없습니다.")
+
+        base_row = X_ref.median().to_dict()
+        base_row.update(fixed_values)
+
+        sign = -1.0 if direction == "maximize" else 1.0
+        call_count = [0]
+        reporter.update(15, f"역최적화 실행 중 (방향: {direction}, 피처: {len(opt_features)}개)...")
+
+        def build_input(row, feat_list, cat_feats):
+            input_df = pd.DataFrame([row])[feat_list]
+            for col in cat_feats:
+                if col in input_df.columns:
+                    input_df[col] = input_df[col].astype("category")
+            return input_df
+
+        def objective(x):
+            call_count[0] += 1
+            if call_count[0] % 50 == 0:
+                pct = min(90, 15 + int(70 * call_count[0] / n_calls))
+                reporter.update(pct, f"탐색 중... {call_count[0]}/{n_calls}회")
+
+            row = base_row.copy()
+            for feat, val in zip(opt_features, x):
+                row[feat] = val
+
+            try:
+                pred_primary = float(model.predict(
+                    build_input(row, feature_names, categorical_features)
+                )[0])
+            except Exception:
+                return 1e9
+
+            # 제약 패널티
+            penalty = 0.0
+            if constraint_model and constraint_type and constraint_threshold is not None:
+                try:
+                    pred_c = float(constraint_model.predict(
+                        build_input(row, c_feat_names, categorical_features)
+                    )[0])
+                    if constraint_type == "gte":
+                        violation = max(0.0, constraint_threshold - pred_c)
+                    else:
+                        violation = max(0.0, pred_c - constraint_threshold)
+                    penalty = constraint_penalty * violation
+                except Exception:
+                    penalty = constraint_penalty
+
+            return sign * pred_primary + penalty
+
+        popsize = 12
+        maxiter = max(10, n_calls // (popsize * len(bounds)))
+        result_opt = differential_evolution(
+            objective,
+            bounds=bounds,
+            maxiter=maxiter,
+            popsize=popsize,
+            seed=42,
+            tol=1e-6,
+            workers=1,
+        )
+
+        # 최적 솔루션
+        optimal_row = base_row.copy()
+        for feat, val in zip(opt_features, result_opt.x):
+            optimal_row[feat] = val
+
+        def safe_predict(m, row, feat_list, cat_feats):
+            try:
+                return float(m.predict(build_input(row, feat_list, cat_feats))[0])
+            except Exception:
+                return None
+
+        optimal_prediction = safe_predict(model, optimal_row, feature_names, categorical_features)
+        baseline_prediction = safe_predict(model, base_row, feature_names, categorical_features)
+
+        # 제약 타겟 예측값 (이중 타겟)
+        constraint_prediction = None
+        if constraint_model:
+            constraint_prediction = safe_predict(constraint_model, optimal_row, c_feat_names, categorical_features)
+
+        optimal_features = {
+            feat: float(optimal_row[feat])
+            for feat in selected_features
+            if feat in optimal_row and feat not in categorical_features
+        }
+        optimal_features.update({
+            feat: fixed_values.get(feat, base_row.get(feat))
+            for feat in selected_features if feat in categorical_features
+        })
+
+        reporter.update(95, "결과 저장 중...")
+
+        result = {
+            "direction": direction,
+            "target_column": target_column,
+            "optimal_prediction": optimal_prediction,
+            "baseline_prediction": baseline_prediction,
+            "improvement": (
+                (optimal_prediction - baseline_prediction)
+                if optimal_prediction is not None and baseline_prediction is not None else None
+            ),
+            "optimal_features": optimal_features,
+            "fixed_features": fixed_values,
+            "selected_features": selected_features,
+            "n_evaluations": call_count[0],
+            "convergence": bool(result_opt.success),
+            # 이중 타겟
+            "constraint_target_column": constraint_target_column,
+            "constraint_type": constraint_type,
+            "constraint_threshold": constraint_threshold,
+            "constraint_prediction": constraint_prediction,
+        }
+
+        _save_inverse_optimize_artifact(result, session_id, branch_id, job_run_id)
+        update_job_status_sync(job_run_id, "completed", 100, "역최적화 완료", result=result)
+        return result
+
+    except Exception as e:
+        logger.error("제약 역최적화 실패", error=str(e))
         update_job_status_sync(job_run_id, "failed", 0, f"오류: {str(e)}")
         raise
 

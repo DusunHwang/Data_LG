@@ -137,10 +137,12 @@ def run_analysis_graph(
     session_id: str,
     user_id: str,
     user_message: str,
+    branch_id: str = None,
     mode: str = "auto",
     selected_step_id: str = None,
     selected_artifact_id: str = None,
     target_column: str = None,
+    skip_job_finalize: bool = False,
 ) -> dict:
     """
     분석 그래프 동기 실행 (RQ worker에서 호출).
@@ -172,12 +174,14 @@ def run_analysis_graph(
         request_id=str(uuid.uuid4()),
         user_id=user_id,
         session_id=session_id,
+        branch_id=branch_id,
         job_run_id=job_run_id,
         user_message=user_message,
         mode=mode,
         selected_step_id=selected_step_id,
         selected_artifact_id=selected_artifact_id,
         target_column=target_column,
+        skip_job_finalize=skip_job_finalize,
         resolved_step_ids=[],
         resolved_artifact_ids=[],
         created_artifact_ids=[],

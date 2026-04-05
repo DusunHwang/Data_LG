@@ -207,8 +207,15 @@ def _load_champion_model(branch_id: Optional[str]) -> Optional[dict]:
             return None
 
         model = joblib.load(model_path)
-        feature_names = (meta or {}).get("feature_names", [])
-        categorical_features = (meta or {}).get("categorical_features", [])
+        import json as _json
+        if isinstance(meta, str):
+            try:
+                meta = _json.loads(meta)
+            except Exception:
+                meta = {}
+        meta = meta or {}
+        feature_names = meta.get("feature_names", [])
+        categorical_features = meta.get("categorical_features", [])
 
         return {
             "model": model,
@@ -381,7 +388,7 @@ def _save_shap_artifacts(
                 (
                     step_id,
                     branch_id,
-                    "SHAP 피처 중요도 분석",
+                    f"SHAP 피처 중요도 분석 [{target_col}]",
                     json.dumps({"model_run_id": model_run_id, "target_column": target_col}),
                     json.dumps({
                         "top_features": feature_importance.head(10)["feature"].tolist(),
@@ -392,21 +399,7 @@ def _save_shap_artifacts(
                 ),
             )
 
-        # 1. SHAP 요약 테이블 저장
-        shap_summary_path = os.path.join(df_dir, f"shap_summary_{step_id or 'default'}.parquet")
-        feature_importance.to_parquet(shap_summary_path, index=False)
-
-        artifact_id = save_artifact_to_db(
-            conn, step_id, session_id,
-            "shap", "SHAP 피처 중요도",
-            shap_summary_path, "application/parquet",
-            os.path.getsize(shap_summary_path),
-            dataframe_to_preview(feature_importance, max_rows=30),
-            {"type": "shap_summary", "model_run_id": model_run_id},
-        )
-        created_artifact_ids.append(artifact_id)
-
-        # 2. Top 피처 테이블 저장
+        # 1. Top 피처 테이블 저장
         top_feature_table = feature_importance.head(20).copy()
         top_feature_table["rank"] = range(1, len(top_feature_table) + 1)
         top_feature_path = os.path.join(df_dir, f"top_feature_table_{step_id or 'default'}.parquet")
@@ -414,7 +407,7 @@ def _save_shap_artifacts(
 
         artifact_id = save_artifact_to_db(
             conn, step_id, session_id,
-            "feature_importance", "상위 피처 테이블",
+            "feature_importance", f"상위 피처 테이블 [{target_col}]",
             top_feature_path, "application/parquet",
             os.path.getsize(top_feature_path),
             dataframe_to_preview(top_feature_table, max_rows=20),
@@ -422,37 +415,52 @@ def _save_shap_artifacts(
         )
         created_artifact_ids.append(artifact_id)
 
-        # 3. SHAP 막대 차트 저장
+        # 2. SHAP Swarm plot — 상위 10개가 한눈에 보이는 높이로 저장, 카드에서 스크롤로 하위 피처 확인
         try:
-            fig, ax = plt.subplots(figsize=(10, 8))
-            top_20 = feature_importance.head(20)
-            ax.barh(
-                range(len(top_20)),
-                top_20["mean_abs_shap"].values[::-1],
-                color="steelblue",
+            import shap as shap_lib
+            import base64
+            from app.graph.helpers import setup_korean_font
+            setup_korean_font()
+
+            n_features = len(feature_importance)
+            # 피처당 0.55인치, 상위 10개가 뷰포트에 맞는 전체 높이
+            row_height = 0.55
+            fig_height = n_features * row_height + 2.0
+            fig_width = 9
+
+            # summary_plot은 현재 figure를 사용하므로 먼저 figure 생성
+            fig = plt.figure(figsize=(fig_width, fig_height))
+            shap_lib.summary_plot(
+                shap_values,
+                X_shap,
+                plot_type="dot",
+                max_display=n_features,
+                show=False,
+                plot_size=(fig_width, fig_height),
             )
-            ax.set_yticks(range(len(top_20)))
-            ax.set_yticklabels(top_20["feature"].values[::-1])
-            ax.set_xlabel("평균 |SHAP 값|")
-            ax.set_title("SHAP 피처 중요도 (상위 20개)")
+            ax = plt.gca()
+            ax.set_title(f"SHAP Swarm Plot [{target_col}]", fontsize=11, fontweight="bold", pad=10)
             plt.tight_layout()
 
-            shap_plot_path = os.path.join(plot_dir, f"shap_bar_{step_id or 'default'}.png")
-            plt.savefig(shap_plot_path, dpi=100, bbox_inches="tight")
-            plt.close()
+            swarm_path = os.path.join(plot_dir, f"shap_swarm_{step_id or 'default'}.png")
+            plt.savefig(swarm_path, dpi=110, bbox_inches="tight")
+            plt.close(fig)
+
+            with open(swarm_path, "rb") as f:
+                data_url = "data:image/png;base64," + base64.b64encode(f.read()).decode()
 
             artifact_id = save_artifact_to_db(
                 conn, step_id, session_id,
-                "shap", "SHAP 중요도 차트",
-                shap_plot_path, "image/png",
-                os.path.getsize(shap_plot_path),
-                None,
-                {"type": "shap_bar_chart"},
+                "shap", f"SHAP Swarm Plot [{target_col}]",
+                swarm_path, "image/png",
+                os.path.getsize(swarm_path),
+                {"data_url": data_url},
+                {"type": "shap_swarm_plot", "model_run_id": model_run_id},
             )
             created_artifact_ids.append(artifact_id)
 
         except Exception as e:
-            logger.warning("SHAP 차트 저장 실패", error=str(e))
+            logger.warning("SHAP Swarm plot 저장 실패", error=str(e))
 
         # 4. 단순화 모델 비교 테이블
         comparison_data = []
@@ -472,7 +480,7 @@ def _save_shap_artifacts(
 
         artifact_id = save_artifact_to_db(
             conn, step_id, session_id,
-            "dataframe", "단순화 모델 비교",
+            "dataframe", f"단순화 모델 비교 [{target_col}]",
             comparison_path, "application/parquet",
             os.path.getsize(comparison_path),
             dataframe_to_preview(comparison_df),
@@ -488,7 +496,7 @@ def _save_shap_artifacts(
 
         artifact_id = save_artifact_to_db(
             conn, step_id, session_id,
-            "report", "단순화 모델 제안",
+            "report", f"단순화 모델 제안 [{target_col}]",
             proposal_path, "application/json",
             os.path.getsize(proposal_path),
             proposal,
