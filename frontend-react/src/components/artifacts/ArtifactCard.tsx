@@ -388,13 +388,20 @@ function MetricRenderer({ artifact }: { artifact: Artifact }) {
 function ReportRenderer({ artifact }: { artifact: Artifact }) {
   const data = artifact.data ?? {}
 
-  // 렌더링할 필드 분류
   const message: string = data.message ?? ''
-  const numericFields = Object.entries(data).filter(
-    ([k, v]) => typeof v === 'number' && !['recommended_k'].includes(k)
-  ) as [string, number][]
+
+  // 수치 메트릭: data.metrics 객체(mapArtifactPreview에서 채움) 우선, 없으면 data 직접 탐색
+  const metricsObj: Record<string, number | string> = (data.metrics as Record<string, number | string> | undefined) ?? {}
+  const numericFields = Object.entries(metricsObj).filter(
+    ([k, v]) => (typeof v === 'number' || typeof v === 'string') && !['recommended_k'].includes(k)
+  ) as [string, number | string][]
+
   const features: string[] =
-    data.recommended_features ?? data.top_features ?? data.feature_names ?? []
+    (data.recommended_features as string[] | undefined) ??
+    (data.top_features as string[] | undefined) ??
+    (data.feature_names as string[] | undefined) ??
+    []
+
   const label = (key: string) =>
     ({
       val_rmse: 'Val RMSE', val_mae: 'Val MAE', val_r2: 'Val R²',
@@ -402,7 +409,21 @@ function ReportRenderer({ artifact }: { artifact: Artifact }) {
       baseline_rmse: 'Baseline RMSE', rmse_drop_ratio: 'RMSE 비율',
       n_features: '피처 수', baseline_n_features: '기본 피처 수',
       best_iteration: '최적 반복',
+      n_rows: '행 수', n_cols: '열 수', memory_mb: '메모리(MB)',
+      numeric_cols: '수치형', categorical_cols: '범주형', datetime_cols: '시간형',
+      total_missing: '결측 총계', overall_missing_ratio: '결측률',
     }[key] ?? key)
+
+  // target_candidates 특수 처리: data.text가 {"candidates": [...]} JSON인 경우
+  let candidates: Array<{column: string; dtype: string; unique_count: number; null_count: number}> = []
+  if (data.text && typeof data.text === 'string') {
+    try {
+      const parsed = JSON.parse(data.text)
+      if (Array.isArray(parsed.candidates)) candidates = parsed.candidates
+    } catch { /* noop */ }
+  }
+
+  const hasContent = message || numericFields.length > 0 || features.length > 0 || candidates.length > 0
 
   return (
     <div className="space-y-3">
@@ -425,6 +446,22 @@ function ReportRenderer({ artifact }: { artifact: Artifact }) {
         </div>
       )}
 
+      {/* 타겟 후보 목록 */}
+      {candidates.length > 0 && (
+        <div className="space-y-1.5">
+          {candidates.map((c, i) => (
+            <div key={c.column} className="flex items-center gap-2 rounded-lg border border-gray-100 bg-gray-50 px-3 py-2">
+              <span className="shrink-0 rounded-full bg-indigo-100 px-1.5 py-0.5 text-xs font-bold text-indigo-700">
+                #{i + 1}
+              </span>
+              <span className="font-medium text-sm text-gray-800">{c.column}</span>
+              <span className="text-xs text-gray-400">{c.dtype}</span>
+              <span className="ml-auto text-xs text-gray-500">고유값 {c.unique_count} · 결측 {c.null_count}</span>
+            </div>
+          ))}
+        </div>
+      )}
+
       {/* 피처 목록 */}
       {features.length > 0 && (
         <div>
@@ -439,6 +476,13 @@ function ReportRenderer({ artifact }: { artifact: Artifact }) {
             ))}
           </div>
         </div>
+      )}
+
+      {/* 내용 없을 때 원시 JSON 텍스트 표시 */}
+      {!hasContent && data.text && (
+        <pre className="overflow-auto max-h-48 scrollbar-thin text-xs text-gray-600 whitespace-pre-wrap">
+          {String(data.text)}
+        </pre>
       )}
     </div>
   )
