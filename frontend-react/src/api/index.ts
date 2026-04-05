@@ -186,6 +186,8 @@ function mapArtifactPreview(raw: Record<string, unknown>, sessionId: string): Ar
       data = {
         rows: (pj.data ?? []) as Record<string, unknown>[],
         columns: (pj.columns ?? []) as string[],
+        total_rows: pj.total_rows as number | undefined,
+        total_cols: pj.total_cols as number | undefined,
       }
       break
     case 'plot':

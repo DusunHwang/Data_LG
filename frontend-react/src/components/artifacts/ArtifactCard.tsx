@@ -57,6 +57,13 @@ export default function ArtifactCard({
   const isDataframe = ['dataframe', 'table', 'leaderboard', 'feature_importance'].includes(artifact.type)
   const availableColumns = artifact.data?.columns ?? []
 
+  // 데이터프레임 크기 표시 (total_rows × total_cols 우선, 없으면 preview 기준)
+  const dimRows = artifact.data?.total_rows ?? (isDataframe ? artifact.data?.rows?.length : undefined)
+  const dimCols = artifact.data?.total_cols ?? (isDataframe ? availableColumns.length || undefined : undefined)
+  const dimLabel = isDataframe && dimRows != null && dimCols != null
+    ? `${dimRows.toLocaleString()} × ${dimCols}`
+    : null
+
   const toggleTargetCol = (col: string) => {
     if (!onSetTargetColumns) return
     const next = targetColumns.includes(col)
@@ -74,6 +81,11 @@ export default function ArtifactCard({
       >
         <div className="flex items-center gap-2 min-w-0">
           <Badge variant={badgeVariant()} className="shrink-0">{artifact.type}</Badge>
+          {dimLabel && (
+            <span className="shrink-0 text-xs font-mono text-gray-400">
+              {dimLabel}
+            </span>
+          )}
           <span className={`text-sm font-medium truncate ${isBaseDataset ? 'text-amber-800' : 'text-gray-800'}`}>
             {displayName}
           </span>
