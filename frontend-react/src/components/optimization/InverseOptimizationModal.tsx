@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import {
   X, Play, RotateCcw, TrendingUp, TrendingDown,
-  AlertCircle, CheckCircle2, Loader2, ChevronDown, ChevronUp,
+  AlertCircle, CheckCircle2, Loader2, ChevronDown, ChevronUp, Pencil,
 } from 'lucide-react'
 import { optimizationApi, jobsApi } from '@/api'
 import { useSessionStore, useArtifactStore } from '@/store'
@@ -172,6 +172,29 @@ export default function InverseOptimizationModal({ onClose }: Props) {
     setFixedValues({}); setFixedEnabled({})
   }
 
+  // ── 단계별 돌아가기 ──────────────────────────────────────────────────────
+  const goToStep1 = () => {
+    stopPolling()
+    setStep('subset'); setNiResult(null); setInvResult(null)
+    setJobError(null); setJobProgress(0); setJobMsg('')
+    setFixedValues({}); setFixedEnabled({})
+  }
+  const goToStep2 = () => {
+    stopPolling()
+    setStep('ni_setup'); setInvResult(null)
+    setJobError(null); setJobProgress(0); setJobMsg('')
+  }
+  const goToStep3 = () => {
+    stopPolling()
+    setStep('feat_config'); setInvResult(null)
+    setJobError(null); setJobProgress(0); setJobMsg('')
+  }
+  const goToStep4 = () => {
+    stopPolling()
+    setStep('target_config'); setInvResult(null)
+    setJobError(null); setJobProgress(0); setJobMsg('')
+  }
+
   // ── Derived ──────────────────────────────────────────────────────────────
   const selectedFeatures = niResult ? niResult.recommended_features.slice(0, nFeat) : []
   const filteredFeatures = subsetFeatures.length > 0
@@ -219,6 +242,7 @@ export default function InverseOptimizationModal({ onClose }: Props) {
           <WizardSection
             num={1} title="서브셋 선택 (선택 사항)"
             done={step !== 'subset'}
+            onBack={step !== 'subset' ? goToStep1 : undefined}
           >
             {step === 'subset' ? (
               <div className="space-y-3">
@@ -262,6 +286,7 @@ export default function InverseOptimizationModal({ onClose }: Props) {
             <WizardSection
               num={2} title="피처 유의성 분석 (Null Importance)"
               done={['feat_config', 'target_config', 'running', 'done'].includes(step)}
+              onBack={['feat_config', 'target_config', 'running', 'done'].includes(step) ? goToStep2 : undefined}
             >
               {(step === 'ni_setup') && (
                 <div className="space-y-3">
@@ -308,6 +333,7 @@ export default function InverseOptimizationModal({ onClose }: Props) {
             <WizardSection
               num={3} title="최적화 피처 설정"
               done={['target_config', 'running', 'done'].includes(step)}
+              onBack={['target_config', 'running', 'done'].includes(step) ? goToStep3 : undefined}
             >
               {step === 'feat_config' ? (
                 <div className="space-y-4">
@@ -403,6 +429,7 @@ export default function InverseOptimizationModal({ onClose }: Props) {
             <WizardSection
               num={4} title="최적화 목표 및 실행"
               done={step === 'done'}
+              onBack={step === 'done' ? goToStep4 : undefined}
             >
               {step === 'target_config' && (
                 <div className="space-y-4">
@@ -548,18 +575,31 @@ export default function InverseOptimizationModal({ onClose }: Props) {
 // ─── Sub-components ───────────────────────────────────────────────────────────
 
 function WizardSection({
-  num, title, done, children,
-}: { num: number; title: string; done: boolean; children: React.ReactNode }) {
+  num, title, done, onBack, children,
+}: { num: number; title: string; done: boolean; onBack?: () => void; children: React.ReactNode }) {
   return (
     <section className="rounded-lg border border-gray-200 overflow-hidden">
-      <div className={`px-4 py-3 text-sm font-semibold flex items-center gap-2 ${
-        done ? 'bg-green-50 text-green-700' : 'bg-gray-50 text-gray-700'
-      }`}>
+      <div
+        className={`px-4 py-3 text-sm font-semibold flex items-center gap-2 ${
+          done
+            ? onBack
+              ? 'bg-green-50 text-green-700 cursor-pointer hover:bg-green-100 transition-colors'
+              : 'bg-green-50 text-green-700'
+            : 'bg-gray-50 text-gray-700'
+        }`}
+        onClick={onBack}
+        title={onBack ? '클릭하여 이 단계로 돌아가기' : undefined}
+      >
         {done
-          ? <CheckCircle2 className="h-4 w-4" />
-          : <span className="h-4 w-4 rounded-full bg-gray-300 text-white text-xs flex items-center justify-center font-bold">{num}</span>
+          ? <CheckCircle2 className="h-4 w-4 shrink-0" />
+          : <span className="h-4 w-4 rounded-full bg-gray-300 text-white text-xs flex items-center justify-center font-bold shrink-0">{num}</span>
         }
-        {title}
+        <span className="flex-1">{title}</span>
+        {done && onBack && (
+          <span className="flex items-center gap-1 text-xs font-normal text-green-600 opacity-70 hover:opacity-100">
+            <Pencil className="h-3 w-3" /> 수정
+          </span>
+        )}
       </div>
       <div className="p-4">{children}</div>
     </section>
