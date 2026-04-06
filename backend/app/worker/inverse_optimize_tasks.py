@@ -237,11 +237,15 @@ def run_inverse_optimize_task(
             bounds.append((lo_exp, hi_exp))
 
         # 기준 벡터 (고정 피처 포함한 전체 피처 행)
-        base_row = X_ref.median(numeric_only=True).to_dict()
-        for col in X_ref.columns:
-            if col not in base_row:
-                modes = X_ref[col].mode()
-                base_row[col] = modes.iloc[0] if not modes.empty else None
+        try:
+            base_row = X_ref.median(numeric_only=True).to_dict()
+            for col in X_ref.columns:
+                if col not in base_row:
+                    modes = X_ref[col].mode()
+                    base_row[col] = modes.iloc[0] if not modes.empty else None
+        except Exception as e:
+            logger.error("기준 벡터(base_row) 생성 중 오류 발생", error=str(e), dtypes=X_ref.dtypes.to_dict())
+            raise
         base_row.update(fixed_values)
 
         # 범주형 피처는 선택 불가 (고정값 강제)
@@ -448,11 +452,15 @@ def run_constrained_inverse_optimize_task(
         if not opt_features:
             raise ValueError("선택된 피처 중 수치형 피처가 없습니다.")
 
-        base_row = X_ref.median(numeric_only=True).to_dict()
-        for col in X_ref.columns:
-            if col not in base_row:
-                modes = X_ref[col].mode()
-                base_row[col] = modes.iloc[0] if not modes.empty else None
+        try:
+            base_row = X_ref.median(numeric_only=True).to_dict()
+            for col in X_ref.columns:
+                if col not in base_row:
+                    modes = X_ref[col].mode()
+                    base_row[col] = modes.iloc[0] if not modes.empty else None
+        except Exception as e:
+            logger.error("기준 벡터(base_row) 생성 중 오류 발생", error=str(e), dtypes=X_ref.dtypes.to_dict())
+            raise
         base_row.update(fixed_values)
 
         sign = -1.0 if direction == "maximize" else 1.0
