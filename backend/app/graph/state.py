@@ -63,6 +63,7 @@ class GraphState(TypedDict, total=False):
     retry_hypothesis: Optional[str]        # 재시도 시 새로운 분석 가설
     artifact_evaluations: List[dict]       # 각 아티팩트 평가 결과 목록
     needs_retry: bool                      # 평가 노드가 재시도를 요청하는 경우 True
+    eda_code_exhausted: bool               # EDA 코드 실행 3회 연속 실패 시 True
 
     # 추가 컨텍스트 (DB에 저장되지 않음)
     db_session: Any  # SQLAlchemy 동기 세션

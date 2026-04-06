@@ -53,6 +53,36 @@ def summarize_final_response(state: GraphState) -> GraphState:
             "assistant_message": error_response,
         }
 
+    # EDA 코드 실행 3회 연속 실패
+    if state.get("eda_code_exhausted"):
+        exhausted_msg = (
+            "⚠️ EDA 분석 코드 실행에 3회 연속 실패하여 요청하신 시각화를 완성하지 못했습니다.\n\n"
+            "대신 기본 분석 차트(결측 패턴 히트맵, 수치형 분포, 상관관계)를 제공했습니다.\n\n"
+            "더 나은 결과를 위해 다음을 시도해 보세요:\n"
+            "• 요청을 더 구체적으로 작성해 주세요 (예: '온도 컬럼의 히스토그램을 그려줘')\n"
+            "• 한 번에 하나의 시각화만 요청해 보세요\n"
+            "• 데이터 프로파일링이나 서브셋 탐색을 먼저 실행해 보세요"
+        )
+        created_artifact_ids = state.get("created_artifact_ids", [])
+        result_data = {
+            "status": "completed",
+            "step_id": created_step_id,
+            "artifact_ids": created_artifact_ids,
+            "intent": intent,
+            "message": exhausted_msg,
+        }
+        if job_run_id and not state.get("skip_job_finalize"):
+            update_job_status_sync(
+                job_run_id, "completed", 100,
+                "EDA 분석 실패 — 기본 차트 제공",
+                result=result_data,
+            )
+        return {
+            **state,
+            "assistant_message": exhausted_msg,
+            "progress_percent": 100,
+        }
+
     # 요약을 위한 컨텍스트 구성
     summary_context = _build_summary_context(state)
 

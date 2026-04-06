@@ -161,13 +161,16 @@ def run_eda_subgraph(state: GraphState) -> GraphState:
 
         if method == "direct_code":
             # --- 직접 코드 생성 경로 ---
+            retry_count = state.get("retry_count", 0)
+            safe_mode = retry_count > 0  # 재시도 시 안전 모드 활성화
+
             state = update_progress(state, 25, "EDA", "EDA 계획 수립 중...")
             eda_plan = _run_async(_plan_eda(df, dataset, user_message))
 
             check_cancellation(state)
-            state = update_progress(state, 40, "EDA", "EDA 코드 생성 중...")
+            state = update_progress(state, 40, "EDA", "EDA 코드 생성 중..." + (" (안전 모드)" if safe_mode else ""))
 
-            eda_code = _run_async(_generate_eda_code(df, eda_plan, dataset_path, user_message))
+            eda_code = _run_async(_generate_eda_code(df, eda_plan, dataset_path, user_message, safe_mode=safe_mode))
             eda_code = _fix_data_loader(eda_code)
 
             check_cancellation(state)
@@ -307,7 +310,13 @@ def _default_eda_plan(df: pd.DataFrame) -> dict:
     return {"analyses": analyses, "n_analyses": len(analyses)}
 
 
-async def _generate_eda_code(df: pd.DataFrame, eda_plan: dict, dataset_path: str, user_message: str = "") -> str:
+async def _generate_eda_code(
+    df: pd.DataFrame,
+    eda_plan: dict,
+    dataset_path: str,
+    user_message: str = "",
+    safe_mode: bool = False,
+) -> str:
     """vLLM으로 EDA Python 코드 생성"""
     client = VLLMClient()
     user_request_section = ""
@@ -315,7 +324,20 @@ async def _generate_eda_code(df: pd.DataFrame, eda_plan: dict, dataset_path: str
         user_request_section = f"User's original request: {user_message}\nIMPORTANT: Honor the user's specific visualization request above all else.\n\n"
     all_cols = list(df.columns)
     numeric_cols = df.select_dtypes(include="number").columns.tolist()
+
+    safe_note = ""
+    if safe_mode:
+        safe_note = (
+            "RETRY MODE — Previous attempt failed to execute. Follow these strict rules:\n"
+            "1. Use ONLY matplotlib and seaborn. No plotly, no interactive charts.\n"
+            "2. Each plot must be a simple, single figure. No subplots with more than 4 panels.\n"
+            "3. Always wrap column access in: col = df[col].dropna()\n"
+            "4. Limit data to first 5000 rows: df = df.head(5000)\n"
+            "5. Avoid complex statistical computations (no PCA, no clustering).\n\n"
+        )
+
     prompt = (
+        f"{safe_note}"
         f"{user_request_section}"
         f"Write Python code for the following EDA plan.\n\n"
         f"EDA plan:\n{json.dumps(eda_plan, ensure_ascii=False, indent=2)}\n\n"
@@ -355,17 +377,36 @@ def _run_basic_eda(df: pd.DataFrame, dataset_path: str) -> dict:
     output_files = {}
 
     try:
+        import seaborn as sns
         numeric_cols = df.select_dtypes(include="number").columns.tolist()
 
-        # 1. 결측값 막대 차트
-        missing = df.isnull().mean().sort_values(ascending=False)
-        if len(missing) > 0:
-            fig, ax = plt.subplots(figsize=(12, 6))
-            missing.head(20).plot(kind="bar", ax=ax, color="coral")
-            ax.set_title("컬럼별 결측값 비율", fontsize=14)
-            ax.set_ylabel("결측률")
-            ax.set_xlabel("컬럼")
-            plt.xticks(rotation=45, ha="right")
+        # 1. Nullity Heatmap (결측 패턴)
+        missing_cols = [c for c in df.columns if df[c].isnull().any()]
+        if missing_cols:
+            sample_size = min(len(df), 300)
+            df_sample = (
+                df[missing_cols].sample(sample_size, random_state=42)
+                if len(df) > sample_size
+                else df[missing_cols]
+            )
+            nullity_matrix = df_sample.isnull().astype(int)
+
+            fig_w = max(8, min(len(missing_cols) * 0.7, 20))
+            fig, ax = plt.subplots(figsize=(fig_w, 6))
+            sns.heatmap(
+                nullity_matrix,
+                cbar=False,
+                yticklabels=False,
+                cmap=["#f0f0f0", "#e53e3e"],
+                ax=ax,
+                linewidths=0,
+            )
+            ax.set_title(
+                f"Nullity Heatmap — Missing Pattern ({sample_size} rows sampled)",
+                fontsize=13,
+            )
+            ax.set_xlabel("Columns")
+            plt.xticks(rotation=45, ha="right", fontsize=8)
             plt.tight_layout()
             plot_path = os.path.join(tmp_dir, "plot_1.png")
             plt.savefig(plot_path, dpi=100, bbox_inches="tight")

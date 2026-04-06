@@ -133,12 +133,24 @@ async def _call_evaluate_llm(user_message: str, artifacts: list, retry_count: in
     }
 
 
+_RETRY_STATE_RESET = {
+    "created_artifact_ids": [],
+    "created_model_run_ids": [],
+    "created_step_id": None,
+    "created_optimization_run_id": None,
+    "execution_result": {},
+    "generated_code": None,
+    "planner_result": {},
+}
+
+
 def evaluate_artifacts(state: GraphState) -> GraphState:
     """
     아티팩트 평가 노드:
     - 각 아티팩트 의미 설명
     - 사용자 질문과의 관련성 평가
     - 관련성 낮고 retry_count < MAX_RETRIES이면 needs_retry=True + new_hypothesis 설정
+    - EDA fallback(코드 실행 실패) 발생 시 강제 재시도 3회, 초과 시 사용자에게 명확히 안내
     """
     # 오류 상태면 평가 건너뜀
     if state.get("error_code"):
@@ -147,6 +159,37 @@ def evaluate_artifacts(state: GraphState) -> GraphState:
     artifact_ids = state.get("created_artifact_ids", [])
     user_message = state.get("user_message", "")
     retry_count = state.get("retry_count", 0)
+
+    # ── EDA 코드 실행 실패(fallback) 처리 ───────────────────────────────────
+    execution_result = state.get("execution_result", {})
+    if execution_result.get("used_fallback"):
+        if retry_count < MAX_RETRIES:
+            logger.info("EDA fallback 감지 — 강제 재시도", retry_count=retry_count)
+            state = update_progress(
+                state, 84, "EDA_재시도",
+                f"EDA 코드 실행 실패 — 재시도 중 ({retry_count + 1}/{MAX_RETRIES})...",
+            )
+            return {
+                **state,
+                **_RETRY_STATE_RESET,
+                "needs_retry": True,
+                "retry_count": retry_count + 1,
+                "retry_hypothesis": (
+                    "EDA 코드 실행에 실패했습니다. "
+                    "matplotlib과 seaborn만 사용하고, 단순한 플롯 1~2개만 생성하는 "
+                    "안전한 코드로 다시 시도하세요."
+                ),
+                "artifact_evaluations": [],
+            }
+        else:
+            # 3회 모두 실패 → 최종 실패 플래그 설정 (fallback 플롯은 그대로 표시)
+            logger.warning("EDA fallback 3회 초과 — 사용자 안내", retry_count=retry_count)
+            return {
+                **state,
+                "needs_retry": False,
+                "artifact_evaluations": [],
+                "eda_code_exhausted": True,
+            }
 
     # 아티팩트가 없는 경우 (텍스트 응답 등) 재시도 불필요
     if not artifact_ids:
