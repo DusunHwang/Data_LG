@@ -185,12 +185,6 @@ export interface HistoryEntry {
   created_at: string
 }
 
-export interface AssistantMessage {
-  role: 'assistant'
-  content: string
-  artifact_ids?: string[]
-}
-
 // ─── Optimization ────────────────────────────────────────────────────────────
 
 export interface NullImportanceRequest {
@@ -270,8 +264,6 @@ export interface ApiError {
     message: string
   }
 }
-
-export type ApiResponse<T> = ApiSuccess<T> | ApiError
 
 // ─── vLLM Monitor ────────────────────────────────────────────────────────────
 

@@ -132,6 +132,8 @@ class TestSubsetDiscoveryPipeline:
     def test_top5_subset_selection(self):
         """상위 5개 subset 선택"""
         from app.graph.subgraphs.subset_discovery import (
+            analyze_missing_structure,
+            classify_columns,
             generate_subset_candidates,
             score_subset_candidates,
             select_top_subsets,
@@ -140,8 +142,11 @@ class TestSubsetDiscoveryPipeline:
         df = make_manufacturing_df(n=500)
         target_col = "quality_score"
 
+        col_classification = classify_columns(df, target_col=target_col)
+        missing_structure = analyze_missing_structure(df)
+
         # 후보 생성
-        candidates = generate_subset_candidates(df, target_col=target_col)
+        candidates = generate_subset_candidates(df, col_classification, missing_structure, target_col=target_col)
         assert isinstance(candidates, list)
         assert len(candidates) > 0
 
@@ -155,10 +160,16 @@ class TestSubsetDiscoveryPipeline:
 
     def test_subset_has_required_fields(self):
         """subset 후보 필수 필드 확인"""
-        from app.graph.subgraphs.subset_discovery import generate_subset_candidates
+        from app.graph.subgraphs.subset_discovery import (
+            analyze_missing_structure,
+            classify_columns,
+            generate_subset_candidates,
+        )
 
         df = make_manufacturing_df(n=200)
-        candidates = generate_subset_candidates(df, target_col="quality_score")
+        col_classification = classify_columns(df, target_col="quality_score")
+        missing_structure = analyze_missing_structure(df)
+        candidates = generate_subset_candidates(df, col_classification, missing_structure, target_col="quality_score")
 
         for c in candidates:
             assert "row_indices" in c or "rows" in c or "name" in c

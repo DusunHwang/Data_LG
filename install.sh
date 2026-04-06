@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # =============================================================================
-#  Data_LG — Docker 없이 uv 가상환경으로 직접 실행
-#  사용법: bash start.sh [--vllm-endpoint URL] [--vllm-model MODEL]
+#  Data_LG — 설치 스크립트
+#  최초 1회만 실행. 의존성 설치, DB 초기화, 시드 데이터 입력까지 수행.
+#  사용법: bash install.sh [--vllm-endpoint URL] [--vllm-model MODEL]
 # =============================================================================
 set -euo pipefail
 
@@ -27,7 +28,7 @@ done
 
 echo ""
 echo "========================================================"
-echo "   Data_LG — 직접 실행 모드 (uv + SQLite)"
+echo "   Data_LG — 설치"
 echo "========================================================"
 
 # ── 1. uv 설치 확인 ───────────────────────────────────────────────────────────
@@ -38,9 +39,9 @@ if ! command -v uv &>/dev/null; then
 fi
 success "uv: $(uv --version)"
 
-# ── 2. Node.js 설치 확인 ──────────────────────────────────────────────────────
+# ── 2. Node.js 확인 ───────────────────────────────────────────────────────────
 if ! command -v node &>/dev/null; then
-  error "Node.js가 설치되어 있지 않습니다. https://nodejs.org 에서 설치해주세요."
+  error "Node.js가 설치되어 있지 않습니다. https://nodejs.org 에서 v18 이상을 설치해주세요."
 fi
 success "node: $(node --version)  /  npm: $(npm --version)"
 
@@ -53,7 +54,6 @@ if [[ ! -f .env ]]; then
   info ".env.simple → .env 복사됨"
 fi
 
-# 대화형 입력 (.env에 이미 값이 있으면 그대로 사용, 터미널이 없으면 건너뜀)
 CURRENT_EP=$(grep -E '^VLLM_ENDPOINT_SMALL=' .env 2>/dev/null | cut -d'=' -f2- || echo "$DEFAULT_ENDPOINT")
 CURRENT_MODEL=$(grep -E '^VLLM_MODEL_SMALL=' .env 2>/dev/null | cut -d'=' -f2- || echo "$DEFAULT_MODEL")
 
@@ -68,7 +68,6 @@ if [[ -z "$VLLM_ENDPOINT" && -z "$VLLM_MODEL" ]]; then
     VLLM_ENDPOINT="${INPUT_EP:-$CURRENT_EP}"
     VLLM_MODEL="${INPUT_MODEL:-$CURRENT_MODEL}"
   else
-    # 비대화형 터미널 — .env 현재값 그대로 사용
     VLLM_ENDPOINT="$CURRENT_EP"
     VLLM_MODEL="$CURRENT_MODEL"
   fi
@@ -82,15 +81,16 @@ success "vLLM: ${VLLM_ENDPOINT}  /  ${VLLM_MODEL}"
 PARQUET_COUNT=$(ls datasets_builtin/*.parquet 2>/dev/null | wc -l || echo 0)
 if [[ "$PARQUET_COUNT" -lt 1 ]]; then
   info "내장 데이터셋 생성 중..."
-  uv run --project . python datasets_builtin/generate_datasets.py 2>/dev/null || \
-    python3 datasets_builtin/generate_datasets.py || \
+  uv run --project . python datasets_builtin/generate_datasets.py || \
     warn "데이터셋 생성 실패 — 나중에 수동 실행: python datasets_builtin/generate_datasets.py"
+else
+  success "내장 데이터셋 이미 존재 (${PARQUET_COUNT}개)"
 fi
 
 # ── 5. 백엔드 의존성 설치 ─────────────────────────────────────────────────────
 info "백엔드 의존성 설치 중..."
 cd "$SCRIPT_DIR/backend"
-uv sync --extra dev 2>/dev/null || uv pip install -e ".[dev]"
+uv sync --extra dev
 success "백엔드 의존성 설치 완료"
 
 # ── 6. DB 초기화 ──────────────────────────────────────────────────────────────
@@ -107,57 +107,14 @@ uv run python -m app.db.seed && success "시드 데이터 완료" || \
 # ── 8. 프론트엔드 의존성 설치 ─────────────────────────────────────────────────
 info "프론트엔드 의존성 설치 중..."
 cd "$SCRIPT_DIR/frontend-react"
-npm install --prefer-offline 2>/dev/null || npm install
+npm install
 success "프론트엔드 의존성 설치 완료"
 
-# ── 9. 서비스 시작 ────────────────────────────────────────────────────────────
-mkdir -p "$SCRIPT_DIR/logs"
-echo ""
-info "서비스 시작 중..."
-
-cleanup() {
-  echo ""
-  info "서비스 종료 중..."
-  [[ -f "$SCRIPT_DIR/logs/backend.pid"  ]] && kill "$(cat "$SCRIPT_DIR/logs/backend.pid")"  2>/dev/null || true
-  [[ -f "$SCRIPT_DIR/logs/frontend.pid" ]] && kill "$(cat "$SCRIPT_DIR/logs/frontend.pid")" 2>/dev/null || true
-  success "종료 완료"
-}
-trap cleanup EXIT INT TERM
-
-# 백엔드 백그라운드 실행
-cd "$SCRIPT_DIR/backend"
-uv run uvicorn app.main:app --host 0.0.0.0 --port 8000 \
-  --log-level info > "$SCRIPT_DIR/logs/backend.log" 2>&1 &
-BACKEND_PID=$!
-echo $BACKEND_PID > "$SCRIPT_DIR/logs/backend.pid"
-success "백엔드 시작 (PID: $BACKEND_PID)"
-
-# 백엔드 준비 대기
-MAX_WAIT=30; WAITED=0
-while ! curl -sf http://localhost:8000/ &>/dev/null; do
-  sleep 2; WAITED=$((WAITED+2))
-  [[ $WAITED -ge $MAX_WAIT ]] && { warn "백엔드 준비 타임아웃"; break; }
-  echo -n "."
-done
-echo ""
-
-# 프론트엔드 백그라운드 실행
-cd "$SCRIPT_DIR/frontend-react"
-npm run dev -- --host 0.0.0.0 > "$SCRIPT_DIR/logs/frontend.log" 2>&1 &
-FRONTEND_PID=$!
-echo $FRONTEND_PID > "$SCRIPT_DIR/logs/frontend.pid"
-success "프론트엔드 시작 (PID: $FRONTEND_PID)"
-
+# ── 완료 ──────────────────────────────────────────────────────────────────────
 echo ""
 echo "========================================================"
-echo -e "${GREEN}  서비스 시작 완료!${NC}"
+echo -e "${GREEN}  설치 완료!${NC}"
 echo "========================================================"
-echo "  프론트엔드:  http://localhost:3000"
-echo "  백엔드 API:  http://localhost:8000/docs"
-echo "  로그:        logs/backend.log  /  logs/frontend.log"
-echo "  종료:        Ctrl+C"
+echo "  실행하려면: bash run.sh"
 echo "========================================================"
 echo ""
-
-# 포그라운드 대기 (Ctrl+C로 종료)
-wait $BACKEND_PID

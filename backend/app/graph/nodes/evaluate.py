@@ -168,8 +168,6 @@ def evaluate_artifacts(state: GraphState) -> GraphState:
     relevance_score = eval_result.get("relevance_score", 7)
     new_hypothesis = eval_result.get("new_hypothesis")
     explanations = eval_result.get("artifact_explanations", [])
-    reason = eval_result.get("reason", "")
-
     logger.info(
         "아티팩트 평가 완료",
         is_relevant=is_relevant,

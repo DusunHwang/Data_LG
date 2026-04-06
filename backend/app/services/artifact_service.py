@@ -1,6 +1,5 @@
 """아티팩트 서비스: DB + 파일 시스템 조율"""
 
-from pathlib import Path
 from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession

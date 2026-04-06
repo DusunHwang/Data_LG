@@ -5,32 +5,15 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_current_user, get_db
+from app.api.deps import check_no_active_job, get_current_user, get_db, validate_user_session
 from app.core.logging import get_logger
 from app.db.models.job import JobType
 from app.db.models.user import User
-from app.db.repositories.job import JobRunRepository
 from app.schemas.analysis import AnalyzeRequest, DataFrameFollowupRequest, PlotFollowupRequest
 from app.schemas.common import ERROR_MESSAGES, ErrorCode, error_response, success_response
-from app.services.session_service import SessionService
 
 logger = get_logger(__name__)
 router = APIRouter(prefix="/analysis", tags=["분석"])
-
-
-async def _check_active_job(user_id: UUID, session_id: UUID, db: AsyncSession) -> None:
-    """활성 작업 존재 여부 확인"""
-    repo = JobRunRepository(db)
-    active_job = await repo.get_session_active_job(session_id)
-    if active_job:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=error_response(
-                ErrorCode.ACTIVE_JOB_EXISTS,
-                ERROR_MESSAGES[ErrorCode.ACTIVE_JOB_EXISTS],
-                {"job_id": str(active_job.id), "job_type": active_job.job_type.value},
-            ),
-        )
 
 
 @router.post("/analyze", response_model=dict)
@@ -43,16 +26,7 @@ async def analyze(
     session_id = UUID(body.session_id)
     branch_id = UUID(body.branch_id)
 
-    # 세션 유효성 검증
-    service = SessionService(db)
-    try:
-        session = await service.validate_session(session_id, current_user.id)
-    except ValueError as e:
-        code = str(e)
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=error_response(code, ERROR_MESSAGES.get(code, str(e))),
-        )
+    session = await validate_user_session(session_id, current_user.id, db)
 
     # 활성 데이터셋 확인
     if not session.active_dataset_id:
@@ -65,7 +39,7 @@ async def analyze(
         )
 
     # 중복 작업 확인
-    await _check_active_job(current_user.id, session_id, db)
+    await check_no_active_job(session_id, db)
 
     # 작업 생성
     from app.db.models.job import JobRun, JobStatus
@@ -130,18 +104,8 @@ async def plot_followup(
 ):
     """플롯 후속 질문 처리"""
     session_id = UUID(body.session_id)
-
-    service = SessionService(db)
-    try:
-        await service.validate_session(session_id, current_user.id)
-    except ValueError as e:
-        code = str(e)
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=error_response(code, ERROR_MESSAGES.get(code, str(e))),
-        )
-
-    await _check_active_job(current_user.id, session_id, db)
+    await validate_user_session(session_id, current_user.id, db)
+    await check_no_active_job(session_id, db)
 
     # 작업 생성 및 제출
     from app.db.models.job import JobRun, JobStatus
@@ -175,18 +139,8 @@ async def dataframe_followup(
 ):
     """데이터프레임 후속 질문 처리"""
     session_id = UUID(body.session_id)
-
-    service = SessionService(db)
-    try:
-        await service.validate_session(session_id, current_user.id)
-    except ValueError as e:
-        code = str(e)
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=error_response(code, ERROR_MESSAGES.get(code, str(e))),
-        )
-
-    await _check_active_job(current_user.id, session_id, db)
+    await validate_user_session(session_id, current_user.id, db)
+    await check_no_active_job(session_id, db)
 
     from app.db.models.job import JobRun, JobStatus
     job_run = JobRun(

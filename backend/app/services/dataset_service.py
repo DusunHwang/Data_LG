@@ -103,7 +103,7 @@ class DatasetService:
     ) -> Dataset:
         """데이터셋 업로드"""
         # 검증
-        ext = self._validate_extension(filename)
+        self._validate_extension(filename)
         self._validate_size(len(data))
 
         # 데이터프레임 로드

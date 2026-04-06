@@ -2,9 +2,8 @@
 
 import json
 import os
-import uuid
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional, Tuple
+from typing import List, Optional, Tuple
 
 import joblib
 import numpy as np
@@ -212,7 +211,6 @@ def build_feature_matrix(
         series = df_clean[col]
         n_unique = series.nunique(dropna=True)
         n_total = len(series)
-        unique_ratio = n_unique / n_total if n_total > 0 else 0
 
         if n_unique <= 1:  # 상수
             exclude.append(col)

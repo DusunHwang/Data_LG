@@ -11,9 +11,11 @@ from app.core.security import verify_access_token
 from app.db.base import get_db_session
 from app.db.models.session import Session
 from app.db.models.user import User, UserRole
+from app.db.repositories.job import JobRunRepository
 from app.db.repositories.session import SessionRepository
 from app.db.repositories.user import UserRepository
-from app.schemas.common import ERROR_MESSAGES, ErrorCode
+from app.schemas.common import ERROR_MESSAGES, ErrorCode, error_response
+from app.services.session_service import SessionService
 
 security = HTTPBearer(auto_error=False)
 
@@ -105,6 +107,44 @@ async def get_admin_user(
             },
         )
     return current_user
+
+
+async def validate_user_session(
+    session_id: UUID,
+    user_id: UUID,
+    db: AsyncSession,
+) -> Session:
+    """세션 유효성 검증 후 세션 반환 — 실패 시 HTTPException 발생"""
+    service = SessionService(db)
+    try:
+        return await service.validate_session(session_id, user_id)
+    except ValueError as e:
+        code = str(e)
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=error_response(code, ERROR_MESSAGES.get(code, "세션을 찾을 수 없습니다.")),
+        )
+    except PermissionError as e:
+        code = str(e)
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=error_response(code, ERROR_MESSAGES.get(code, "접근 권한이 없습니다.")),
+        )
+
+
+async def check_no_active_job(session_id: UUID, db: AsyncSession) -> None:
+    """활성 작업이 있으면 HTTPException(409) 발생"""
+    repo = JobRunRepository(db)
+    active_job = await repo.get_session_active_job(session_id)
+    if active_job:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=error_response(
+                ErrorCode.ACTIVE_JOB_EXISTS,
+                ERROR_MESSAGES[ErrorCode.ACTIVE_JOB_EXISTS],
+                {"job_id": str(active_job.id), "job_type": active_job.job_type.value},
+            ),
+        )
 
 
 async def check_session_ownership(

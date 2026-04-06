@@ -1,14 +1,12 @@
 """아티팩트 미리보기 빌더"""
 
 import io
-import json
 from typing import Any
 
 import pandas as pd
 
 from app.core.config import settings
 from app.core.logging import get_logger
-from app.db.models.artifact import ArtifactType
 
 logger = get_logger(__name__)
 

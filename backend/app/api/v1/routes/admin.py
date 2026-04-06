@@ -3,7 +3,7 @@
 from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_admin_user, get_current_user, get_db
+from app.api.deps import get_admin_user, get_db
 from app.core.config import settings
 from app.core.logging import get_logger
 from app.db.models.user import User

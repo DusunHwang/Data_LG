@@ -5,41 +5,22 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_current_user, get_db
+from app.api.deps import check_no_active_job, get_current_user, get_db, validate_user_session
 from app.core.logging import get_logger
 from app.db.models.job import JobStatus, JobType
 from app.db.models.user import User
 from app.db.repositories.dataset import DatasetRepository
-from app.db.repositories.job import JobRunRepository
 from app.db.repositories.model_run import ModelRunRepository
 from app.schemas.common import ERROR_MESSAGES, ErrorCode, error_response, success_response
 from app.schemas.modeling import (
     BaselineModelingRequest,
     ChampionSetRequest,
-    LeaderboardResponse,
     ModelRunResponse,
     SHAPRequest,
     SimplifyRequest,
 )
-from app.services.session_service import SessionService
-
 logger = get_logger(__name__)
 router = APIRouter(prefix="/modeling", tags=["모델링"])
-
-
-async def _check_active_job(session_id: UUID, db: AsyncSession) -> None:
-    """활성 작업 확인"""
-    repo = JobRunRepository(db)
-    active_job = await repo.get_session_active_job(session_id)
-    if active_job:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=error_response(
-                ErrorCode.ACTIVE_JOB_EXISTS,
-                ERROR_MESSAGES[ErrorCode.ACTIVE_JOB_EXISTS],
-                {"job_id": str(active_job.id)},
-            ),
-        )
 
 
 @router.post("/baseline", response_model=dict)
@@ -52,16 +33,7 @@ async def run_baseline_modeling(
     session_id = UUID(body.session_id)
     branch_id = UUID(body.branch_id)
 
-    # 세션 검증
-    service = SessionService(db)
-    try:
-        session = await service.validate_session(session_id, current_user.id)
-    except ValueError as e:
-        code = str(e)
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=error_response(code, ERROR_MESSAGES.get(code, str(e))),
-        )
+    session = await validate_user_session(session_id, current_user.id, db)
 
     if not session.active_dataset_id:
         raise HTTPException(
@@ -72,7 +44,7 @@ async def run_baseline_modeling(
             ),
         )
 
-    await _check_active_job(session_id, db)
+    await check_no_active_job(session_id, db)
 
     # 데이터셋 조회
     dataset_repo = DatasetRepository(db)
@@ -205,17 +177,8 @@ async def run_shap(
     session_id = UUID(body.session_id)
     branch_id = UUID(body.branch_id)
 
-    service = SessionService(db)
-    try:
-        session = await service.validate_session(session_id, current_user.id)
-    except ValueError as e:
-        code = str(e)
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=error_response(code, ERROR_MESSAGES.get(code, str(e))),
-        )
-
-    await _check_active_job(session_id, db)
+    await validate_user_session(session_id, current_user.id, db)
+    await check_no_active_job(session_id, db)
 
     # 모델 확인
     model_run_id = body.model_run_id
@@ -265,17 +228,8 @@ async def simplify_model(
     session_id = UUID(body.session_id)
     branch_id = UUID(body.branch_id)
 
-    service = SessionService(db)
-    try:
-        session = await service.validate_session(session_id, current_user.id)
-    except ValueError as e:
-        code = str(e)
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=error_response(code, ERROR_MESSAGES.get(code, str(e))),
-        )
-
-    await _check_active_job(session_id, db)
+    session = await validate_user_session(session_id, current_user.id, db)
+    await check_no_active_job(session_id, db)
 
     if not session.active_dataset_id:
         raise HTTPException(

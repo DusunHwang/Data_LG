@@ -2,9 +2,8 @@
 
 import json
 import os
-import uuid
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional, Tuple
+from typing import List, Optional, Tuple
 
 import joblib
 import numpy as np
@@ -96,10 +95,8 @@ def run_shap_simplify_subgraph(state: GraphState) -> GraphState:
             logger.info("SHAP 샘플링", original=len(X), sample=max_shap_rows)
             sample_idx = X.sample(n=max_shap_rows, random_state=42).index
             X_shap = X.loc[sample_idx]
-            y_shap = y.loc[sample_idx]
         else:
             X_shap = X
-            y_shap = y
 
         check_cancellation(state)
         state = update_progress(state, 40, "SHAP_분석", f"SHAP 값 계산 중... ({len(X_shap)}행)")
@@ -535,12 +532,6 @@ def _generate_simplification_proposal(
     baseline_n_features = baseline.get("n_features", 0)
 
     if not acceptable:
-        best_k_result = min(
-            [(k, v) for k, v in simplification_results.items() if k != "baseline"],
-            key=lambda x: x[1].get("rmse_drop_ratio", float("inf")),
-            default=None,
-        )
-
         return {
             "recommendation": "none",
             "message": f"모든 단순화 시도에서 성능 저하가 10%를 초과했습니다. "

@@ -53,7 +53,6 @@ def resolve_user_reference(state: GraphState) -> GraphState:
         return state
 
     user_message = state.get("user_message", "")
-    session = state.get("session", {})
     active_branch = state.get("active_branch", {})
     selected_step_id = state.get("selected_step_id")
     selected_artifact_id = state.get("selected_artifact_id")

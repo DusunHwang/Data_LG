@@ -152,8 +152,6 @@ def run_create_dataframe_subgraph(state: GraphState) -> GraphState:
 
         cleanup_sandbox(sandbox_result.get("work_dir", ""))
 
-        n_dataframes = artifact_ids.get("n_dataframes", 0)
-        
         # 결과 메시지 구성
         if used_fallback:
             execution_msg = "필터링 코드 실행에 실패하여 전체 데이터를 반환합니다. 조건을 다시 확인해 주세요."

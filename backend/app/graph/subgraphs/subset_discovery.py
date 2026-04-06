@@ -2,11 +2,9 @@
 
 import json
 import os
-import uuid
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Optional
 
-import numpy as np
 import pandas as pd
 
 from app.core.config import settings
@@ -262,7 +260,6 @@ def analyze_missing_structure(df: pd.DataFrame, col_classification: Optional[dic
 
     # 2. 공동 결측 분석 (상위 20쌍)
     co_missing_pairs = []
-    numeric_missing = missing_matrix.astype(int)
     if len(analysis_cols) >= 2:
         # 결측이 있는 컬럼만 선택
         missing_cols = [c for c in analysis_cols if df[c].isnull().any()]

@@ -12,7 +12,6 @@ from app.core.logging import get_logger
 from app.core.security import (
     create_access_token,
     create_refresh_token,
-    hash_password,
     verify_password,
     verify_refresh_token,
 )
@@ -125,10 +124,10 @@ async def refresh_token(
 
     # 토큰 만료 확인
     now = datetime.now(timezone.utc)
-    exp = db_token.expires_at
-    if exp.tzinfo is None:
-        exp = exp.replace(tzinfo=timezone.utc)
-    if now > exp:
+    token_expiration = db_token.expires_at
+    if token_expiration.tzinfo is None:
+        token_expiration = token_expiration.replace(tzinfo=timezone.utc)
+    if now > token_expiration:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail=error_response(

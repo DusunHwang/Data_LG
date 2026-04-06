@@ -5,18 +5,16 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_current_user, get_db
+from app.api.deps import check_no_active_job, get_current_user, get_db, validate_user_session
 from app.core.logging import get_logger
 from app.db.models.job import JobRun, JobStatus, JobType
 from app.db.models.optimization import OptimizationRun
 from app.db.models.user import User
 from app.db.repositories.dataset import DatasetRepository
-from app.db.repositories.job import JobRunRepository
 from app.db.repositories.model_run import ModelRunRepository
 from app.db.repositories.optimization import OptimizationRunRepository
 from app.schemas.common import ERROR_MESSAGES, ErrorCode, error_response, success_response
 from app.schemas.optimization import OptimizationRequest, OptimizationResult
-from app.services.session_service import SessionService
 
 logger = get_logger(__name__)
 router = APIRouter(prefix="/optimization", tags=["최적화"])
@@ -32,15 +30,7 @@ async def run_optimization(
     session_id = UUID(body.session_id)
     branch_id = UUID(body.branch_id)
 
-    service = SessionService(db)
-    try:
-        session = await service.validate_session(session_id, current_user.id)
-    except ValueError as e:
-        code = str(e)
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=error_response(code, ERROR_MESSAGES.get(code, str(e))),
-        )
+    session = await validate_user_session(session_id, current_user.id, db)
 
     if not session.active_dataset_id:
         raise HTTPException(
@@ -51,17 +41,7 @@ async def run_optimization(
             ),
         )
 
-    # 활성 작업 확인
-    job_repo = JobRunRepository(db)
-    active_job = await job_repo.get_session_active_job(session_id)
-    if active_job:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=error_response(
-                ErrorCode.ACTIVE_JOB_EXISTS,
-                ERROR_MESSAGES[ErrorCode.ACTIVE_JOB_EXISTS],
-            ),
-        )
+    await check_no_active_job(session_id, db)
 
     # 모델 확인
     model_run_id = body.model_run_id
@@ -178,12 +158,6 @@ async def run_null_importance(
     session_id = UUID(body["session_id"])
     branch_id = UUID(body["branch_id"])
 
-    service = SessionService(db)
-    try:
-        await service.validate_session(session_id, current_user.id)
-    except ValueError as e:
-        raise HTTPException(status_code=404, detail=error_response(str(e), str(e)))
-
     # 챔피언 모델 조회
     model_repo = ModelRunRepository(db)
     champion = await model_repo.get_champion(branch_id)
@@ -195,8 +169,8 @@ async def run_null_importance(
 
     # 모델 artifact 조회
     from app.db.repositories.artifact import ArtifactRepository
-    art_repo = ArtifactRepository(db)
-    model_artifact = await art_repo.get(champion.model_artifact_id)
+    artifact_repo = ArtifactRepository(db)
+    model_artifact = await artifact_repo.get(champion.model_artifact_id)
     if not model_artifact or not model_artifact.file_path:
         raise HTTPException(status_code=400, detail=error_response("NO_MODEL_FILE", "모델 파일을 찾을 수 없습니다."))
 
@@ -206,9 +180,9 @@ async def run_null_importance(
     target_column = meta.get("target_column") or body.get("target_column", "")
 
     # 데이터셋 경로
-    session_obj = await service.validate_session(session_id, current_user.id)
-    ds_repo = DatasetRepository(db)
-    dataset = await ds_repo.get(session_obj.active_dataset_id)
+    session_obj = await validate_user_session(session_id, current_user.id, db)
+    dataset_repo = DatasetRepository(db)
+    dataset = await dataset_repo.get(session_obj.active_dataset_id)
     dataset_path = dataset.file_path if dataset else None
     if not dataset_path:
         raise HTTPException(status_code=400, detail=error_response("NO_DATASET", "데이터셋이 없습니다."))
@@ -265,20 +239,14 @@ async def run_inverse_optimization(
     session_id = UUID(body["session_id"])
     branch_id = UUID(body["branch_id"])
 
-    service = SessionService(db)
-    try:
-        await service.validate_session(session_id, current_user.id)
-    except ValueError as e:
-        raise HTTPException(status_code=404, detail=error_response(str(e), str(e)))
-
     model_repo = ModelRunRepository(db)
     champion = await model_repo.get_champion(branch_id)
     if not champion:
         raise HTTPException(status_code=400, detail=error_response("NO_CHAMPION_MODEL", "챔피언 모델이 없습니다."))
 
     from app.db.repositories.artifact import ArtifactRepository
-    art_repo = ArtifactRepository(db)
-    model_artifact = await art_repo.get(champion.model_artifact_id)
+    artifact_repo = ArtifactRepository(db)
+    model_artifact = await artifact_repo.get(champion.model_artifact_id)
     if not model_artifact or not model_artifact.file_path:
         raise HTTPException(status_code=400, detail=error_response("NO_MODEL_FILE", "모델 파일을 찾을 수 없습니다."))
 
@@ -287,9 +255,9 @@ async def run_inverse_optimization(
     categorical_features = meta.get("categorical_features", [])
     target_column = meta.get("target_column") or body.get("target_column", "")
 
-    session_obj = await service.validate_session(session_id, current_user.id)
-    ds_repo = DatasetRepository(db)
-    dataset = await ds_repo.get(session_obj.active_dataset_id)
+    session_obj = await validate_user_session(session_id, current_user.id, db)
+    dataset_repo = DatasetRepository(db)
+    dataset = await dataset_repo.get(session_obj.active_dataset_id)
     dataset_path = dataset.file_path if dataset else None
     if not dataset_path:
         raise HTTPException(status_code=400, detail=error_response("NO_DATASET", "데이터셋이 없습니다."))
@@ -348,39 +316,33 @@ async def run_constrained_inverse_optimization(
     opt_target = body.get("target_column")        # 최적화 대상 타겟
     con_target = body.get("constraint_target_column")  # 제약 타겟 (선택)
 
-    service = SessionService(db)
-    try:
-        await service.validate_session(session_id, current_user.id)
-    except ValueError as e:
-        raise HTTPException(status_code=404, detail=error_response(str(e), str(e)))
-
     from app.db.repositories.artifact import ArtifactRepository
     model_repo = ModelRunRepository(db)
-    art_repo = ArtifactRepository(db)
+    artifact_repo = ArtifactRepository(db)
 
     async def _get_model_info(target_col: str | None):
         """타겟별 챔피언 모델 정보 반환"""
         if target_col:
-            champ = await model_repo.get_champion_by_target(branch_id, target_col)
+            champion_model = await model_repo.get_champion_by_target(branch_id, target_col)
         else:
-            champ = await model_repo.get_champion(branch_id)
-        if not champ:
+            champion_model = await model_repo.get_champion(branch_id)
+        if not champion_model:
             raise HTTPException(
                 status_code=400,
                 detail=error_response("NO_CHAMPION_MODEL", f"챔피언 모델이 없습니다 (target={target_col})."),
             )
-        art = await art_repo.get(champ.model_artifact_id)
-        if not art or not art.file_path:
+        model_artifact = await artifact_repo.get(champion_model.model_artifact_id)
+        if not model_artifact or not model_artifact.file_path:
             raise HTTPException(status_code=400, detail=error_response("NO_MODEL_FILE", "모델 파일을 찾을 수 없습니다."))
-        m = art.meta or {}
-        if isinstance(m, str):
+        artifact_metadata = model_artifact.meta or {}
+        if isinstance(artifact_metadata, str):
             import json as _json
-            m = _json.loads(m)
+            artifact_metadata = _json.loads(artifact_metadata)
         return {
-            "model_path": art.file_path,
-            "feature_names": m.get("feature_names", []),
-            "categorical_features": m.get("categorical_features", []),
-            "target_column": m.get("target_column") or champ.target_column or target_col or "",
+            "model_path": model_artifact.file_path,
+            "feature_names": artifact_metadata.get("feature_names", []),
+            "categorical_features": artifact_metadata.get("categorical_features", []),
+            "target_column": artifact_metadata.get("target_column") or champion_model.target_column or target_col or "",
         }
 
     # 최적화 대상 모델
@@ -390,9 +352,9 @@ async def run_constrained_inverse_optimization(
     con_info = await _get_model_info(con_target) if con_target else None
 
     # 데이터셋
-    session_obj = await service.validate_session(session_id, current_user.id)
-    ds_repo = DatasetRepository(db)
-    dataset = await ds_repo.get(session_obj.active_dataset_id)
+    session_obj = await validate_user_session(session_id, current_user.id, db)
+    dataset_repo = DatasetRepository(db)
+    dataset = await dataset_repo.get(session_obj.active_dataset_id)
     dataset_path = dataset.file_path if dataset else None
     if not dataset_path:
         raise HTTPException(status_code=400, detail=error_response("NO_DATASET", "데이터셋이 없습니다."))

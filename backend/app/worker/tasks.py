@@ -1,7 +1,5 @@
 """RQ 작업 엔트리포인트"""
 
-import traceback
-from uuid import UUID
 
 from app.core.logging import get_logger
 from app.worker.cancellation import CancellationToken, clear_cancellation
@@ -150,11 +148,8 @@ def run_baseline_modeling_task(
         update_job_status_sync(job_run_id, "running", 0, "모델링 준비 중...")
 
         import io
-        import numpy as np
         import pandas as pd
-        from sklearn.model_selection import KFold, cross_validate
         from sklearn.preprocessing import LabelEncoder
-        import lightgbm as lgb
 
         reporter.update(5, "데이터 로드 중...")
 
@@ -228,7 +223,6 @@ def run_baseline_modeling_task(
         return {"status": "cancelled"}
 
     except Exception as e:
-        error_msg = traceback.format_exc()
         logger.error("모델링 작업 실패", job_run_id=job_run_id, error=str(e))
         update_job_status_sync(job_run_id, "failed", 0, "모델링 실패", error_message=str(e))
         clear_progress(job_run_id)

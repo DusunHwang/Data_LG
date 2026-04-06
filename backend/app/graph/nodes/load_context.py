@@ -1,12 +1,10 @@
 """세션 컨텍스트 로드 노드"""
 
 import json
-from datetime import datetime, timezone
-from typing import Any, Dict, Optional
+from typing import Optional
 
-from app.core.config import settings
 from app.core.logging import get_logger
-from app.graph.helpers import get_sync_db_session, update_progress
+from app.graph.helpers import update_progress
 from app.graph.state import GraphState
 from app.worker.job_runner import get_sync_db_connection
 
@@ -106,24 +104,24 @@ def load_session_context(state: GraphState) -> GraphState:
                 """,
                 (session_data["active_dataset_id"],),
             )
-            ds_row = cur.fetchone()
-            if ds_row:
+            dataset_row = cur.fetchone()
+            if dataset_row:
                 dataset_data = {
-                    "id": str(ds_row[0]),
-                    "name": ds_row[1],
-                    "source": ds_row[2],
-                    "original_filename": ds_row[3],
-                    "file_path": ds_row[4],
-                    "row_count": ds_row[5],
-                    "col_count": ds_row[6],
-                    "file_size_bytes": ds_row[7],
-                    "schema_profile": _parse_json(ds_row[8], {}),
-                    "missing_profile": _parse_json(ds_row[9], {}),
-                    "target_candidates": _parse_json(ds_row[10], []),
-                    "created_at": _to_iso(ds_row[11]),
-                    "updated_at": _to_iso(ds_row[12]),
+                    "id": str(dataset_row[0]),
+                    "name": dataset_row[1],
+                    "source": dataset_row[2],
+                    "original_filename": dataset_row[3],
+                    "file_path": dataset_row[4],
+                    "row_count": dataset_row[5],
+                    "col_count": dataset_row[6],
+                    "file_size_bytes": dataset_row[7],
+                    "schema_profile": _parse_json(dataset_row[8], {}),
+                    "missing_profile": _parse_json(dataset_row[9], {}),
+                    "target_candidates": _parse_json(dataset_row[10], []),
+                    "created_at": _to_iso(dataset_row[11]),
+                    "updated_at": _to_iso(dataset_row[12]),
                 }
-                dataset_path = ds_row[4]  # file_path가 파케이 경로
+                dataset_path = dataset_row[4]  # file_path가 파케이 경로
 
         # 3. 활성 브랜치 로드: state에 branch_id가 있으면 해당 브랜치, 없으면 is_active=True
         active_branch_data: dict = {}
@@ -150,17 +148,17 @@ def load_session_context(state: GraphState) -> GraphState:
                 """,
                 (session_id,),
             )
-        br_row = cur.fetchone()
-        if br_row:
+        branch_row = cur.fetchone()
+        if branch_row:
             active_branch_data = {
-                "id": str(br_row[0]),
-                "name": br_row[1],
-                "description": br_row[2],
-                "is_active": br_row[3],
-                "config": _parse_json(br_row[4], {}),
-                "parent_branch_id": str(br_row[5]) if br_row[5] else None,
-                "created_at": _to_iso(br_row[6]),
-                "updated_at": _to_iso(br_row[7]),
+                "id": str(branch_row[0]),
+                "name": branch_row[1],
+                "description": branch_row[2],
+                "is_active": branch_row[3],
+                "config": _parse_json(branch_row[4], {}),
+                "parent_branch_id": str(branch_row[5]) if branch_row[5] else None,
+                "created_at": _to_iso(branch_row[6]),
+                "updated_at": _to_iso(branch_row[7]),
             }
 
         # 4. 현재 스텝 (가장 최근 completed 스텝)
@@ -177,17 +175,17 @@ def load_session_context(state: GraphState) -> GraphState:
                 """,
                 (active_branch_data["id"],),
             )
-            st_row = cur.fetchone()
-            if st_row:
+            step_row = cur.fetchone()
+            if step_row:
                 current_step_data = {
-                    "id": str(st_row[0]),
-                    "step_type": st_row[1],
-                    "status": st_row[2],
-                    "sequence_no": st_row[3],
-                    "title": st_row[4],
-                    "input_data": _parse_json(st_row[5], {}),
-                    "output_data": _parse_json(st_row[6], {}),
-                    "created_at": _to_iso(st_row[7]),
+                    "id": str(step_row[0]),
+                    "step_type": step_row[1],
+                    "status": step_row[2],
+                    "sequence_no": step_row[3],
+                    "title": step_row[4],
+                    "input_data": _parse_json(step_row[5], {}),
+                    "output_data": _parse_json(step_row[6], {}),
+                    "created_at": _to_iso(step_row[7]),
                 }
 
         # 5. 최근 스텝 10개 로드

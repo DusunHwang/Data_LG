@@ -5,10 +5,10 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_current_user, get_db
+from app.api.deps import get_current_user, get_db, validate_user_session
 from app.core.logging import get_logger
 from app.db.models.user import User
-from app.schemas.common import ERROR_MESSAGES, ErrorCode, error_response, success_response
+from app.schemas.common import error_response, success_response
 from app.schemas.session import SessionCreate, SessionResponse, SessionSummary, SessionUpdate
 from app.services.session_service import SessionService
 
@@ -51,21 +51,7 @@ async def get_session(
     current_user: User = Depends(get_current_user),
 ):
     """세션 상세 조회"""
-    service = SessionService(db)
-    try:
-        session = await service.validate_session(session_id, current_user.id)
-    except ValueError as e:
-        code = str(e)
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=error_response(code, ERROR_MESSAGES.get(code, "세션을 찾을 수 없습니다.")),
-        )
-    except PermissionError as e:
-        code = str(e)
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail=error_response(code, ERROR_MESSAGES.get(code, "접근 권한이 없습니다.")),
-        )
+    session = await validate_user_session(session_id, current_user.id, db)
     return success_response(SessionResponse.model_validate(session).model_dump())
 
 
@@ -77,16 +63,9 @@ async def update_session(
     current_user: User = Depends(get_current_user),
 ):
     """세션 정보 업데이트"""
+    session = await validate_user_session(session_id, current_user.id, db)
     service = SessionService(db)
-    try:
-        session = await service.validate_session(session_id, current_user.id)
-        session = await service.update_session(session, body)
-    except ValueError as e:
-        code = str(e)
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=error_response(code, ERROR_MESSAGES.get(code, "세션을 찾을 수 없습니다.")),
-        )
+    session = await service.update_session(session, body)
     return success_response(SessionResponse.model_validate(session).model_dump())
 
 
@@ -97,22 +76,10 @@ async def delete_session(
     current_user: User = Depends(get_current_user),
 ):
     """세션 삭제"""
+    session = await validate_user_session(session_id, current_user.id, db)
     service = SessionService(db)
     try:
-        session = await service.validate_session(session_id, current_user.id)
         await service.delete_session(session)
-    except ValueError as e:
-        code = str(e)
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=error_response(code, ERROR_MESSAGES.get(code, "세션을 찾을 수 없습니다.")),
-        )
-    except PermissionError as e:
-        code = str(e)
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail=error_response(code, ERROR_MESSAGES.get(code, "접근 권한이 없습니다.")),
-        )
     except Exception as e:
         logger.error("세션 삭제 실패", session_id=str(session_id), error=str(e))
         raise HTTPException(
@@ -129,15 +96,7 @@ async def get_session_history(
     current_user: User = Depends(get_current_user),
 ):
     """세션 복원용 히스토리 조회 (채팅 기록 + target_column + branch_id)"""
-    service = SessionService(db)
-    try:
-        session = await service.validate_session(session_id, current_user.id)
-    except (ValueError, PermissionError) as e:
-        code = str(e)
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=error_response(code, ERROR_MESSAGES.get(code, "세션을 찾을 수 없습니다.")),
-        )
+    await validate_user_session(session_id, current_user.id, db)
 
     job_repo = JobRunRepository(db)
     # 완료된 analysis 작업만, 오래된 순으로 정렬
@@ -153,19 +112,19 @@ async def get_session_history(
         params = job.params or {}
         result = job.result or {}
 
-        msg = params.get("message", "")
-        tc = params.get("target_column")
-        bid = params.get("branch_id")
+        user_message = params.get("message", "")
+        param_target_column = params.get("target_column")
+        param_branch_id = params.get("branch_id")
 
-        if tc and not target_column:
-            target_column = tc
-        if bid and not branch_id:
-            branch_id = bid
+        if param_target_column and not target_column:
+            target_column = param_target_column
+        if param_branch_id and not branch_id:
+            branch_id = param_branch_id
 
-        if msg:
+        if user_message:
             chat_history.append({
                 "role": "user",
-                "content": msg,
+                "content": user_message,
                 "timestamp": job.created_at.isoformat() if job.created_at else None,
             })
 
@@ -178,7 +137,7 @@ async def get_session_history(
                 "role": "assistant",
                 "content": assistant_msg or "분석이 완료되었습니다.",
                 "step_id": step_id,
-                "branch_id": bid,
+                "branch_id": param_branch_id,
                 "artifact_ids": artifact_ids,
                 "timestamp": job.finished_at.isoformat() if job.finished_at else None,
             })

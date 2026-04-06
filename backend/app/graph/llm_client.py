@@ -1,7 +1,7 @@
 """vLLM 클라이언트 - OpenAI 호환 API"""
 
 import json
-from typing import Any, Type, TypeVar
+from typing import Type, TypeVar
 
 import httpx
 from openai import AsyncOpenAI

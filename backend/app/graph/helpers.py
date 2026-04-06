@@ -3,10 +3,10 @@
 import glob
 import json
 from datetime import datetime, timezone
-from typing import Any, Optional
+from typing import Optional
 
 import pandas as pd
-from sqlalchemy import create_engine, text
+from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.core.config import settings

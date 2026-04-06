@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from app.core.logging import get_logger
 from app.graph.helpers import update_progress
 from app.graph.state import GraphState
-from app.worker.job_runner import get_sync_db_connection, update_job_status_sync
+from app.worker.job_runner import get_sync_db_connection
 
 logger = get_logger(__name__)
 

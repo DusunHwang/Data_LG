@@ -71,7 +71,7 @@ class TestDatasetFlow:
         _skip_if_no_session(test_session_id)
 
         r = client.get(
-            f"/api/v1/sessions/{test_session_id}/datasets/builtin",
+            f"/api/v1/sessions/{test_session_id}/datasets/builtin-list",
             headers=auth_headers,
         )
         _skip_if_401(r)
@@ -87,21 +87,23 @@ class TestDatasetFlow:
 
         # 내장 데이터셋 목록 조회
         r = client.get(
-            f"/api/v1/sessions/{test_session_id}/datasets/builtin",
+            f"/api/v1/sessions/{test_session_id}/datasets/builtin-list",
             headers=auth_headers,
         )
         _skip_if_401(r)
         if not r.json().get("data"):
             pytest.skip("내장 데이터셋 없음")
 
-        dataset_name = r.json()["data"][0]["name"]
+        dataset_key = r.json()["data"][0]["key"]
 
         # 내장 데이터셋 선택
         r2 = client.post(
             f"/api/v1/sessions/{test_session_id}/datasets/builtin",
-            json={"dataset_name": dataset_name},
+            json={"builtin_key": dataset_key},
             headers=auth_headers,
         )
+        if r2.status_code == 404:
+            pytest.skip("내장 데이터셋 파일 없음 (404)")
         assert r2.status_code in (200, 201)
         assert r2.json()["success"] is True
 

@@ -5,36 +5,16 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_current_user, get_db
+from app.api.deps import get_current_user, get_db, validate_user_session
 from app.core.logging import get_logger
 from app.db.models.user import User
 from app.db.repositories.artifact import ArtifactRepository
 from app.db.repositories.step import StepRepository
 from app.schemas.common import ERROR_MESSAGES, ErrorCode, error_response, success_response
 from app.schemas.step import StepResponse
-from app.services.session_service import SessionService
 
 logger = get_logger(__name__)
 router = APIRouter(prefix="/sessions/{session_id}/branches/{branch_id}/steps", tags=["스텝"])
-
-
-async def _validate_session(session_id: UUID, current_user, db):
-    """세션 유효성 검증"""
-    service = SessionService(db)
-    try:
-        return await service.validate_session(session_id, current_user.id)
-    except ValueError as e:
-        code = str(e)
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=error_response(code, ERROR_MESSAGES.get(code, "세션을 찾을 수 없습니다.")),
-        )
-    except PermissionError as e:
-        code = str(e)
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail=error_response(code, ERROR_MESSAGES.get(code, "접근 권한이 없습니다.")),
-        )
 
 
 @router.get("", response_model=dict)
@@ -47,7 +27,7 @@ async def list_steps(
     current_user: User = Depends(get_current_user),
 ):
     """브랜치의 스텝 목록 조회"""
-    await _validate_session(session_id, current_user, db)
+    await validate_user_session(session_id, current_user.id, db)
 
     repo = StepRepository(db)
     steps = await repo.get_branch_steps(branch_id, skip=skip, limit=limit)
@@ -63,7 +43,7 @@ async def get_step(
     current_user: User = Depends(get_current_user),
 ):
     """스텝 상세 조회"""
-    await _validate_session(session_id, current_user, db)
+    await validate_user_session(session_id, current_user.id, db)
 
     repo = StepRepository(db)
     step = await repo.get(step_id)

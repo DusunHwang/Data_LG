@@ -241,7 +241,6 @@ def run_inverse_optimize_task(
         base_row.update(fixed_values)
 
         # 범주형 피처는 선택 불가 (고정값 강제)
-        cat_in_selected = [f for f in selected_features if f in categorical_features]
         opt_features = [f for f in selected_features if f not in categorical_features]
 
         if not opt_features:
@@ -300,7 +299,7 @@ def run_inverse_optimize_task(
                 if col in input_df.columns:
                     input_df[col] = input_df[col].astype("category")
             optimal_prediction = float(model.predict(input_df)[0])
-        except Exception as e:
+        except Exception:
             optimal_prediction = -sign * result_opt.fun
 
         # 베이스라인 (데이터 중앙값)
@@ -409,8 +408,6 @@ def run_constrained_inverse_optimize_task(
             return X_.fillna(X_.median(numeric_only=True))
 
         X_ref = prepare_X(df, feature_names, categorical_features)
-        c_feat_names = constraint_feature_names or feature_names
-        X_ref_c = prepare_X(df, c_feat_names, categorical_features) if constraint_model else None
 
         # BCM 모델 구성 (요청 시)
         if model_type == "bcm":

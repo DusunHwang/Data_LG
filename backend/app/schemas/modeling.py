@@ -1,7 +1,6 @@
 """모델링 관련 스키마"""
 
 from datetime import datetime
-from typing import Any
 from uuid import UUID
 
 from pydantic import BaseModel, Field

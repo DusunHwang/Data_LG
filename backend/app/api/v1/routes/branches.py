@@ -7,12 +7,11 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_current_user, get_db
+from app.api.deps import get_current_user, get_db, validate_user_session
 from app.core.logging import get_logger
 from app.db.models.branch import Branch
 from app.db.models.user import User
 from app.schemas.common import ERROR_MESSAGES, ErrorCode, error_response, success_response
-from app.services.session_service import SessionService
 
 logger = get_logger(__name__)
 router = APIRouter(prefix="/sessions/{session_id}/branches", tags=["브랜치"])
@@ -44,25 +43,6 @@ class BranchResponse(BaseModel):
     model_config = {"from_attributes": True}
 
 
-async def _validate_session(session_id: UUID, current_user, db: AsyncSession):
-    """세션 유효성 검증"""
-    service = SessionService(db)
-    try:
-        return await service.validate_session(session_id, current_user.id)
-    except ValueError as e:
-        code = str(e)
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=error_response(code, ERROR_MESSAGES.get(code, "세션을 찾을 수 없습니다.")),
-        )
-    except PermissionError as e:
-        code = str(e)
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail=error_response(code, ERROR_MESSAGES.get(code, "접근 권한이 없습니다.")),
-        )
-
-
 @router.post("", response_model=dict)
 async def create_branch(
     session_id: UUID,
@@ -71,7 +51,7 @@ async def create_branch(
     current_user: User = Depends(get_current_user),
 ):
     """새 브랜치 생성"""
-    await _validate_session(session_id, current_user, db)
+    await validate_user_session(session_id, current_user.id, db)
 
     branch = Branch(
         session_id=session_id,
@@ -96,7 +76,7 @@ async def list_branches(
     current_user: User = Depends(get_current_user),
 ):
     """브랜치 목록 조회"""
-    await _validate_session(session_id, current_user, db)
+    await validate_user_session(session_id, current_user.id, db)
 
     result = await db.execute(
         select(Branch).where(Branch.session_id == session_id).order_by(Branch.created_at.asc())
@@ -113,7 +93,7 @@ async def get_branch(
     current_user: User = Depends(get_current_user),
 ):
     """브랜치 상세 조회"""
-    await _validate_session(session_id, current_user, db)
+    await validate_user_session(session_id, current_user.id, db)
 
     result = await db.execute(
         select(Branch).where(Branch.id == branch_id, Branch.session_id == session_id)
@@ -141,7 +121,7 @@ async def rename_branch(
     current_user: User = Depends(get_current_user),
 ):
     """브랜치 이름 변경"""
-    await _validate_session(session_id, current_user, db)
+    await validate_user_session(session_id, current_user.id, db)
 
     result = await db.execute(
         select(Branch).where(Branch.id == branch_id, Branch.session_id == session_id)
@@ -173,7 +153,7 @@ async def delete_branch(
     current_user: User = Depends(get_current_user),
 ):
     """브랜치 삭제"""
-    await _validate_session(session_id, current_user, db)
+    await validate_user_session(session_id, current_user.id, db)
 
     result = await db.execute(
         select(Branch).where(Branch.id == branch_id, Branch.session_id == session_id)

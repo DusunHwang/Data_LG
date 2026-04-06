@@ -2,16 +2,14 @@
 
 import json
 import os
-import uuid
 from datetime import datetime, timezone
 from itertools import product
-from typing import Any, Dict, List, Optional, Tuple
+from typing import List, Optional, Tuple
 
 import joblib
 import numpy as np
 import pandas as pd
 
-from app.core.config import settings
 from app.core.logging import get_logger
 from app.graph.helpers import (
     check_cancellation,
@@ -349,7 +347,6 @@ def _run_optuna(
         score = float(np.sqrt(mean_squared_error(y_val, y_pred)))
 
         completed_trials[0] += 1
-        progress = 30 + int(55 * completed_trials[0] / n_trials)
 
         trials_history.append({
             "trial_number": trial.number,

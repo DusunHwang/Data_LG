@@ -1,9 +1,9 @@
 """FastAPI 애플리케이션 진입점"""
 
 from contextlib import asynccontextmanager
-from typing import Any
 
 from fastapi import FastAPI, Request, status
+from fastapi.exceptions import HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import ValidationError
@@ -59,6 +59,16 @@ def create_app() -> FastAPI:
     )
 
     # 예외 핸들러 등록
+    @app.exception_handler(HTTPException)
+    async def http_exception_handler(request: Request, exc: HTTPException):
+        """HTTPException의 detail이 dict면 그대로 응답 body로 반환"""
+        if isinstance(exc.detail, dict):
+            return JSONResponse(status_code=exc.status_code, content=exc.detail)
+        return JSONResponse(
+            status_code=exc.status_code,
+            content=error_response("HTTP_ERROR", str(exc.detail)),
+        )
+
     @app.exception_handler(ValidationError)
     async def validation_exception_handler(request: Request, exc: ValidationError):
         return JSONResponse(
