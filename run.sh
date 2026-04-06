@@ -21,12 +21,10 @@ echo "   Data_LG — 서비스 시작"
 echo "========================================================"
 
 # ── 설치 여부 확인 ────────────────────────────────────────────────────────────
-[[ ! -d backend/.venv ]]          && error "백엔드 가상환경 없음. 먼저 bash install.sh를 실행해주세요."
+[[ ! -d backend/.venv ]]               && error "백엔드 가상환경 없음. 먼저 bash install.sh를 실행해주세요."
 [[ ! -d frontend-react/node_modules ]] && error "프론트엔드 패키지 없음. 먼저 bash install.sh를 실행해주세요."
-[[ ! -f backend/data/app.db ]]    && error "DB 없음. 먼저 bash install.sh를 실행해주세요."
-
-# ── 환경변수 로드 ─────────────────────────────────────────────────────────────
-[[ ! -f .env ]] && error ".env 파일 없음. 먼저 bash install.sh를 실행해주세요."
+[[ ! -f backend/data/app.db ]]         && error "DB 없음. 먼저 bash install.sh를 실행해주세요."
+[[ ! -f backend/.env ]]                && error "backend/.env 없음. 먼저 bash install.sh를 실행해주세요."
 
 # ── 로그 디렉토리 ─────────────────────────────────────────────────────────────
 mkdir -p "$SCRIPT_DIR/logs"

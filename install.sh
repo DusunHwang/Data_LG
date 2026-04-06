@@ -41,21 +41,28 @@ success "uv: $(uv --version)"
 
 # ── 2. Node.js 확인 ───────────────────────────────────────────────────────────
 if ! command -v node &>/dev/null; then
-  error "Node.js가 설치되어 있지 않습니다. https://nodejs.org 에서 v18 이상을 설치해주세요."
+  error "Node.js가 설치되어 있지 않습니다.\n  Ubuntu/Debian: curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash - && sudo apt install -y nodejs\n  또는 https://nodejs.org 에서 v18 이상을 설치하세요."
+fi
+NODE_MAJOR=$(node --version | sed 's/v\([0-9]*\).*/\1/')
+if [[ "$NODE_MAJOR" -lt 18 ]]; then
+  error "Node.js v18 이상이 필요합니다. 현재: $(node --version)"
 fi
 success "node: $(node --version)  /  npm: $(npm --version)"
 
-# ── 3. .env 파일 설정 ─────────────────────────────────────────────────────────
+# ── 3. vLLM 설정 입력 ─────────────────────────────────────────────────────────
 DEFAULT_ENDPOINT="http://your-vllm-server/v1"
-DEFAULT_MODEL="Qwen3/Qwen3-Next-80B-A3B-Instruct-FP8"
+DEFAULT_MODEL="your-model-name"
 
-if [[ ! -f .env ]]; then
-  cp .env.simple .env
-  info ".env.simple → .env 복사됨"
+# backend/.env 기준으로 현재값 읽기 (백엔드가 실제로 읽는 파일)
+BACKEND_ENV="$SCRIPT_DIR/backend/.env"
+
+if [[ ! -f "$BACKEND_ENV" ]]; then
+  cp "$SCRIPT_DIR/.env.simple" "$BACKEND_ENV"
+  info ".env.simple → backend/.env 복사됨"
 fi
 
-CURRENT_EP=$(grep -E '^VLLM_ENDPOINT_SMALL=' .env 2>/dev/null | cut -d'=' -f2- || echo "$DEFAULT_ENDPOINT")
-CURRENT_MODEL=$(grep -E '^VLLM_MODEL_SMALL=' .env 2>/dev/null | cut -d'=' -f2- || echo "$DEFAULT_MODEL")
+CURRENT_EP=$(grep -E '^VLLM_ENDPOINT_SMALL=' "$BACKEND_ENV" 2>/dev/null | cut -d'=' -f2- || echo "$DEFAULT_ENDPOINT")
+CURRENT_MODEL=$(grep -E '^VLLM_MODEL_SMALL=' "$BACKEND_ENV" 2>/dev/null | cut -d'=' -f2- || echo "$DEFAULT_MODEL")
 
 if [[ -z "$VLLM_ENDPOINT" && -z "$VLLM_MODEL" ]]; then
   if [[ -t 0 ]]; then
@@ -73,16 +80,20 @@ if [[ -z "$VLLM_ENDPOINT" && -z "$VLLM_MODEL" ]]; then
   fi
 fi
 
-sed -i "s|^VLLM_ENDPOINT_SMALL=.*|VLLM_ENDPOINT_SMALL=${VLLM_ENDPOINT}|" .env
-sed -i "s|^VLLM_MODEL_SMALL=.*|VLLM_MODEL_SMALL=${VLLM_MODEL}|"         .env
+# backend/.env 에 직접 기록 (백엔드가 실제로 읽는 파일)
+sed -i "s|^VLLM_ENDPOINT_SMALL=.*|VLLM_ENDPOINT_SMALL=${VLLM_ENDPOINT}|" "$BACKEND_ENV"
+sed -i "s|^VLLM_MODEL_SMALL=.*|VLLM_MODEL_SMALL=${VLLM_MODEL}|"         "$BACKEND_ENV"
 success "vLLM: ${VLLM_ENDPOINT}  /  ${VLLM_MODEL}"
 
 # ── 4. 내장 데이터셋 생성 ─────────────────────────────────────────────────────
-PARQUET_COUNT=$(ls datasets_builtin/*.parquet 2>/dev/null | wc -l || echo 0)
+PARQUET_COUNT=$(ls "$SCRIPT_DIR/datasets_builtin/"*.parquet 2>/dev/null | wc -l || echo 0)
 if [[ "$PARQUET_COUNT" -lt 1 ]]; then
   info "내장 데이터셋 생성 중..."
-  uv run --project . python datasets_builtin/generate_datasets.py || \
-    warn "데이터셋 생성 실패 — 나중에 수동 실행: python datasets_builtin/generate_datasets.py"
+  # backend venv의 python으로 실행 (numpy/pandas 의존)
+  cd "$SCRIPT_DIR/backend"
+  uv run python "$SCRIPT_DIR/datasets_builtin/generate_datasets.py" || \
+    warn "데이터셋 생성 실패 — 나중에 수동 실행: cd backend && uv run python ../datasets_builtin/generate_datasets.py"
+  cd "$SCRIPT_DIR"
 else
   success "내장 데이터셋 이미 존재 (${PARQUET_COUNT}개)"
 fi
@@ -111,6 +122,7 @@ npm install
 success "프론트엔드 의존성 설치 완료"
 
 # ── 완료 ──────────────────────────────────────────────────────────────────────
+cd "$SCRIPT_DIR"
 echo ""
 echo "========================================================"
 echo -e "${GREEN}  설치 완료!${NC}"
