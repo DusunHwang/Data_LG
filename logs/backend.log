@@ -1,7 +1,0 @@
-INFO:     Started server process [3845935]
-INFO:     Waiting for application startup.
-[2m2026-04-03T07:35:58.397264Z[0m [[32m[1minfo     [0m] [1m애플리케이션 시작                     [0m [[0m[1m[34mapp.main[0m][0m [36menv[0m=[35mdevelopment[0m [36mversion[0m=[35m0.1.0[0m
-[2m2026-04-03T07:35:58.397642Z[0m [[32m[1minfo     [0m] [1m아티팩트 저장소 초기화                  [0m [[0m[1m[34mapp.main[0m][0m [36mpath[0m=[35mdata/artifacts[0m
-INFO:     Application startup complete.
-INFO:     Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)
-INFO:     127.0.0.1:53024 - "GET /docs HTTP/1.1" 200 OK

@@ -1,4 +1,5 @@
 .env
+.env_*
 .venv
 __pycache__
 *.pyc
@@ -6,3 +7,12 @@ __pycache__
 storage/
 .ipynb_checkpoints
 .claude
+
+# 로그 파일
+logs/
+*.log
+backend/pandasai.log
+
+# 런타임 데이터
+backend/data/
+backend/data/artifacts/

@@ -33,7 +33,7 @@ export default function VllmMonitor() {
             <Badge variant="danger" dot>Offline</Badge>
           )}
         </div>
-        <span className="text-xs text-gray-400">your-vllm-server</span>
+        <span className="text-xs text-gray-400">vLLM Server</span>
       </div>
 
       {/* Quick stats */}
