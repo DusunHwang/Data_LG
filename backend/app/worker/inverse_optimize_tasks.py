@@ -332,6 +332,12 @@ def run_inverse_optimize_task(
             if feat in categorical_features
         })
 
+        # 베이스라인 피처 (선택된 피처들에 대해)
+        baseline_features = {
+            feat: base_row.get(feat)
+            for feat in selected_features
+        }
+
         reporter.update(95, "결과 저장 중...")
 
         result = {
@@ -343,6 +349,7 @@ def run_inverse_optimize_task(
                 if baseline_prediction is not None else None
             ),
             "optimal_features": optimal_features,
+            "baseline_features": baseline_features,
             "fixed_features": fixed_values,
             "selected_features": selected_features,
             "n_evaluations": call_count[0],
@@ -549,6 +556,12 @@ def run_constrained_inverse_optimize_task(
             for feat in selected_features if feat in categorical_features
         })
 
+        # 베이스라인 피처 (선택된 피처들에 대해)
+        baseline_features = {
+            feat: base_row.get(feat)
+            for feat in selected_features
+        }
+
         reporter.update(95, "결과 저장 중...")
 
         result = {
@@ -561,6 +574,7 @@ def run_constrained_inverse_optimize_task(
                 if optimal_prediction is not None and baseline_prediction is not None else None
             ),
             "optimal_features": optimal_features,
+            "baseline_features": baseline_features,
             "fixed_features": fixed_values,
             "selected_features": selected_features,
             "n_evaluations": call_count[0],

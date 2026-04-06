@@ -657,8 +657,15 @@ function ImportanceTable({ rows }: { rows: { feat: string; actual: number; p90: 
 
 function InverseResult({ result }: { result: InverseRunResult }) {
   const optFeats = result.optimal_features ?? {}
+  const baseFeats = result.baseline_features ?? {}
   const fixedFeats = result.fixed_features ?? {}
   const hasConstraint = !!result.constraint_target_column
+
+  // 모든 피처 키 합집합 (선택된 피처들 위주)
+  const allFeatureKeys = Array.from(new Set([
+    ...Object.keys(optFeats),
+    ...Object.keys(fixedFeats),
+  ]))
 
   return (
     <div className="space-y-4">
@@ -685,40 +692,56 @@ function InverseResult({ result }: { result: InverseRunResult }) {
       </div>
 
       <div>
-        <p className="text-xs font-semibold text-gray-600 mb-2">최적 피처 값</p>
-        <table className="w-full text-xs">
-          <thead>
-            <tr className="border-b border-gray-200">
-              <th className="text-left py-1 pr-3 text-gray-500 font-medium">피처</th>
-              <th className="text-right py-1 text-gray-500 font-medium">최적값</th>
-              <th className="text-right py-1 pl-3 text-gray-500 font-medium">타입</th>
-            </tr>
-          </thead>
-          <tbody>
-            {Object.entries(optFeats).map(([k, v]) => (
-              <tr key={k} className="border-b border-gray-100">
-                <td className="py-1 pr-3 text-gray-700 font-medium">{k}</td>
-                <td className="py-1 text-right tabular-nums text-gray-800 font-semibold">
-                  {typeof v === 'number' ? v.toFixed(4) : String(v)}
-                </td>
-                <td className="py-1 pl-3 text-right">
-                  <span className="rounded-full bg-blue-100 text-blue-700 px-1.5 py-0.5">최적</span>
-                </td>
+        <p className="text-xs font-semibold text-gray-600 mb-2">피처별 최적화 결과</p>
+        <div className="overflow-x-auto rounded-lg border border-gray-100">
+          <table className="w-full text-xs text-left">
+            <thead>
+              <tr className="bg-gray-50 border-b border-gray-200">
+                <th className="py-2 px-3 text-gray-500 font-medium">피처</th>
+                <th className="py-2 px-2 text-right text-gray-500 font-medium">베이스라인</th>
+                <th className="py-2 px-2 text-right text-gray-500 font-medium">최적값</th>
+                <th className="py-2 px-2 text-right text-gray-500 font-medium">변화량</th>
+                <th className="py-2 px-3 text-center text-gray-500 font-medium">구분</th>
               </tr>
-            ))}
-            {Object.entries(fixedFeats).map(([k, v]) => (
-              <tr key={k} className="border-b border-gray-100">
-                <td className="py-1 pr-3 text-gray-600">{k}</td>
-                <td className="py-1 text-right tabular-nums text-gray-600">
-                  {typeof v === 'number' ? v.toFixed(4) : String(v)}
-                </td>
-                <td className="py-1 pl-3 text-right">
-                  <span className="rounded-full bg-orange-100 text-orange-600 px-1.5 py-0.5">고정</span>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {allFeatureKeys.map((k) => {
+                const optVal = optFeats[k] ?? fixedFeats[k]
+                const baseVal = baseFeats[k]
+                const isFixed = k in fixedFeats
+                
+                let delta: number | null = null
+                if (typeof optVal === 'number' && typeof baseVal === 'number') {
+                  delta = optVal - baseVal
+                }
+
+                return (
+                  <tr key={k} className="border-b border-gray-50 hover:bg-gray-50/50 transition-colors">
+                    <td className="py-2 px-3 text-gray-700 font-medium truncate max-w-[120px]" title={k}>{k}</td>
+                    <td className="py-2 px-2 text-right tabular-nums text-gray-400">
+                      {typeof baseVal === 'number' ? baseVal.toFixed(4) : (baseVal ?? '-')}
+                    </td>
+                    <td className="py-2 px-2 text-right tabular-nums text-gray-800 font-bold">
+                      {typeof optVal === 'number' ? optVal.toFixed(4) : (optVal ?? '-')}
+                    </td>
+                    <td className={`py-2 px-2 text-right tabular-nums font-medium ${
+                      (delta ?? 0) > 0 ? 'text-blue-500' : (delta ?? 0) < 0 ? 'text-red-500' : 'text-gray-300'
+                    }`}>
+                      {delta !== null ? (delta > 0 ? `+${delta.toFixed(4)}` : delta.toFixed(4)) : '-'}
+                    </td>
+                    <td className="py-2 px-3 text-center">
+                      <span className={`inline-block rounded-full px-1.5 py-0.5 text-[10px] font-bold ${
+                        isFixed ? 'bg-orange-100 text-orange-600' : 'bg-blue-100 text-blue-700'
+                      }`}>
+                        {isFixed ? '고정' : '최적'}
+                      </span>
+                    </td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        </div>
       </div>
     </div>
   )

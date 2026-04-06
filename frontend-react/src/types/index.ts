@@ -236,8 +236,9 @@ export interface InverseRunResult {
   optimal_prediction: number
   baseline_prediction?: number
   improvement?: number
-  optimal_features: Record<string, number>
-  fixed_features?: Record<string, number>
+  optimal_features: Record<string, number | string>
+  baseline_features?: Record<string, number | string>
+  fixed_features?: Record<string, number | string>
   convergence: boolean
   n_evaluations: number
   direction: string
