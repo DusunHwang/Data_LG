@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useCallback } from 'react'
+import { useState, useRef, useEffect, useCallback, memo } from 'react'
 import { Send, ChevronDown, ChevronRight, Zap, BarChart2, BrainCircuit, Target, ChevronsUpDown, FlaskConical } from 'lucide-react'
 import { analysisApi, artifactsApi } from '@/api'
 import { useChatStore, useSessionStore, useArtifactStore, genId } from '@/store'
@@ -10,6 +10,7 @@ import InverseOptimizationModal from '@/components/optimization/InverseOptimizat
 
 interface ChatPanelProps {
   externalInput?: string
+  immediateExecute?: boolean
   onExternalInputConsumed?: () => void
 }
 
@@ -29,7 +30,7 @@ const QUICK_ACTIONS = [
   { icon: BrainCircuit, label: '인자 최소화', message: '인자를 최소화해줘' },
 ]
 
-export default function ChatPanel({ externalInput, onExternalInputConsumed }: ChatPanelProps) {
+export default function ChatPanel({ externalInput, immediateExecute, onExternalInputConsumed }: ChatPanelProps) {
   const { sessionId, branchId, datasetId, targetColumn, targetColumnsByBranch, targetDataframeArtifactId, featureColumnsByBranch } = useSessionStore()
   const targetColumns = targetColumnsByBranch[branchId ?? ''] ?? (targetColumn ? [targetColumn] : [])
   const featureColumns = featureColumnsByBranch[branchId ?? ''] ?? []
@@ -55,43 +56,6 @@ export default function ChatPanel({ externalInput, onExternalInputConsumed }: Ch
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages.length, activeJobId])
-
-  // 외부에서 입력 삽입 (질문 템플릿 클릭)
-  useEffect(() => {
-    if (externalInput !== undefined && externalInput !== '') {
-      setInput(externalInput)
-      textareaRef.current?.focus()
-      onExternalInputConsumed?.()
-    }
-  }, [externalInput])
-
-  // scrollToMessageId 요청 처리
-  useEffect(() => {
-    if (!scrollToMessageId) return
-    const el = scrollContainerRef.current?.querySelector(`[data-message-id="${scrollToMessageId}"]`)
-    if (el) {
-      el.scrollIntoView({ behavior: 'smooth', block: 'start' })
-    }
-    clearScrollTo()
-  }, [scrollToMessageId])
-
-  // 새 어시스턴트 메시지 자동 펼침
-  useEffect(() => {
-    const last = messages[messages.length - 1]
-    if (last && last.role === 'assistant') {
-      setExpandedMsgs((prev) => new Set(prev).add(last.id))
-    }
-  }, [messages])
-
-  const handleCollapseAll = () => {
-    if (allCollapsed) {
-      // 모두 펼치기
-      setExpandedMsgs(new Set(messages.map((m) => m.id)))
-    } else {
-      // 모두 접기
-      setExpandedMsgs(new Set())
-    }
-  }
 
   const handleSend = useCallback(
     async (text: string) => {
@@ -136,6 +100,53 @@ export default function ChatPanel({ externalInput, onExternalInputConsumed }: Ch
     },
     [sessionId, branchId, currentBranchId, sending, mode, datasetId, targetColumns, featureColumns, targetDataframeArtifactId, addMessage, setActiveJob],
   )
+
+  // 외부에서 입력 삽입 (질문 템플릿 클릭/더블클릭)
+  useEffect(() => {
+    // text가 있을 때만 동작하도록 guard
+    if (externalInput) {
+      setInput(externalInput)
+      
+      // setTimeout을 사용하여 비동기적으로 실행 (React 렌더링 사이클에서 벗어남)
+      const timer = setTimeout(() => {
+        textareaRef.current?.focus()
+        if (immediateExecute) {
+          handleSend(externalInput)
+        }
+        onExternalInputConsumed?.()
+      }, 0)
+      
+      return () => clearTimeout(timer)
+    }
+  }, [externalInput, immediateExecute]) // handleSend와 onExternalInputConsumed 의존성 제거
+
+  // scrollToMessageId 요청 처리
+  useEffect(() => {
+    if (!scrollToMessageId) return
+    const el = scrollContainerRef.current?.querySelector(`[data-message-id="${scrollToMessageId}"]`)
+    if (el) {
+      el.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    }
+    clearScrollTo()
+  }, [scrollToMessageId])
+
+  // 새 어시스턴트 메시지 자동 펼침
+  useEffect(() => {
+    const last = messages[messages.length - 1]
+    if (last && last.role === 'assistant') {
+      setExpandedMsgs((prev) => new Set(prev).add(last.id))
+    }
+  }, [messages])
+
+  const handleCollapseAll = () => {
+    if (allCollapsed) {
+      // 모두 펼치기
+      setExpandedMsgs(new Set(messages.map((m) => m.id)))
+    } else {
+      // 모두 접기
+      setExpandedMsgs(new Set())
+    }
+  }
 
   const handleJobDone = useCallback(
     (job: import('@/types').Job) => {
@@ -378,7 +389,7 @@ export default function ChatPanel({ externalInput, onExternalInputConsumed }: Ch
 
 // ─── MessageBubble ────────────────────────────────────────────────────────────
 
-function MessageBubble({
+const MessageBubble = memo(({
   msg,
   isExpanded,
   onToggle,
@@ -386,26 +397,36 @@ function MessageBubble({
   msg: ChatMessage
   isExpanded: boolean
   onToggle: () => void
-}) {
+}) => {
   const isUser = msg.role === 'user'
   const isSystem = msg.role === 'system'
   const artifactIds = msg.artifact_ids ?? []
   const hasArtifacts = artifactIds.length > 0
 
-  const { artifacts: cached, cacheArtifact } = useArtifactStore()
   const { sessionId } = useSessionStore()
+  const cacheArtifact = useArtifactStore((state) => state.cacheArtifact)
+  
+  // 아티팩트 개별 구독 (selector 사용으로 불필요한 리렌더링 방지)
+  const artifacts = useArtifactStore((state) => 
+    artifactIds.map(id => state.artifacts[id]).filter(Boolean) as import('@/types').Artifact[]
+  )
+  const cachedMap = useArtifactStore((state) => state.artifacts)
+
+  const isAllCached = artifacts.length === artifactIds.length
 
   // 시스템 메시지는 항상 펼쳐진 상태로 아티팩트 fetch
   useEffect(() => {
     if (!sessionId || artifactIds.length === 0) return
     if (!isSystem && !isExpanded) return
-    const uncached = artifactIds.filter((id) => !cached[id])
-    uncached.forEach((id) => {
-      artifactsApi.preview(sessionId, id).then(cacheArtifact).catch(() => {})
-    })
-  }, [isExpanded, isSystem, artifactIds.join(','), sessionId])
+    if (isAllCached) return
 
-  const artifacts = artifactIds.map((id) => cached[id]).filter(Boolean) as import('@/types').Artifact[]
+    artifactIds.forEach((id) => {
+      if (!cachedMap[id]) {
+        artifactsApi.preview(sessionId, id).then(cacheArtifact).catch(() => {})
+      }
+    })
+  }, [isExpanded, isSystem, artifactIds.join(','), sessionId, isAllCached])
+
   const preview = msg.content.length > 100 ? msg.content.slice(0, 100) + '...' : msg.content
 
   // 시스템 메시지 (데이터셋 로드 등)는 별도 렌더링
@@ -414,7 +435,7 @@ function MessageBubble({
       <div data-message-id={msg.id} className="flex flex-col items-start w-full">
         <div className="w-full space-y-2">
           {/* 로딩 스켈레톤 */}
-          {artifactIds.filter((id) => !cached[id]).map((id) => (
+          {artifactIds.filter((id) => !cachedMap[id]).map((id) => (
             <div key={id} className="rounded-xl border border-amber-200 bg-amber-50/30 p-4 animate-pulse">
               <div className="h-3 bg-amber-200 rounded w-1/4 mb-3" />
               <div className="h-24 bg-amber-100 rounded" />
@@ -460,7 +481,7 @@ function MessageBubble({
               <div className="mt-3 space-y-2">
                 {/* 로딩 스켈레톤 */}
                 {artifactIds
-                  .filter((id) => !cached[id])
+                  .filter((id) => !cachedMap[id])
                   .map((id) => (
                     <div key={id} className="rounded-xl border border-gray-200 bg-white p-4 animate-pulse">
                       <div className="h-3 bg-gray-200 rounded w-1/4 mb-3" />
@@ -492,4 +513,4 @@ function MessageBubble({
       </div>
     </div>
   )
-}
+})

@@ -138,6 +138,9 @@ export const datasetsApi = {
     const raw = unwrap(res)
     return mapArtifactPreview(raw, sessionId)
   },
+  delete: async (sessionId: string, datasetId: string): Promise<void> => {
+    await http.delete(`/sessions/${sessionId}/datasets/${datasetId}`)
+  },
 }
 
 // ─── Branches ─────────────────────────────────────────────────────────────────

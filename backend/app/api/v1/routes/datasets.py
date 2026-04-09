@@ -236,3 +236,28 @@ async def get_dataset_preview(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=error_response(ErrorCode.INTERNAL_ERROR, f"데이터 로드 실패: {e}"),
         )
+
+
+@router.delete("/{dataset_id}", response_model=dict)
+async def delete_dataset_endpoint(
+    session_id: UUID,
+    dataset_id: UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """데이터셋 삭제"""
+    await validate_user_session(session_id, current_user.id, db)
+
+    service = DatasetService(db)
+    success = await service.delete_dataset(session_id, dataset_id)
+
+    if not success:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=error_response(
+                ErrorCode.DATASET_NOT_FOUND,
+                ERROR_MESSAGES[ErrorCode.DATASET_NOT_FOUND],
+            ),
+        )
+
+    return success_response({"message": "데이터셋 삭제 완료"})

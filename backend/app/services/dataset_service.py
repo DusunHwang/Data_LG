@@ -202,6 +202,30 @@ class DatasetService:
         buffer = io.BytesIO(data)
         return pd.read_parquet(buffer)
 
+    async def delete_dataset(
+        self,
+        session_id: UUID,
+        dataset_id: UUID,
+    ) -> bool:
+        """데이터셋 삭제"""
+        dataset = await self.dataset_repo.get(dataset_id)
+        if not dataset or dataset.session_id != session_id:
+            return False
+
+        # 세션의 활성 데이터셋인 경우 초기화
+        session = await self.session_repo.get(session_id)
+        if session and session.active_dataset_id == dataset_id:
+            await self.session_repo.update(session, {"active_dataset_id": None})
+
+        # 파일 삭제
+        await artifact_store.delete_artifact(session_id, dataset_id)
+
+        # DB 삭제
+        await self.dataset_repo.delete(dataset)
+
+        logger.info("데이터셋 삭제 완료", session_id=str(session_id), dataset_id=str(dataset_id))
+        return True
+
     async def _set_active_dataset(self, session_id: UUID, dataset_id: UUID) -> None:
         """세션의 활성 데이터셋 설정"""
         session = await self.session_repo.get(session_id)

@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useCallback } from 'react'
 import type { VllmMetric } from '@/types'
 
 const VLLM_METRICS_URL = '/api/v1/monitor/vllm-metrics'
-const POLL_INTERVAL = 1_000
+const POLL_INTERVAL = 3_000
 const MAX_HISTORY = 60
 
 function extractMetric(text: string, name: string): number {

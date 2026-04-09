@@ -12,14 +12,15 @@ import {
   LogOut,
   User,
   Activity,
+  Trash2,
 } from 'lucide-react'
 import { LineChart, Line, ResponsiveContainer } from 'recharts'
 import { sessionsApi, datasetsApi, branchesApi, authApi } from '@/api'
-import { useSessionStore, useAuthStore } from '@/store'
+import { useSessionStore, useAuthStore, useChatStore, useArtifactStore } from '@/store'
 import { useVllmMonitor } from '@/hooks/useVllmMonitor'
 
 interface SidebarProps {
-  onQuestionSelect: (text: string) => void
+  onQuestionSelect: (text: string, immediate?: boolean) => void
 }
 
 // ─── QuestionList.md 파싱 ─────────────────────────────────────────────────────
@@ -64,7 +65,7 @@ function QuestionTree({
   depth = 0,
 }: {
   nodes: QNode[]
-  onSelect: (text: string) => void
+  onSelect: (text: string, immediate?: boolean) => void
   depth?: number
 }) {
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set())
@@ -85,8 +86,9 @@ function QuestionTree({
           return (
             <button
               key={node.id}
-              onClick={() => onSelect(node.text)}
-              className="flex w-full items-start gap-1.5 rounded-md px-2 py-1.5 text-left text-xs text-gray-600 hover:bg-brand-red/5 hover:text-brand-red transition-colors group"
+              onClick={() => onSelect(node.text, false)}
+              onDoubleClick={() => onSelect(node.text, true)}
+              className="flex w-full items-start gap-1.5 rounded-md px-2 py-1.5 text-left text-xs text-gray-600 hover:bg-brand-red/5 hover:text-brand-red transition-colors group select-none"
             >
               <MessageSquare className="h-3 w-3 mt-0.5 shrink-0 text-gray-300 group-hover:text-brand-red/60" />
               <span className="leading-tight">{node.text}</span>
@@ -125,6 +127,8 @@ function QuestionTree({
 export default function Sidebar({ onQuestionSelect }: SidebarProps) {
   const qc = useQueryClient()
   const { sessionId, branchId, datasetId, setSessionId, setBranchId, setDatasetId } = useSessionStore()
+  const { clearHistory } = useChatStore()
+  const { clearArtifacts } = useArtifactStore()
   const { username, clearAuth } = useAuthStore()
 
   const [showBuiltin, setShowBuiltin] = useState(false)
@@ -133,6 +137,28 @@ export default function Sidebar({ onQuestionSelect }: SidebarProps) {
 
   const { metrics, isOnline } = useVllmMonitor(true)
   const sparkData = metrics.map((m) => ({ v: Math.round(m.genPerSec * 10) / 10 }))
+
+  const handleDatasetDelete = async (e: React.MouseEvent, id: string) => {
+    e.stopPropagation()
+    if (!sessionId || !confirm('데이터셋을 언로드하시겠습니까? 관련 데이터가 모두 제거됩니다.')) return
+
+    try {
+      await datasetsApi.delete(sessionId, id)
+      qc.invalidateQueries({ queryKey: ['datasets', sessionId] })
+      
+      if (datasetId === id) {
+        setDatasetId(null)
+      }
+      
+      // 채팅 기록 + 아티팩트 캐시 초기화
+      const currentBranchId = branchId ?? 'global'
+      clearHistory(currentBranchId)
+      clearArtifacts()
+      
+    } catch (err) {
+      alert('삭제 실패: ' + (err instanceof Error ? err.message : '알 수 없는 오류'))
+    }
+  }
 
   // ─── 자동 세션 관리 ────────────────────────────────────────────────────────
 
@@ -316,14 +342,23 @@ export default function Sidebar({ onQuestionSelect }: SidebarProps) {
             <div
               key={d.id}
               onClick={() => setDatasetId(d.id)}
-              className={`rounded-md px-2 py-1.5 cursor-pointer transition-colors ${
+              className={`group flex items-center justify-between rounded-md px-2 py-1.5 cursor-pointer transition-colors ${
                 datasetId === d.id ? 'bg-brand-red/10 text-brand-red' : 'text-gray-700 hover:bg-gray-100'
               }`}
             >
-              <p className="text-xs font-medium truncate">{d.name}</p>
-              <p className="text-xs text-gray-400">
-                {d.rows?.toLocaleString()} rows × {d.columns} cols
-              </p>
+              <div className="min-w-0 flex-1">
+                <p className="text-xs font-medium truncate">{d.name}</p>
+                <p className="text-xs text-gray-400">
+                  {d.rows?.toLocaleString()} rows × {d.columns} cols
+                </p>
+              </div>
+              <button
+                onClick={(e) => handleDatasetDelete(e, d.id)}
+                className="opacity-0 group-hover:opacity-100 ml-1 shrink-0 text-gray-400 hover:text-red-500 transition-all"
+                title="데이터셋 삭제"
+              >
+                <Trash2 className="h-3 w-3" />
+              </button>
             </div>
           ))}
           {sessionId && datasetsQuery.data?.length === 0 && (

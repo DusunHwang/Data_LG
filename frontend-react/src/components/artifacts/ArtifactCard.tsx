@@ -182,16 +182,29 @@ export default function ArtifactCard({ artifact }: ArtifactCardProps) {
                   )
                 })}
               </div>
-              <div className="flex items-center justify-between">
-                <span className="text-xs text-amber-700">
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-xs text-amber-700 min-w-0 truncate">
                   {pendingTargetCols.length > 0 ? `선택: ${pendingTargetCols.join(', ')}` : '선택 없음'}
                 </span>
-                <button
-                  onClick={commitTargetCols}
-                  className="flex items-center gap-1 rounded-md bg-amber-500 px-2.5 py-1 text-xs text-white hover:bg-amber-600"
-                >
-                  <Check className="h-3 w-3" /> 완료
-                </button>
+                <div className="flex gap-1 shrink-0">
+                  <button
+                    onClick={() => {
+                      setPendingTargetCols([])
+                      setTargetColumns(currentBranchId, [])
+                      setShowTargetSelector(false)
+                    }}
+                    className="flex items-center gap-1 rounded-md border border-gray-300 px-2.5 py-1 text-xs text-gray-600 hover:border-red-400 hover:text-red-600 hover:bg-red-50"
+                    title="타겟 컬럼 전체 초기화"
+                  >
+                    <X className="h-3 w-3" /> 리셋
+                  </button>
+                  <button
+                    onClick={commitTargetCols}
+                    className="flex items-center gap-1 rounded-md bg-amber-500 px-2.5 py-1 text-xs text-white hover:bg-amber-600"
+                  >
+                    <Check className="h-3 w-3" /> 완료
+                  </button>
+                </div>
               </div>
             </div>
           )}
@@ -398,6 +411,7 @@ function PlotRenderer({ artifact, onToggleZoom }: { artifact: Artifact; onToggle
 }
 
 function TableRenderer({ artifact, targetColumns = [] }: { artifact: Artifact; targetColumns?: string[] }) {
+  const [showAll, setShowAll] = useState(false)
   if (!artifact.data) return <p className="text-xs text-gray-400">데이터 없음</p>
 
   if (artifact.data.html) {
@@ -414,37 +428,41 @@ function TableRenderer({ artifact, targetColumns = [] }: { artifact: Artifact; t
 
   if (rows.length === 0) return <p className="text-xs text-gray-400">데이터 없음</p>
 
+  // 초기 렌더링 최적화: 100개 중 20개만 먼저 보여줌 (DOM 노드 급증 방지)
+  const displayRows = showAll ? rows : rows.slice(0, 20)
+  const hasMore = rows.length > 20 && !showAll
+
   return (
-    <div className="overflow-auto max-h-72 scrollbar-thin">
-      <table className="min-w-full text-xs border-collapse">
-        <thead>
-          <tr className="sticky top-0">
+    <div className="overflow-auto max-h-72 scrollbar-thin border border-gray-100 rounded">
+      <table className="min-w-full text-xs border-collapse table-fixed">
+        <thead className="z-10 sticky top-0">
+          <tr>
             {columns.map((col) => {
               const isTarget = targetColumns.includes(col)
               return (
                 <th
                   key={col}
-                  className={`border border-gray-200 px-2 py-1.5 text-left font-semibold whitespace-nowrap ${
+                  className={`border border-gray-200 px-2 py-1.5 text-left font-semibold whitespace-nowrap overflow-hidden text-ellipsis ${
                     isTarget ? 'bg-amber-100 text-amber-800' : 'bg-gray-50 text-gray-600'
                   }`}
+                  style={{ width: columns.length > 5 ? '120px' : 'auto' }}
                 >
                   {col}
-                  {isTarget && <span className="ml-1 text-amber-500">▲</span>}
                 </th>
               )
             })}
           </tr>
         </thead>
-        <tbody>
-          {rows.map((row, i) => (
-            <tr key={i} className={i % 2 === 0 ? 'bg-white' : 'bg-gray-50'}>
+        <tbody className="divide-y divide-gray-100">
+          {displayRows.map((row, i) => (
+            <tr key={i} className={i % 2 === 0 ? 'bg-white hover:bg-gray-50' : 'bg-gray-50/50 hover:bg-gray-50'}>
               {columns.map((col) => {
                 const isTarget = targetColumns.includes(col)
                 return (
                   <td
                     key={col}
-                    className={`border border-gray-200 px-2 py-1 whitespace-nowrap max-w-[200px] truncate ${
-                      isTarget ? 'bg-amber-50 text-amber-900 font-medium' : 'text-gray-700'
+                    className={`border-x border-gray-100 px-2 py-1.5 whitespace-nowrap overflow-hidden text-ellipsis ${
+                      isTarget ? 'bg-amber-50/50 text-amber-900 font-medium' : 'text-gray-700'
                     }`}
                   >
                     {String(row[col] ?? '')}
@@ -455,6 +473,14 @@ function TableRenderer({ artifact, targetColumns = [] }: { artifact: Artifact; t
           ))}
         </tbody>
       </table>
+      {hasMore && (
+        <button
+          onClick={() => setShowAll(true)}
+          className="w-full py-2 bg-gray-50 text-gray-500 hover:text-brand-red text-[11px] font-medium transition-colors border-t border-gray-100"
+        >
+          {rows.length - 20}개 더 보기...
+        </button>
+      )}
     </div>
   )
 }

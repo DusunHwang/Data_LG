@@ -160,15 +160,35 @@ export const useChatStore = create<ChatState>((set) => ({
 
 interface ArtifactCacheState {
   artifacts: Record<string, Artifact>
+  order: string[] // 아티팩트 ID 로드 순서 (LRU)
   cacheArtifact: (artifact: Artifact) => void
+  clearArtifacts: () => void
 }
+
+const MAX_ARTIFACT_CACHE = 30
 
 export const useArtifactStore = create<ArtifactCacheState>((set) => ({
   artifacts: {},
+  order: [],
   cacheArtifact: (artifact) =>
-    set((state) => ({
-      artifacts: { ...state.artifacts, [artifact.id]: artifact },
-    })),
+    set((state) => {
+      const nextArtifacts = { ...state.artifacts, [artifact.id]: artifact }
+      const nextOrder = [artifact.id, ...state.order.filter((id) => id !== artifact.id)]
+
+      // 캐시 제한 초과 시 가장 오래된 항목 삭제
+      if (nextOrder.length > MAX_ARTIFACT_CACHE) {
+        const toRemove = nextOrder.pop()
+        if (toRemove && toRemove !== artifact.id) {
+          delete nextArtifacts[toRemove]
+        }
+      }
+
+      return {
+        artifacts: nextArtifacts,
+        order: nextOrder,
+      }
+    }),
+  clearArtifacts: () => set({ artifacts: {}, order: [] }),
 }))
 
 export { genId }

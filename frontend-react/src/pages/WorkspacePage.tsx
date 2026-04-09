@@ -48,7 +48,10 @@ export default function WorkspacePage() {
   const { histories, addMessage } = useChatStore()
   const { cacheArtifact } = useArtifactStore()
 
-  const [externalInput, setExternalInput] = useState('')
+  const [externalInput, setExternalInput] = useState<{ text: string; immediate: boolean }>({
+    text: '',
+    immediate: false,
+  })
   const [leftWidth, setLeftWidth] = useState(240)
   const [rightWidth, setRightWidth] = useState(260)
 
@@ -92,11 +95,19 @@ export default function WorkspacePage() {
     setRightWidth((w) => Math.max(180, Math.min(480, w - delta)))
   }, [])
 
+  const handleQuestionSelect = useCallback((text: string, immediate = false) => {
+    setExternalInput({ text, immediate })
+  }, [])
+
+  const handleInputConsumed = useCallback(() => {
+    setExternalInput({ text: '', immediate: false })
+  }, [])
+
   return (
     <div className="flex h-screen overflow-hidden bg-gray-50">
       {/* 좌측 패널 */}
       <div style={{ width: leftWidth }} className="shrink-0 overflow-hidden">
-        <Sidebar onQuestionSelect={(text) => setExternalInput(text)} />
+        <Sidebar onQuestionSelect={handleQuestionSelect} />
       </div>
 
       <DragDivider onDrag={handleLeftDrag} />
@@ -104,8 +115,9 @@ export default function WorkspacePage() {
       {/* 중앙 채팅 패널 */}
       <div className="flex-1 flex flex-col min-w-0 bg-white overflow-hidden">
         <ChatPanel
-          externalInput={externalInput}
-          onExternalInputConsumed={() => setExternalInput('')}
+          externalInput={externalInput.text}
+          immediateExecute={externalInput.immediate}
+          onExternalInputConsumed={handleInputConsumed}
         />
       </div>
 
