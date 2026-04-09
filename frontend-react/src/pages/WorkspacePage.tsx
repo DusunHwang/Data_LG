@@ -46,7 +46,7 @@ function DragDivider({ onDrag }: { onDrag: (delta: number) => void }) {
 export default function WorkspacePage() {
   const { sessionId, branchId, datasetId, targetDataframeArtifactId, setTargetDataframeArtifactId } = useSessionStore()
   const { histories, addMessage } = useChatStore()
-  const { cacheArtifact } = useArtifactStore()
+  const { cacheArtifact, artifacts: cachedArtifacts } = useArtifactStore()
 
   const [externalInput, setExternalInput] = useState<{ text: string; immediate: boolean }>({
     text: '',
@@ -67,17 +67,22 @@ export default function WorkspacePage() {
 
     const artifactId = `dataset-${datasetId}`
     const currentMsgs = histories[branchId] ?? []
-    if (currentMsgs.some((m) => m.artifact_ids?.includes(artifactId))) return
 
-    addMessage(branchId, {
-      id: `sys-dataset-${datasetId}`,
-      role: 'system',
-      content: '데이터셋이 로드되었습니다.',
-      artifact_ids: [artifactId],
-      timestamp: new Date().toISOString(),
-    })
+    // 메시지가 없으면 추가
+    if (!currentMsgs.some((m) => m.artifact_ids?.includes(artifactId))) {
+      addMessage(branchId, {
+        id: `sys-dataset-${datasetId}`,
+        role: 'system',
+        content: '데이터셋이 로드되었습니다.',
+        artifact_ids: [artifactId],
+        timestamp: new Date().toISOString(),
+      })
+    }
 
-    datasetsApi.preview(sessionId, datasetId).then(cacheArtifact).catch(() => {})
+    // artifact가 cache에 없으면 항상 fetch (페이지 새로고침 후에도 복원)
+    if (!cachedArtifacts[artifactId]) {
+      datasetsApi.preview(sessionId, datasetId).then(cacheArtifact).catch(() => {})
+    }
 
     // 기존 명시적 타겟이 없으면 초기화 (베이스 데이터셋이 기본 타겟이 됨)
     if (!targetDataframeArtifactId) {

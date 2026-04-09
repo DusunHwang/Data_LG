@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useCallback } from 'react'
+import { useEffect, useRef, useState, useCallback, useMemo, memo } from 'react'
 import {
   MessageSquare,
   Table2,
@@ -92,21 +92,21 @@ interface ArtifactNodeProps {
   onSetAsTarget: (artifactId: string, messageId: string) => void
 }
 
-function ArtifactNode({
+const ArtifactNode = memo(function ArtifactNode({
   artifactId, messageId, isTargetDataframe, isNextSource,
   onScrollToArtifact, onSetAsTarget,
 }: ArtifactNodeProps) {
-  const { artifacts: cached, cacheArtifact } = useArtifactStore()
+  // 이 ID의 artifact만 구독 — 다른 artifact 변경 시 리렌더링 방지
+  const artifact = useArtifactStore((s) => s.artifacts[artifactId] as Artifact | undefined)
+  const cacheArtifact = useArtifactStore((s) => s.cacheArtifact)
   const { sessionId } = useSessionStore()
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null)
-
-  const artifact = cached[artifactId] as Artifact | undefined
 
   useEffect(() => {
     if (!artifact && sessionId) {
       artifactsApi.preview(sessionId, artifactId).then(cacheArtifact).catch(() => {})
     }
-  }, [artifactId, artifact, sessionId])
+  }, [artifactId, sessionId]) // artifact 제거: 로드 완료 후 재실행 불필요
 
   const isDataframe = artifact ? DF_TYPES.has(artifact.type) : false
   const label = artifact
@@ -151,7 +151,7 @@ function ArtifactNode({
       )}
     </div>
   )
-}
+})
 
 // ─── 질문 노드 (아이콘 + 요약 텍스트) ────────────────────────────────────────
 
@@ -184,21 +184,20 @@ function QuestionNode({
 
 // ─── 데이터셋 노드 ────────────────────────────────────────────────────────────
 
-function DatasetNode({
+const DatasetNode = memo(function DatasetNode({
   artifactId, messageId, isTargetDataframe, isNextSource,
   onScrollToArtifact, onSetAsTarget,
 }: ArtifactNodeProps) {
-  const { artifacts: cached, cacheArtifact } = useArtifactStore()
+  const artifact = useArtifactStore((s) => s.artifacts[artifactId] as Artifact | undefined)
+  const cacheArtifact = useArtifactStore((s) => s.cacheArtifact)
   const { sessionId } = useSessionStore()
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null)
-
-  const artifact = cached[artifactId] as Artifact | undefined
 
   useEffect(() => {
     if (!artifact && sessionId) {
       artifactsApi.preview(sessionId, artifactId).then(cacheArtifact).catch(() => {})
     }
-  }, [artifactId, artifact, sessionId])
+  }, [artifactId, sessionId])
 
   const label = artifact
     ? artifact.name.replace(/\s*\[[^\]]+\]/g, '').trim().slice(0, 9)
@@ -238,7 +237,7 @@ function DatasetNode({
       )}
     </div>
   )
-}
+})
 
 // ─── HistoryGraphPanel ────────────────────────────────────────────────────────
 
@@ -257,46 +256,47 @@ export default function HistoryGraphPanel() {
     assistantMsg?: ChatMessage
   }
 
-  const items: GraphItem[] = []
-  let i = 0
-  while (i < messages.length) {
-    const msg = messages[i]
-    if (msg.role === 'system') {
-      items.push({ type: 'dataset', sysMsg: msg })
-      i++
-    } else if (msg.role === 'user') {
-      const next = messages[i + 1]
-      if (next && next.role === 'assistant') {
-        items.push({ type: 'turn', userMsg: msg, assistantMsg: next })
-        i += 2
+  const items = useMemo(() => {
+    const result: GraphItem[] = []
+    let i = 0
+    while (i < messages.length) {
+      const msg = messages[i]
+      if (msg.role === 'system') {
+        result.push({ type: 'dataset', sysMsg: msg })
+        i++
+      } else if (msg.role === 'user') {
+        const next = messages[i + 1]
+        if (next && next.role === 'assistant') {
+          result.push({ type: 'turn', userMsg: msg, assistantMsg: next })
+          i += 2
+        } else {
+          result.push({ type: 'turn', userMsg: msg })
+          i++
+        }
       } else {
-        items.push({ type: 'turn', userMsg: msg })
         i++
       }
-    } else {
-      i++
     }
-  }
+    return result
+  }, [messages])
 
   const handleSetAsTarget = useCallback((artifactId: string, _messageId: string) => {
     setTargetDataframeArtifactId(artifactId)
     requestScrollToArtifact(artifactId)
   }, [setTargetDataframeArtifactId, requestScrollToArtifact])
 
-  // 다음 질문이 타겟으로 삼은 artifact ID (현재 아이템의 artifact가 다음 질문의 source인지 판단)
-  const getNextSourceId = (idx: number): string | null => {
+  const getNextSourceId = useCallback((idx: number): string | null => {
     const nextItem = items[idx + 1]
     if (!nextItem) return null
     if (nextItem.type === 'turn') return nextItem.userMsg?.targetDataframeId ?? null
     return null
-  }
+  }, [items])
 
-  // sourceLabel: 이전 아이템의 artifact 이름
-  const getSourceLabel = (targetDataframeId?: string): string | undefined => {
+  const getSourceLabel = useCallback((targetDataframeId?: string): string | undefined => {
     if (!targetDataframeId) return undefined
     const art = cached[targetDataframeId] as Artifact | undefined
     return art ? art.name.replace(/\s*\[[^\]]+\]/g, '').trim().slice(0, 8) : targetDataframeId.slice(0, 8)
-  }
+  }, [cached])
 
   return (
     <div className="flex h-full flex-col bg-gray-50">
