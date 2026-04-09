@@ -194,6 +194,7 @@ function mapArtifactPreview(raw: Record<string, unknown>, sessionId: string): Ar
       }
       break
     case 'plot':
+    case 'shap':
       data = {
         data_url: pj.data_url as string | undefined,
         plotly_json: pj.plotly_json as Record<string, unknown> | undefined,

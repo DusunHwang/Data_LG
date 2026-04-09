@@ -105,7 +105,8 @@ def run_modeling_subgraph(state: GraphState) -> GraphState:
         # 서브셋 탐색 결과물은 별도 브랜치로 이동 후에만 기준 데이터셋으로 사용 가능.
         training_datasets = []
 
-        full_data_features, feature_names = build_feature_matrix(df, target_col)
+        allowed_feature_cols = state.get("feature_columns") or []
+        full_data_features, feature_names = build_feature_matrix(df, target_col, allowed_feature_cols or None)
         if full_data_features is not None:
             training_datasets.append({
                 "name": "전체 데이터",
@@ -188,7 +189,7 @@ def select_champion(models: list) -> dict:
 
 
 def build_feature_matrix(
-    df: pd.DataFrame, target_col: str
+    df: pd.DataFrame, target_col: str, allowed_cols: Optional[List[str]] = None
 ) -> Tuple[Optional[pd.DataFrame], List[str]]:
     """
     피처 매트릭스 구성:
@@ -202,8 +203,14 @@ def build_feature_matrix(
     if len(df_clean) < 20:
         return None, []
 
-    # 피처 컬럼 선택
-    feature_cols = [c for c in df.columns if c != target_col]
+    # 피처 컬럼 선택: 사용자 지정 목록이 있으면 그것만, 없으면 전체에서 타겟 제외
+    if allowed_cols:
+        feature_cols = [c for c in allowed_cols if c != target_col and c in df.columns]
+        if not feature_cols:
+            # 지정된 컬럼이 데이터셋에 없는 경우 폴백
+            feature_cols = [c for c in df.columns if c != target_col]
+    else:
+        feature_cols = [c for c in df.columns if c != target_col]
 
     # 상수/ID형 제외
     exclude = []

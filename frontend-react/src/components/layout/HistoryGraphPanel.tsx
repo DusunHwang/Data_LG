@@ -61,10 +61,7 @@ function ContextMenu({
 
 // ─── 아이콘 매핑 ──────────────────────────────────────────────────────────────
 
-function ArtifactIconEl({ type, dataUrl }: { type: ArtifactType; dataUrl?: string }) {
-  if ((type === 'plot' || type === 'shap') && dataUrl) {
-    return <img src={dataUrl} alt="" className="h-6 w-6 rounded object-cover" />
-  }
+function ArtifactIconEl({ type }: { type: ArtifactType }) {
   const cls = 'h-5 w-5'
   switch (type) {
     case 'dataframe': case 'table': case 'leaderboard': case 'feature_importance':
@@ -91,13 +88,13 @@ interface ArtifactNodeProps {
   messageId: string
   isTargetDataframe: boolean
   isNextSource: boolean
-  onScrollToMessage: (id: string) => void
+  onScrollToArtifact: (artifactId: string) => void
   onSetAsTarget: (artifactId: string, messageId: string) => void
 }
 
 function ArtifactNode({
   artifactId, messageId, isTargetDataframe, isNextSource,
-  onScrollToMessage, onSetAsTarget,
+  onScrollToArtifact, onSetAsTarget,
 }: ArtifactNodeProps) {
   const { artifacts: cached, cacheArtifact } = useArtifactStore()
   const { sessionId } = useSessionStore()
@@ -112,7 +109,6 @@ function ArtifactNode({
   }, [artifactId, artifact, sessionId])
 
   const isDataframe = artifact ? DF_TYPES.has(artifact.type) : false
-  const dataUrl = artifact?.data?.data_url as string | undefined
   const label = artifact
     ? artifact.name.replace(/\s*\[[^\]]+\]/g, '').trim().slice(0, 9) || artifact.type
     : '…'
@@ -126,13 +122,13 @@ function ArtifactNode({
   return (
     <div className="flex flex-col items-center gap-0.5 relative">
       <button
-        onClick={() => onScrollToMessage(messageId)}
+        onClick={() => onScrollToArtifact(artifactId)}
         onContextMenu={(e) => { if (isDataframe) { e.preventDefault(); setMenu({ x: e.clientX, y: e.clientY }) } }}
         className={`relative flex items-center justify-center rounded-lg border p-1.5 transition-all ${borderCls}`}
         title={artifact?.name}
       >
         {artifact
-          ? <ArtifactIconEl type={artifact.type} dataUrl={dataUrl} />
+          ? <ArtifactIconEl type={artifact.type} />
           : <div className="h-5 w-5 rounded bg-gray-200 animate-pulse" />
         }
         {/* 소스 표시 (다음 질문의 입력 df) */}
@@ -190,7 +186,7 @@ function QuestionNode({
 
 function DatasetNode({
   artifactId, messageId, isTargetDataframe, isNextSource,
-  onScrollToMessage, onSetAsTarget,
+  onScrollToArtifact, onSetAsTarget,
 }: ArtifactNodeProps) {
   const { artifacts: cached, cacheArtifact } = useArtifactStore()
   const { sessionId } = useSessionStore()
@@ -217,7 +213,7 @@ function DatasetNode({
   return (
     <div className="flex flex-col items-center gap-0.5 relative">
       <button
-        onClick={() => onScrollToMessage(messageId)}
+        onClick={() => onScrollToArtifact(artifactId)}
         onContextMenu={(e) => { e.preventDefault(); setMenu({ x: e.clientX, y: e.clientY }) }}
         className={`relative flex items-center justify-center rounded-lg border p-1.5 transition-all ${borderCls}`}
         title={artifact?.name}
@@ -248,7 +244,7 @@ function DatasetNode({
 
 export default function HistoryGraphPanel() {
   const { branchId, datasetId, targetDataframeArtifactId, setTargetDataframeArtifactId } = useSessionStore()
-  const { histories, requestScrollTo } = useChatStore()
+  const { histories, requestScrollTo, requestScrollToArtifact } = useChatStore()
   const { artifacts: cached } = useArtifactStore()
 
   const currentBranchId = branchId ?? 'global'
@@ -282,10 +278,10 @@ export default function HistoryGraphPanel() {
     }
   }
 
-  const handleSetAsTarget = useCallback((artifactId: string, messageId: string) => {
+  const handleSetAsTarget = useCallback((artifactId: string, _messageId: string) => {
     setTargetDataframeArtifactId(artifactId)
-    requestScrollTo(messageId)
-  }, [setTargetDataframeArtifactId, requestScrollTo])
+    requestScrollToArtifact(artifactId)
+  }, [setTargetDataframeArtifactId, requestScrollToArtifact])
 
   // 다음 질문이 타겟으로 삼은 artifact ID (현재 아이템의 artifact가 다음 질문의 source인지 판단)
   const getNextSourceId = (idx: number): string | null => {
@@ -345,7 +341,7 @@ export default function HistoryGraphPanel() {
                             messageId={item.sysMsg!.id}
                             isTargetDataframe={isEffective}
                             isNextSource={id === nextSourceId}
-                            onScrollToMessage={requestScrollTo}
+                            onScrollToArtifact={requestScrollToArtifact}
                             onSetAsTarget={handleSetAsTarget}
                           />
                         )
@@ -390,7 +386,7 @@ export default function HistoryGraphPanel() {
                             messageId={assistantMsg!.id}
                             isTargetDataframe={isEffective}
                             isNextSource={id === nextSourceId}
-                            onScrollToMessage={requestScrollTo}
+                            onScrollToArtifact={requestScrollToArtifact}
                             onSetAsTarget={handleSetAsTarget}
                           />
                         )

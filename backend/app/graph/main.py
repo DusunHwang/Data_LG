@@ -142,6 +142,7 @@ def run_analysis_graph(
     selected_step_id: str = None,
     selected_artifact_id: str = None,
     target_column: str = None,
+    feature_columns: list = None,
     skip_job_finalize: bool = False,
 ) -> dict:
     """
@@ -181,6 +182,7 @@ def run_analysis_graph(
         selected_step_id=selected_step_id,
         selected_artifact_id=selected_artifact_id,
         target_column=target_column,
+        feature_columns=feature_columns or [],
         skip_job_finalize=skip_job_finalize,
         resolved_step_ids=[],
         resolved_artifact_ids=[],

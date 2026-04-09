@@ -397,6 +397,8 @@ function PlotRenderer({ artifact, onToggleZoom }: { artifact: Artifact; onToggle
       <img
         src={artifact.data.data_url}
         alt={artifact.name}
+        loading="lazy"
+        decoding="async"
         className="w-full rounded-md cursor-zoom-in"
         onClick={onToggleZoom}
       />

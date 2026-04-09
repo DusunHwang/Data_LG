@@ -70,4 +70,5 @@ class GraphState(TypedDict, total=False):
     dataset_path: Optional[str]  # 파케이 파일 경로
     mode: Optional[str]  # 분석 모드: auto/eda/subset_discovery/modeling/etc
     target_column: Optional[str]  # 사용자가 지정한 타겟 컬럼 (요청 파라미터)
+    feature_columns: Optional[List[str]]  # 사용자가 지정한 피처 컬럼 목록 (비어있으면 자동 선택)
     skip_job_finalize: Optional[bool]  # True이면 summarize 노드에서 job completed 처리 건너뜀 (iterative 중간 run)

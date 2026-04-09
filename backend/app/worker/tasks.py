@@ -50,6 +50,7 @@ def run_analysis_task(
         target_columns: list[str] = (context or {}).get("target_columns", [])
         if not target_columns and target_column:
             target_columns = [target_column]
+        feature_columns: list[str] = (context or {}).get("feature_columns") or []
 
         logger.info(
             "분석 작업 파라미터",
@@ -74,6 +75,7 @@ def run_analysis_task(
                 selected_step_id=context.get("selected_step_id") if context else None,
                 selected_artifact_id=context.get("selected_artifact_id") if context else None,
                 target_column=tc,
+                feature_columns=feature_columns or None,
                 skip_job_finalize=skip_finalize,
             )
 

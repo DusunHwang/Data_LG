@@ -34,7 +34,7 @@ export default function ChatPanel({ externalInput, immediateExecute, onExternalI
   const { sessionId, branchId, datasetId, targetColumn, targetColumnsByBranch, targetDataframeArtifactId, featureColumnsByBranch } = useSessionStore()
   const targetColumns = targetColumnsByBranch[branchId ?? ''] ?? (targetColumn ? [targetColumn] : [])
   const featureColumns = featureColumnsByBranch[branchId ?? ''] ?? []
-  const { histories, activeJobIds, addMessage, setActiveJob, scrollToMessageId, clearScrollTo } = useChatStore()
+  const { histories, activeJobIds, addMessage, setActiveJob, scrollToMessageId, clearScrollTo, scrollToArtifactId, clearScrollToArtifact } = useChatStore()
 
   const [input, setInput] = useState('')
   const [mode, setMode] = useState('auto')
@@ -129,6 +129,25 @@ export default function ChatPanel({ externalInput, immediateExecute, onExternalI
     }
     clearScrollTo()
   }, [scrollToMessageId])
+
+  // scrollToArtifactId 요청 처리: 메시지 펼침 후 정확한 아티팩트로 스크롤
+  useEffect(() => {
+    if (!scrollToArtifactId) return
+    // 해당 아티팩트를 포함한 메시지를 찾아 펼침
+    const msg = messages.find((m) => m.artifact_ids?.includes(scrollToArtifactId))
+    if (msg) {
+      setExpandedMsgs((prev) => new Set(prev).add(msg.id))
+    }
+    // DOM 업데이트 후 아티팩트로 스크롤
+    const timer = setTimeout(() => {
+      const el = scrollContainerRef.current?.querySelector(`[data-artifact-id="${scrollToArtifactId}"]`)
+      if (el) {
+        el.scrollIntoView({ behavior: 'smooth', block: 'start' })
+      }
+      clearScrollToArtifact()
+    }, 150)
+    return () => clearTimeout(timer)
+  }, [scrollToArtifactId])
 
   // 새 어시스턴트 메시지 자동 펼침
   useEffect(() => {
@@ -443,7 +462,9 @@ const MessageBubble = memo(({
           ))}
           {/* 아티팩트 카드 */}
           {artifacts.map((artifact) => (
-            <ArtifactCard key={artifact.id} artifact={artifact} />
+            <div key={artifact.id} data-artifact-id={artifact.id}>
+              <ArtifactCard artifact={artifact} />
+            </div>
           ))}
         </div>
       </div>
@@ -490,7 +511,9 @@ const MessageBubble = memo(({
                   ))}
                 {/* 캐시된 아티팩트 */}
                 {artifacts.map((artifact) => (
-                  <ArtifactCard key={artifact.id} artifact={artifact} />
+                  <div key={artifact.id} data-artifact-id={artifact.id}>
+                    <ArtifactCard artifact={artifact} />
+                  </div>
                 ))}
               </div>
             )}

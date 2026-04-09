@@ -79,7 +79,17 @@ export const useSessionStore = create<SessionState>()(
         set((state) => ({
           featureColumnsByBranch: { ...state.featureColumnsByBranch, [branchId]: cols },
         })),
-      setTargetDataframeArtifactId: (id) => set({ targetDataframeArtifactId: id }),
+      setTargetDataframeArtifactId: (id) =>
+        set((state) => {
+          if (id === state.targetDataframeArtifactId) return { targetDataframeArtifactId: id }
+          // 분석 대상이 바뀌면 현재 브랜치의 타겟/변수 설정 리셋
+          const bid = state.branchId ?? 'global'
+          return {
+            targetDataframeArtifactId: id,
+            targetColumnsByBranch: { ...state.targetColumnsByBranch, [bid]: [] },
+            featureColumnsByBranch: { ...state.featureColumnsByBranch, [bid]: [] },
+          }
+        }),
     }),
     {
       name: 'session-storage',
@@ -97,6 +107,7 @@ interface ChatState {
   activeJobIds: Record<string, string> // branchId -> jobId
   selectedArtifactIds: string[]
   scrollToMessageId: string | null
+  scrollToArtifactId: string | null
   addMessage: (branchId: string, msg: ChatMessage) => void
   updateMessage: (branchId: string, msgId: string, patch: Partial<ChatMessage>) => void
   setActiveJob: (branchId: string, jobId: string | null) => void
@@ -104,6 +115,8 @@ interface ChatState {
   clearHistory: (branchId: string) => void
   requestScrollTo: (messageId: string) => void
   clearScrollTo: () => void
+  requestScrollToArtifact: (artifactId: string) => void
+  clearScrollToArtifact: () => void
 }
 
 function genId() {
@@ -115,6 +128,7 @@ export const useChatStore = create<ChatState>((set) => ({
   activeJobIds: {},
   selectedArtifactIds: [],
   scrollToMessageId: null,
+  scrollToArtifactId: null,
 
   addMessage: (branchId, msg) =>
     set((state) => ({
@@ -154,6 +168,8 @@ export const useChatStore = create<ChatState>((set) => ({
 
   requestScrollTo: (messageId) => set({ scrollToMessageId: messageId }),
   clearScrollTo: () => set({ scrollToMessageId: null }),
+  requestScrollToArtifact: (artifactId) => set({ scrollToArtifactId: artifactId }),
+  clearScrollToArtifact: () => set({ scrollToArtifactId: null }),
 }))
 
 // ─── Artifact cache Store ─────────────────────────────────────────────────────
@@ -165,7 +181,7 @@ interface ArtifactCacheState {
   clearArtifacts: () => void
 }
 
-const MAX_ARTIFACT_CACHE = 30
+const MAX_ARTIFACT_CACHE = 20
 
 export const useArtifactStore = create<ArtifactCacheState>((set) => ({
   artifacts: {},
