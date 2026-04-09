@@ -46,11 +46,15 @@ interface SessionState {
   datasetId: string | null
   targetColumn: string | null                        // 사이드바 단일 선택 (레거시)
   targetColumnsByBranch: Record<string, string[]>   // 브랜치별 다중 타겟 컬럼
+  featureColumnsByBranch: Record<string, string[]>  // 브랜치별 변수(피처) 컬럼
+  targetDataframeArtifactId: string | null          // 명시적으로 설정된 타겟 데이터프레임
   setSessionId: (id: string | null) => void
   setBranchId: (id: string | null) => void
   setDatasetId: (id: string | null) => void
   setTargetColumn: (col: string | null) => void
   setTargetColumns: (branchId: string, cols: string[]) => void
+  setFeatureColumns: (branchId: string, cols: string[]) => void
+  setTargetDataframeArtifactId: (id: string | null) => void
 }
 
 export const useSessionStore = create<SessionState>()(
@@ -61,7 +65,9 @@ export const useSessionStore = create<SessionState>()(
       datasetId: null,
       targetColumn: null,
       targetColumnsByBranch: {},
-      setSessionId: (id) => set({ sessionId: id, branchId: null }),
+      featureColumnsByBranch: {},
+      targetDataframeArtifactId: null,
+      setSessionId: (id) => set({ sessionId: id, branchId: null, targetDataframeArtifactId: null }),
       setBranchId: (id) => set({ branchId: id }),
       setDatasetId: (id) => set({ datasetId: id }),
       setTargetColumn: (col) => set({ targetColumn: col }),
@@ -69,6 +75,11 @@ export const useSessionStore = create<SessionState>()(
         set((state) => ({
           targetColumnsByBranch: { ...state.targetColumnsByBranch, [branchId]: cols },
         })),
+      setFeatureColumns: (branchId, cols) =>
+        set((state) => ({
+          featureColumnsByBranch: { ...state.featureColumnsByBranch, [branchId]: cols },
+        })),
+      setTargetDataframeArtifactId: (id) => set({ targetDataframeArtifactId: id }),
     }),
     {
       name: 'session-storage',
@@ -85,11 +96,14 @@ interface ChatState {
   histories: ChatHistories
   activeJobIds: Record<string, string> // branchId -> jobId
   selectedArtifactIds: string[]
+  scrollToMessageId: string | null
   addMessage: (branchId: string, msg: ChatMessage) => void
   updateMessage: (branchId: string, msgId: string, patch: Partial<ChatMessage>) => void
   setActiveJob: (branchId: string, jobId: string | null) => void
   setSelectedArtifactIds: (ids: string[]) => void
   clearHistory: (branchId: string) => void
+  requestScrollTo: (messageId: string) => void
+  clearScrollTo: () => void
 }
 
 function genId() {
@@ -100,6 +114,7 @@ export const useChatStore = create<ChatState>((set) => ({
   histories: {},
   activeJobIds: {},
   selectedArtifactIds: [],
+  scrollToMessageId: null,
 
   addMessage: (branchId, msg) =>
     set((state) => ({
@@ -136,6 +151,9 @@ export const useChatStore = create<ChatState>((set) => ({
     set((state) => ({
       histories: { ...state.histories, [branchId]: [] },
     })),
+
+  requestScrollTo: (messageId) => set({ scrollToMessageId: messageId }),
+  clearScrollTo: () => set({ scrollToMessageId: null }),
 }))
 
 // ─── Artifact cache Store ─────────────────────────────────────────────────────

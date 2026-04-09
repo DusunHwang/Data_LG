@@ -1,100 +1,119 @@
-import { useState, useCallback, useEffect } from 'react'
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import Header from '@/components/layout/Header'
+import { useState, useRef, useEffect, useCallback } from 'react'
 import Sidebar from '@/components/layout/Sidebar'
 import ChatPanel from '@/components/chat/ChatPanel'
-import ArtifactPanel from '@/components/artifacts/ArtifactPanel'
+import HistoryGraphPanel from '@/components/layout/HistoryGraphPanel'
 import { useSessionStore, useChatStore, useArtifactStore } from '@/store'
-import { branchesApi, datasetsApi } from '@/api'
-import type { Artifact } from '@/types'
+import { datasetsApi } from '@/api'
 
-export default function WorkspacePage() {
-  const qc = useQueryClient()
-  const { sessionId, branchId, datasetId, setBranchId, targetColumnsByBranch, setTargetColumns } = useSessionStore()
-  const currentTargetColumns = targetColumnsByBranch[branchId ?? ''] ?? []
-  const { histories } = useChatStore()
-  const { cacheArtifact } = useArtifactStore()
+// ─── 드래그 분리선 ────────────────────────────────────────────────────────────
 
-  const currentBranchId = branchId ?? 'global'
-  const messages = histories[currentBranchId] ?? []
-  const [displayedArtifactIds, setDisplayedArtifactIds] = useState<string[]>([])
+function DragDivider({ onDrag }: { onDrag: (delta: number) => void }) {
+  const dragging = useRef(false)
+  const lastX = useRef(0)
 
-  // 현재 브랜치 config 조회
-  const branchesQuery = useQuery({
-    queryKey: ['branches', sessionId],
-    queryFn: () => branchesApi.list(sessionId!),
-    enabled: !!sessionId,
-  })
-  const currentBranch = branchesQuery.data?.find((b) => b.id === branchId)
-  const branchSourceArtifactId = currentBranch?.config?.source_artifact_id as string | undefined
+  const handleMouseDown = (e: React.MouseEvent) => {
+    dragging.current = true
+    lastX.current = e.clientX
+    e.preventDefault()
+  }
 
-  const baseDatasetArtifactId = branchSourceArtifactId ?? (datasetId ? `dataset-${datasetId}` : null)
-
-  // 브랜치 변경 시 표시 아티팩트 초기화 + 세션 데이터셋 preview fetch
   useEffect(() => {
-    setDisplayedArtifactIds([])
-    if (!sessionId || !branchId) return
-    if (!branchSourceArtifactId && datasetId) {
-      datasetsApi.preview(sessionId, datasetId)
-        .then(cacheArtifact)
-        .catch(() => {})
+    const onMove = (e: MouseEvent) => {
+      if (!dragging.current) return
+      const delta = e.clientX - lastX.current
+      lastX.current = e.clientX
+      onDrag(delta)
     }
-  }, [branchId, sessionId, datasetId, branchSourceArtifactId])
-
-  const handleArtifactsChange = useCallback((ids: string[]) => {
-    setDisplayedArtifactIds((prev) => {
-      const combined = [...new Set([...prev, ...ids])]
-      return combined
-    })
-  }, [])
-
-  // "New branch from artifact" → create branch
-  const createBranch = useMutation({
-    mutationFn: (artifact: Artifact) =>
-      branchesApi.create(sessionId!, {
-        name: `Branch from ${artifact.name}`,
-        config: { source_artifact_id: artifact.id },
-      }),
-    onSuccess: (branch) => {
-      qc.invalidateQueries({ queryKey: ['branches', sessionId] })
-      setBranchId(branch.id)
-    },
-  })
-
-  const handleNewBranch = useCallback(
-    (artifact: Artifact) => {
-      if (!sessionId) return
-      createBranch.mutate(artifact)
-    },
-    [sessionId, createBranch],
-  )
-
-  const allMsgArtifactIds = messages.flatMap((m) => m.artifact_ids ?? [])
-  const otherIds = [...new Set([...allMsgArtifactIds, ...displayedArtifactIds])]
-  const finalArtifactIds = baseDatasetArtifactId
-    ? [baseDatasetArtifactId, ...otherIds.filter((id) => id !== baseDatasetArtifactId)]
-    : otherIds
+    const onUp = () => { dragging.current = false }
+    document.addEventListener('mousemove', onMove)
+    document.addEventListener('mouseup', onUp)
+    return () => {
+      document.removeEventListener('mousemove', onMove)
+      document.removeEventListener('mouseup', onUp)
+    }
+  }, [onDrag])
 
   return (
-    <div className="flex h-screen flex-col overflow-hidden bg-gray-50">
-      <Header />
+    <div
+      onMouseDown={handleMouseDown}
+      className="w-1 shrink-0 bg-gray-200 hover:bg-brand-red/40 active:bg-brand-red/60 cursor-col-resize transition-colors select-none"
+    />
+  )
+}
 
-      <div className="flex flex-1 overflow-hidden">
-        <Sidebar />
+// ─── WorkspacePage ────────────────────────────────────────────────────────────
 
-        <div className="flex flex-1 flex-col min-w-0 border-r border-gray-200 bg-white" style={{ flex: '3' }}>
-          <ChatPanel onArtifactsChange={handleArtifactsChange} />
-        </div>
+export default function WorkspacePage() {
+  const { sessionId, branchId, datasetId, targetDataframeArtifactId, setTargetDataframeArtifactId } = useSessionStore()
+  const { histories, addMessage } = useChatStore()
+  const { cacheArtifact } = useArtifactStore()
 
-        <div className="flex flex-col min-w-0" style={{ flex: '2', minWidth: 320, maxWidth: 480 }}>
-          <ArtifactPanel
-            artifactIds={finalArtifactIds}
-            baseArtifactId={baseDatasetArtifactId}
-            targetColumns={currentTargetColumns}
-            onSetTargetColumns={(cols) => branchId && setTargetColumns(branchId, cols)}
-            onNewBranch={handleNewBranch}
-          />
-        </div>
+  const [externalInput, setExternalInput] = useState('')
+  const [leftWidth, setLeftWidth] = useState(240)
+  const [rightWidth, setRightWidth] = useState(260)
+
+  // ─── 데이터셋 → 채팅 자동 표시 ─────────────────────────────────────────────
+
+  const addedKeys = useRef<Set<string>>(new Set())
+
+  useEffect(() => {
+    if (!datasetId || !branchId || !sessionId) return
+    const key = `${datasetId}-${branchId}`
+    if (addedKeys.current.has(key)) return
+    addedKeys.current.add(key)
+
+    const artifactId = `dataset-${datasetId}`
+    const currentMsgs = histories[branchId] ?? []
+    if (currentMsgs.some((m) => m.artifact_ids?.includes(artifactId))) return
+
+    addMessage(branchId, {
+      id: `sys-dataset-${datasetId}`,
+      role: 'system',
+      content: '데이터셋이 로드되었습니다.',
+      artifact_ids: [artifactId],
+      timestamp: new Date().toISOString(),
+    })
+
+    datasetsApi.preview(sessionId, datasetId).then(cacheArtifact).catch(() => {})
+
+    // 기존 명시적 타겟이 없으면 초기화 (베이스 데이터셋이 기본 타겟이 됨)
+    if (!targetDataframeArtifactId) {
+      setTargetDataframeArtifactId(null)
+    }
+  }, [datasetId, branchId, sessionId])
+
+  // ─── 패널 리사이즈 ─────────────────────────────────────────────────────────
+
+  const handleLeftDrag = useCallback((delta: number) => {
+    setLeftWidth((w) => Math.max(160, Math.min(400, w + delta)))
+  }, [])
+
+  const handleRightDrag = useCallback((delta: number) => {
+    setRightWidth((w) => Math.max(180, Math.min(480, w - delta)))
+  }, [])
+
+  return (
+    <div className="flex h-screen overflow-hidden bg-gray-50">
+      {/* 좌측 패널 */}
+      <div style={{ width: leftWidth }} className="shrink-0 overflow-hidden">
+        <Sidebar onQuestionSelect={(text) => setExternalInput(text)} />
+      </div>
+
+      <DragDivider onDrag={handleLeftDrag} />
+
+      {/* 중앙 채팅 패널 */}
+      <div className="flex-1 flex flex-col min-w-0 bg-white overflow-hidden">
+        <ChatPanel
+          externalInput={externalInput}
+          onExternalInputConsumed={() => setExternalInput('')}
+        />
+      </div>
+
+      <DragDivider onDrag={handleRightDrag} />
+
+      {/* 우측 분석 흐름 패널 */}
+      <div style={{ width: rightWidth }} className="shrink-0 overflow-hidden">
+        <HistoryGraphPanel />
       </div>
     </div>
   )

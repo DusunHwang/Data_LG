@@ -8,19 +8,9 @@ import type { Artifact } from '@/types'
 
 interface ArtifactPanelProps {
   artifactIds: string[]
-  baseArtifactId?: string | null
-  targetColumns?: string[]
-  onSetTargetColumns?: (cols: string[]) => void
-  onNewBranch?: (artifact: Artifact) => void
 }
 
-export default function ArtifactPanel({
-  artifactIds,
-  baseArtifactId,
-  targetColumns = [],
-  onSetTargetColumns,
-  onNewBranch,
-}: ArtifactPanelProps) {
+export default function ArtifactPanel({ artifactIds }: ArtifactPanelProps) {
   const { sessionId } = useSessionStore()
   const { artifacts: cached, cacheArtifact } = useArtifactStore()
   const [reversed, setReversed] = useState(true)
@@ -89,10 +79,6 @@ export default function ArtifactPanel({
               <ArtifactCard
                 key={artifact.id}
                 artifact={artifact}
-                isBaseDataset={!!baseArtifactId && artifact.id === baseArtifactId}
-                targetColumns={targetColumns}
-                onSetTargetColumns={onSetTargetColumns}
-                onNewBranch={onNewBranch}
               />
             ))}
           </>

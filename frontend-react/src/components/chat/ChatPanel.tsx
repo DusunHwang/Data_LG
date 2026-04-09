@@ -8,6 +8,11 @@ import JobProgress from './JobProgress'
 import ArtifactCard from '@/components/artifacts/ArtifactCard'
 import InverseOptimizationModal from '@/components/optimization/InverseOptimizationModal'
 
+interface ChatPanelProps {
+  externalInput?: string
+  onExternalInputConsumed?: () => void
+}
+
 const ANALYSIS_MODES = [
   { value: 'auto', label: 'Auto' },
   { value: 'eda', label: 'EDA' },
@@ -24,14 +29,11 @@ const QUICK_ACTIONS = [
   { icon: BrainCircuit, label: '인자 최소화', message: '인자를 최소화해줘' },
 ]
 
-interface ChatPanelProps {
-  onArtifactsChange?: (ids: string[]) => void
-}
-
-export default function ChatPanel({ onArtifactsChange }: ChatPanelProps) {
-  const { sessionId, branchId, datasetId, targetColumn, targetColumnsByBranch } = useSessionStore()
+export default function ChatPanel({ externalInput, onExternalInputConsumed }: ChatPanelProps) {
+  const { sessionId, branchId, datasetId, targetColumn, targetColumnsByBranch, targetDataframeArtifactId, featureColumnsByBranch } = useSessionStore()
   const targetColumns = targetColumnsByBranch[branchId ?? ''] ?? (targetColumn ? [targetColumn] : [])
-  const { histories, activeJobIds, addMessage, setActiveJob } = useChatStore()
+  const featureColumns = featureColumnsByBranch[branchId ?? ''] ?? []
+  const { histories, activeJobIds, addMessage, setActiveJob, scrollToMessageId, clearScrollTo } = useChatStore()
 
   const [input, setInput] = useState('')
   const [mode, setMode] = useState('auto')
@@ -40,6 +42,7 @@ export default function ChatPanel({ onArtifactsChange }: ChatPanelProps) {
   const [expandedMsgs, setExpandedMsgs] = useState<Set<string>>(new Set())
   const bottomRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
+  const scrollContainerRef = useRef<HTMLDivElement>(null)
 
   const currentBranchId = branchId ?? 'global'
   const messages = histories[currentBranchId] ?? []
@@ -48,10 +51,29 @@ export default function ChatPanel({ onArtifactsChange }: ChatPanelProps) {
   // 모두 접힌 상태인지 판단 (메시지가 있고 expandedMsgs가 비어있을 때)
   const allCollapsed = messages.length > 0 && expandedMsgs.size === 0
 
-  // Auto-scroll
+  // Auto-scroll to bottom
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages.length, activeJobId])
+
+  // 외부에서 입력 삽입 (질문 템플릿 클릭)
+  useEffect(() => {
+    if (externalInput !== undefined && externalInput !== '') {
+      setInput(externalInput)
+      textareaRef.current?.focus()
+      onExternalInputConsumed?.()
+    }
+  }, [externalInput])
+
+  // scrollToMessageId 요청 처리
+  useEffect(() => {
+    if (!scrollToMessageId) return
+    const el = scrollContainerRef.current?.querySelector(`[data-message-id="${scrollToMessageId}"]`)
+    if (el) {
+      el.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    }
+    clearScrollTo()
+  }, [scrollToMessageId])
 
   // 새 어시스턴트 메시지 자동 펼침
   useEffect(() => {
@@ -80,6 +102,7 @@ export default function ChatPanel({ onArtifactsChange }: ChatPanelProps) {
         role: 'user',
         content: text.trim(),
         timestamp: new Date().toISOString(),
+        targetDataframeId: targetDataframeArtifactId ?? undefined,
       }
       addMessage(currentBranchId, userMsg)
       setInput('')
@@ -91,7 +114,13 @@ export default function ChatPanel({ onArtifactsChange }: ChatPanelProps) {
           branch_id: branchId,
           message: text.trim(),
           target_column: targetColumns[0] ?? undefined,
-          context: { mode, dataset_id: datasetId ?? undefined, target_columns: targetColumns },
+          context: {
+            mode,
+            dataset_id: datasetId ?? undefined,
+            target_columns: targetColumns,
+            feature_columns: featureColumns.length > 0 ? featureColumns : undefined,
+            target_dataframe_id: targetDataframeArtifactId ?? undefined,
+          },
         })
         setActiveJob(currentBranchId, result.job_id)
       } catch (err) {
@@ -105,7 +134,7 @@ export default function ChatPanel({ onArtifactsChange }: ChatPanelProps) {
         setSending(false)
       }
     },
-    [sessionId, branchId, currentBranchId, sending, mode, datasetId, targetColumns, addMessage, setActiveJob],
+    [sessionId, branchId, currentBranchId, sending, mode, datasetId, targetColumns, featureColumns, targetDataframeArtifactId, addMessage, setActiveJob],
   )
 
   const handleJobDone = useCallback(
@@ -126,7 +155,6 @@ export default function ChatPanel({ onArtifactsChange }: ChatPanelProps) {
           timestamp: new Date().toISOString(),
         }
         addMessage(currentBranchId, assistantMsg)
-        onArtifactsChange?.(job.result.artifact_ids ?? [])
       } else if (job.status === 'failed') {
         addMessage(currentBranchId, {
           id: genId(),
@@ -143,7 +171,7 @@ export default function ChatPanel({ onArtifactsChange }: ChatPanelProps) {
         })
       }
     },
-    [currentBranchId, setActiveJob, addMessage, onArtifactsChange],
+    [currentBranchId, setActiveJob, addMessage],
   )
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -175,7 +203,7 @@ export default function ChatPanel({ onArtifactsChange }: ChatPanelProps) {
       <div className="flex flex-1 flex-col items-center justify-center gap-4 text-gray-400">
         <BrainCircuit className="h-12 w-12 text-gray-300" />
         <div className="text-center">
-          <p className="text-sm font-medium text-gray-500">시작하려면 세션과 브랜치를 선택하세요</p>
+          <p className="text-sm font-medium text-gray-500">시작하려면 세션을 선택하세요</p>
           <p className="text-xs mt-1">좌측 사이드바에서 세션을 생성하거나 선택하세요</p>
         </div>
       </div>
@@ -199,7 +227,14 @@ export default function ChatPanel({ onArtifactsChange }: ChatPanelProps) {
           )}
           {targetColumns.length > 0 && (
             <span className="flex items-center gap-1">
-              Target: <strong className="text-brand-red">{targetColumns.join(', ')}</strong>
+              <Target className="h-3 w-3 text-amber-500" />
+              <strong className="text-amber-700">{targetColumns.join(', ')}</strong>
+            </span>
+          )}
+          {targetDataframeArtifactId && (
+            <span className="flex items-center gap-1 text-teal-600">
+              <span className="h-1.5 w-1.5 rounded-full bg-teal-500" />
+              데이터 지정됨
             </span>
           )}
         </div>
@@ -217,7 +252,7 @@ export default function ChatPanel({ onArtifactsChange }: ChatPanelProps) {
       </div>
 
       {/* Messages */}
-      <div className="flex-1 overflow-y-auto scrollbar-thin px-4 py-4 space-y-3 min-h-0">
+      <div ref={scrollContainerRef} className="flex-1 overflow-y-auto scrollbar-thin px-4 py-4 space-y-3 min-h-0">
         {messages.length === 0 && !activeJobId && (
           <div className="flex flex-col items-center justify-center h-full gap-4 text-center">
             <div className="h-14 w-14 rounded-full bg-brand-red/10 flex items-center justify-center">
@@ -257,7 +292,6 @@ export default function ChatPanel({ onArtifactsChange }: ChatPanelProps) {
               msg={msg}
               isExpanded={isExpanded}
               onToggle={() => toggleMsg(msg.id)}
-              onArtifactClick={(ids) => onArtifactsChange?.(ids)}
             />
           )
         })}
@@ -348,34 +382,55 @@ function MessageBubble({
   msg,
   isExpanded,
   onToggle,
-  onArtifactClick,
 }: {
   msg: ChatMessage
   isExpanded: boolean
   onToggle: () => void
-  onArtifactClick: (ids: string[]) => void
 }) {
   const isUser = msg.role === 'user'
+  const isSystem = msg.role === 'system'
   const artifactIds = msg.artifact_ids ?? []
   const hasArtifacts = artifactIds.length > 0
 
   const { artifacts: cached, cacheArtifact } = useArtifactStore()
   const { sessionId } = useSessionStore()
 
-  // 메시지 펼쳐질 때 아티팩트 fetch
+  // 시스템 메시지는 항상 펼쳐진 상태로 아티팩트 fetch
   useEffect(() => {
-    if (!isExpanded || !sessionId || artifactIds.length === 0) return
+    if (!sessionId || artifactIds.length === 0) return
+    if (!isSystem && !isExpanded) return
     const uncached = artifactIds.filter((id) => !cached[id])
     uncached.forEach((id) => {
       artifactsApi.preview(sessionId, id).then(cacheArtifact).catch(() => {})
     })
-  }, [isExpanded, artifactIds.join(','), sessionId])
+  }, [isExpanded, isSystem, artifactIds.join(','), sessionId])
 
   const artifacts = artifactIds.map((id) => cached[id]).filter(Boolean) as import('@/types').Artifact[]
   const preview = msg.content.length > 100 ? msg.content.slice(0, 100) + '...' : msg.content
 
+  // 시스템 메시지 (데이터셋 로드 등)는 별도 렌더링
+  if (isSystem) {
+    return (
+      <div data-message-id={msg.id} className="flex flex-col items-start w-full">
+        <div className="w-full space-y-2">
+          {/* 로딩 스켈레톤 */}
+          {artifactIds.filter((id) => !cached[id]).map((id) => (
+            <div key={id} className="rounded-xl border border-amber-200 bg-amber-50/30 p-4 animate-pulse">
+              <div className="h-3 bg-amber-200 rounded w-1/4 mb-3" />
+              <div className="h-24 bg-amber-100 rounded" />
+            </div>
+          ))}
+          {/* 아티팩트 카드 */}
+          {artifacts.map((artifact) => (
+            <ArtifactCard key={artifact.id} artifact={artifact} />
+          ))}
+        </div>
+      </div>
+    )
+  }
+
   return (
-    <div className={`flex flex-col ${isUser ? 'items-end' : 'items-start'}`}>
+    <div data-message-id={msg.id} className={`flex flex-col ${isUser ? 'items-end' : 'items-start'}`}>
       <div className={isUser ? 'chat-bubble-user' : 'chat-bubble-assistant'}>
 
         {/* ── 접힌 상태: 한 줄 미리보기 ── */}
@@ -416,16 +471,6 @@ function MessageBubble({
                 {artifacts.map((artifact) => (
                   <ArtifactCard key={artifact.id} artifact={artifact} />
                 ))}
-                {/* 우측 패널 열기 */}
-                {artifacts.length > 0 && (
-                  <button
-                    onClick={() => onArtifactClick(artifactIds)}
-                    className="flex items-center gap-1.5 text-xs text-gray-400 hover:text-brand-red transition-colors mt-1"
-                  >
-                    <BarChart2 className="h-3 w-3" />
-                    우측 패널에서 보기
-                  </button>
-                )}
               </div>
             )}
 

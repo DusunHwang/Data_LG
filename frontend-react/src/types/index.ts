@@ -175,6 +175,7 @@ export interface ChatMessage {
   artifact_ids?: string[]
   job_id?: string
   timestamp: string
+  targetDataframeId?: string   // 이 질문이 요청한 데이터프레임 artifact id
 }
 
 export interface HistoryEntry {
