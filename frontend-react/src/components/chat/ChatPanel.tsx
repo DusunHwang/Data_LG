@@ -40,7 +40,16 @@ export default function ChatPanel({ externalInput, immediateExecute, onExternalI
   const [mode, setMode] = useState('auto')
   const [sending, setSending] = useState(false)
   const [invOptOpen, setInvOptOpen] = useState(false)
-  const [expandedMsgs, setExpandedMsgs] = useState<Set<string>>(new Set())
+  // D: sessionStorage에서 펼침 상태 복원 (페이지 새로고침 후에도 유지)
+  const [expandedMsgs, setExpandedMsgs] = useState<Set<string>>(() => {
+    const key = `expanded-msgs-${branchId ?? 'global'}`
+    try {
+      const saved = sessionStorage.getItem(key)
+      return saved ? new Set(JSON.parse(saved) as string[]) : new Set()
+    } catch {
+      return new Set()
+    }
+  })
   const bottomRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const scrollContainerRef = useRef<HTMLDivElement>(null)
@@ -149,7 +158,24 @@ export default function ChatPanel({ externalInput, immediateExecute, onExternalI
     return () => clearTimeout(timer)
   }, [scrollToArtifactId])
 
-  // 새 어시스턴트 메시지 자동 펼침
+  // D: expandedMsgs → sessionStorage 동기화
+  useEffect(() => {
+    const key = `expanded-msgs-${currentBranchId}`
+    sessionStorage.setItem(key, JSON.stringify([...expandedMsgs]))
+  }, [expandedMsgs, currentBranchId])
+
+  // D: 브랜치 변경 시 sessionStorage에서 펼침 상태 재로드
+  useEffect(() => {
+    const key = `expanded-msgs-${currentBranchId}`
+    try {
+      const saved = sessionStorage.getItem(key)
+      setExpandedMsgs(saved ? new Set(JSON.parse(saved) as string[]) : new Set())
+    } catch {
+      setExpandedMsgs(new Set())
+    }
+  }, [currentBranchId])
+
+  // A: 새 어시스턴트 메시지 자동 펼침
   useEffect(() => {
     const last = messages[messages.length - 1]
     if (last && last.role === 'assistant') {
@@ -433,10 +459,10 @@ const MessageBubble = memo(({
 
   const isAllCached = artifacts.length === artifactIds.length
 
-  // 시스템 메시지는 항상 펼쳐진 상태로 아티팩트 fetch
+  // B: 접힌 상태와 무관하게 백그라운드에서 아티팩트 프리페치
+  // (렌더링은 isExpanded일 때만, fetch는 항상 수행해 확장 시 즉시 표시)
   useEffect(() => {
     if (!sessionId || artifactIds.length === 0) return
-    if (!isSystem && !isExpanded) return
     if (isAllCached) return
 
     artifactIds.forEach((id) => {
@@ -444,7 +470,7 @@ const MessageBubble = memo(({
         artifactsApi.preview(sessionId, id).then(cacheArtifact).catch(() => {})
       }
     })
-  }, [isExpanded, isSystem, artifactIds.join(','), sessionId, isAllCached])
+  }, [artifactIds.join(','), sessionId, isAllCached])
 
   const preview = msg.content.length > 100 ? msg.content.slice(0, 100) + '...' : msg.content
 

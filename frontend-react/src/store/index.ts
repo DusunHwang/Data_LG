@@ -181,7 +181,7 @@ interface ArtifactCacheState {
   clearArtifacts: () => void
 }
 
-const MAX_ARTIFACT_CACHE = 20
+const MAX_ARTIFACT_CACHE = 50
 
 export const useArtifactStore = create<ArtifactCacheState>((set) => ({
   artifacts: {},
