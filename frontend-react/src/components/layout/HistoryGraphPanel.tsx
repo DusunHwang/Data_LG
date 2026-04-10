@@ -9,6 +9,8 @@ import {
   Hash,
   GitGraph,
   Database,
+  Folder,
+  FolderOpen,
 } from 'lucide-react'
 import { useChatStore, useSessionStore, useArtifactStore } from '@/store'
 import { artifactsApi } from '@/api'
@@ -75,13 +77,15 @@ interface ArtifactNodeProps {
   messageId: string
   isTargetDataframe: boolean
   isNextSource: boolean
+  isSelected: boolean
   onScrollToArtifact: (artifactId: string) => void
   onSetAsTarget: (artifactId: string, messageId: string) => void
+  onSelect: (nodeId: string) => void
 }
 
 const ArtifactNode = memo(function ArtifactNode({
   artifactId, messageId, isTargetDataframe, isNextSource,
-  onScrollToArtifact, onSetAsTarget,
+  isSelected, onScrollToArtifact, onSetAsTarget, onSelect,
 }: ArtifactNodeProps) {
   // 이 ID의 artifact만 구독 — 다른 artifact 변경 시 리렌더링 방지
   const artifact = useArtifactStore((s) => s.artifacts[artifactId] as Artifact | undefined)
@@ -109,9 +113,11 @@ const ArtifactNode = memo(function ArtifactNode({
   return (
     <div id={`node-${artifactId}`} className="flex flex-col items-center gap-0.5 relative z-10 bg-white p-1.5 rounded shadow-sm border border-gray-100">
       <button
-        onClick={() => onScrollToArtifact(artifactId)}
+        onClick={() => { onSelect(`node-${artifactId}`); onScrollToArtifact(artifactId) }}
         onContextMenu={(e) => { if (isDataframe) { e.preventDefault(); setMenu({ x: e.clientX, y: e.clientY }) } }}
-        className={`relative flex items-center justify-center rounded-lg border p-2 transition-all ${borderCls}`}
+        className={`relative flex items-center justify-center rounded-lg border p-2 transition-all ${borderCls} ${
+          isSelected ? 'ring-2 ring-slate-300 ring-offset-1' : ''
+        }`}
         title={artifact?.name}
       >
         {artifact
@@ -137,8 +143,14 @@ const ArtifactNode = memo(function ArtifactNode({
 // ─── 질문 노드 (아이콘 + 요약 텍스트) ────────────────────────────────────────
 
 function QuestionNode({
-  msg, onScrollTo, sourceLabel,
-}: { msg: ChatMessage; onScrollTo: (id: string) => void; sourceLabel?: string }) {
+  msg, onScrollTo, sourceLabel, isSelected, onSelect,
+}: {
+  msg: ChatMessage
+  onScrollTo: (id: string) => void
+  sourceLabel?: string
+  isSelected: boolean
+  onSelect: (nodeId: string) => void
+}) {
   const preview = msg.content.length > 10 ? msg.content.slice(0, 10) + '…' : msg.content
 
   return (
@@ -150,8 +162,10 @@ function QuestionNode({
         </span>
       )}
       <button
-        onClick={() => onScrollTo(msg.id)}
-        className="relative z-10 flex items-center justify-center rounded-lg border border-indigo-200 bg-indigo-50 p-1.5 hover:border-indigo-400 hover:bg-indigo-100 transition-colors"
+        onClick={() => { onSelect(`node-msg-${msg.id}`); onScrollTo(msg.id) }}
+        className={`relative z-10 flex items-center justify-center rounded-lg border border-indigo-200 bg-indigo-50 p-1.5 hover:border-indigo-400 hover:bg-indigo-100 transition-colors ${
+          isSelected ? 'ring-2 ring-slate-300 ring-offset-1' : ''
+        }`}
         title={msg.content}
       >
         <MessageSquare className="h-5 w-5 text-indigo-500" />
@@ -163,11 +177,51 @@ function QuestionNode({
   )
 }
 
+function ResultGroupNode({
+  turnId,
+  artifactCount,
+  isExpanded,
+  onToggle,
+  isSelected,
+  onSelect,
+}: {
+  turnId: string
+  artifactCount: number
+  isExpanded: boolean
+  onToggle: (turnId: string) => void
+  isSelected: boolean
+  onSelect: (nodeId: string) => void
+}) {
+  const Icon = isExpanded ? FolderOpen : Folder
+
+  return (
+    <div id={`node-group-${turnId}`} className="flex flex-col items-center gap-1 z-10 relative">
+      <button
+        onClick={() => { onSelect(`node-group-${turnId}`); onToggle(turnId) }}
+        className={`flex items-center gap-2 rounded-xl border px-3 py-2 shadow-sm transition-all ${
+          isExpanded
+            ? 'border-amber-300 bg-amber-50 hover:border-amber-400'
+            : 'border-gray-200 bg-white hover:border-gray-400'
+        } ${isSelected ? 'ring-2 ring-slate-300 ring-offset-1' : ''}`}
+        title={isExpanded ? '결과 접기' : '결과 펼치기'}
+      >
+        <Icon className={`h-4 w-4 ${isExpanded ? 'text-amber-600' : 'text-gray-500'}`} />
+        <span className={`text-xs font-medium ${isExpanded ? 'text-amber-700' : 'text-gray-600'}`}>
+          결과 {artifactCount}개
+        </span>
+      </button>
+      <span className="text-[7px] text-gray-400 bg-gray-50 px-1 py-0.5 rounded">
+        {isExpanded ? '클릭하여 접기' : '클릭하여 펼치기'}
+      </span>
+    </div>
+  )
+}
+
 // ─── 데이터셋 노드 ────────────────────────────────────────────────────────────
 
 const DatasetNode = memo(function DatasetNode({
   artifactId, messageId, isTargetDataframe, isNextSource,
-  onScrollToArtifact, onSetAsTarget,
+  isSelected, onScrollToArtifact, onSetAsTarget, onSelect,
 }: ArtifactNodeProps) {
   const artifact = useArtifactStore((s) => s.artifacts[artifactId] as Artifact | undefined)
   const cacheArtifact = useArtifactStore((s) => s.cacheArtifact)
@@ -193,9 +247,11 @@ const DatasetNode = memo(function DatasetNode({
   return (
     <div id={`node-${artifactId}`} className="flex flex-col items-center gap-0.5 relative z-10 bg-white p-1.5 rounded shadow-sm border border-gray-100">
       <button
-        onClick={() => onScrollToArtifact(artifactId)}
+        onClick={() => { onSelect(`node-${artifactId}`); onScrollToArtifact(artifactId) }}
         onContextMenu={(e) => { e.preventDefault(); setMenu({ x: e.clientX, y: e.clientY }) }}
-        className={`relative z-10 flex items-center justify-center rounded-lg border p-2 transition-all ${borderCls}`}
+        className={`relative z-10 flex items-center justify-center rounded-lg border p-2 transition-all ${borderCls} ${
+          isSelected ? 'ring-2 ring-slate-300 ring-offset-1' : ''
+        }`}
         title={artifact?.name}
       >
         <Database className="h-5 w-5 text-emerald-600" />
@@ -221,6 +277,8 @@ export default function HistoryGraphPanel() {
   const { branchId, datasetId, targetDataframeArtifactId, setTargetDataframeArtifactId } = useSessionStore()
   const { histories, requestScrollTo, requestScrollToArtifact } = useChatStore()
   const { artifacts: cached } = useArtifactStore()
+  const [expandedTurnId, setExpandedTurnId] = useState<string | null>(null)
+  const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null)
 
   const currentBranchId = branchId ?? 'global'
   const messages = histories[currentBranchId] ?? []
@@ -256,6 +314,20 @@ export default function HistoryGraphPanel() {
     return result
   }, [messages])
 
+  useEffect(() => {
+    const lastTurn = [...items].reverse().find((item) => item.type === 'turn' && (item.assistantMsg?.artifact_ids?.length ?? 0) > 0)
+    if (!lastTurn || lastTurn.type !== 'turn') {
+      setExpandedTurnId(null)
+      return
+    }
+    setExpandedTurnId((current) => {
+      if (current && items.some((item) => item.type === 'turn' && item.userMsg?.id === current && (item.assistantMsg?.artifact_ids?.length ?? 0) > 0)) {
+        return current
+      }
+      return lastTurn.userMsg?.id ?? null
+    })
+  }, [items])
+
   const handleSetAsTarget = useCallback((artifactId: string, _messageId: string) => {
     setTargetDataframeArtifactId(artifactId)
     requestScrollToArtifact(artifactId)
@@ -274,9 +346,13 @@ export default function HistoryGraphPanel() {
     return art ? art.name.replace(/\s*\[[^\]]+\]/g, '').trim().slice(0, 8) : targetDataframeId.slice(0, 8)
   }, [cached])
 
+  const handleToggleGroup = useCallback((turnId: string) => {
+    setExpandedTurnId((current) => current === turnId ? null : turnId)
+  }, [])
+
   // --- SVG Paths calculation ---
   const contentRef = useRef<HTMLDivElement>(null)
-  const [paths, setPaths] = useState<{ id: string, d: string, color: string }[]>([])
+  const [paths, setPaths] = useState<{ id: string, fromId: string, toId: string, d: string, color: string }[]>([])
 
   const updatePaths = useCallback(() => {
     if (!contentRef.current) return
@@ -314,13 +390,15 @@ export default function HistoryGraphPanel() {
       }
     }
 
-    const newPaths: { id: string, d: string, color: string }[] = []
+    const newPaths: { id: string, fromId: string, toId: string, d: string, color: string }[] = []
     
     let implicitSourceId = datasetId ? `dataset-${datasetId}` : null
 
     items.forEach((item) => {
       if (item.type === 'dataset') {
-         implicitSourceId = datasetId ? `dataset-${datasetId}` : null
+         // 시스템 메시지에서 데이터셋 ID 추출
+         const artId = item.sysMsg!.artifact_ids?.[0]
+         if (artId) implicitSourceId = artId
       } else if (item.type === 'turn') {
          const sourceId = item.userMsg?.targetDataframeId || implicitSourceId
          
@@ -335,7 +413,7 @@ export default function HistoryGraphPanel() {
               const distX = Math.abs(startPoint.x - endPoint.x)
               if (distX < 20) {
                  const d = `M ${startPoint.x},${startPoint.y} C ${startPoint.x},${(startPoint.y + endPoint.y)/2} ${endPoint.x},${(startPoint.y + endPoint.y)/2} ${endPoint.x},${endPoint.y}`
-                 newPaths.push({ id: `${startElId}-${endElId}`, d, color: '#3b82f6' })
+                 newPaths.push({ id: `${startElId}-${endElId}`, fromId: startElId, toId: endElId, d, color: '#3b82f6' })
               } else {
                  const sideStart = getSideCenter(startElId, endPoint.x)
                  if (sideStart) {
@@ -344,7 +422,7 @@ export default function HistoryGraphPanel() {
                     const cp2X = endPoint.x
                     const cp2Y = endPoint.y - 40
                     const d = `M ${sideStart.x},${sideStart.y} C ${cp1X},${cp1Y} ${cp2X},${cp2Y} ${endPoint.x},${endPoint.y}`
-                    newPaths.push({ id: `${startElId}-${endElId}`, d, color: '#3b82f6' })
+                    newPaths.push({ id: `${startElId}-${endElId}`, fromId: startElId, toId: endElId, d, color: '#3b82f6' })
                  }
               }
             }
@@ -354,36 +432,58 @@ export default function HistoryGraphPanel() {
          const endElId = `node-msg-${item.userMsg!.id}`
          const qBottom = getCenterBottom(endElId)
          const artIds = item.assistantMsg?.artifact_ids ?? []
-         
-         artIds.forEach(artId => {
-            const resTop = getCenterTop(`node-${artId}`)
-            if (qBottom && resTop) {
-               const d = `M ${qBottom.x},${qBottom.y} C ${qBottom.x},${(qBottom.y + resTop.y)/2} ${resTop.x},${(qBottom.y + resTop.y)/2} ${resTop.x},${resTop.y}`
-               newPaths.push({ id: `${endElId}-node-${artId}`, d, color: '#8b5cf6' })
+         const isExpanded = expandedTurnId === item.userMsg!.id
+
+         if (artIds.length > 0) {
+            const groupId = `node-group-${item.userMsg!.id}`
+            const groupTop = getCenterTop(groupId)
+            if (qBottom && groupTop) {
+               const d = `M ${qBottom.x},${qBottom.y} C ${qBottom.x},${(qBottom.y + groupTop.y)/2} ${groupTop.x},${(qBottom.y + groupTop.y)/2} ${groupTop.x},${groupTop.y}`
+               newPaths.push({ id: `${endElId}-${groupId}`, fromId: endElId, toId: groupId, d, color: '#8b5cf6' })
             }
-         })
+         }
+
+         if (isExpanded) {
+            const groupId = `node-group-${item.userMsg!.id}`
+            const groupBottom = getCenterBottom(groupId)
+            artIds.forEach(artId => {
+               const resTop = getCenterTop(`node-${artId}`)
+               if (groupBottom && resTop) {
+                  const d = `M ${groupBottom.x},${groupBottom.y} C ${groupBottom.x},${(groupBottom.y + resTop.y)/2} ${resTop.x},${(groupBottom.y + resTop.y)/2} ${resTop.x},${resTop.y}`
+                  newPaths.push({ id: `${groupId}-node-${artId}`, fromId: groupId, toId: `node-${artId}`, d, color: '#8b5cf6' })
+               }
+            })
+         }
          
-         // Update implicit source only to "real" dataframes (exclude summaries/leaderboards)
+         // [핵심 수정] 다음 턴의 implicitSourceId 업데이트 로직 강화
+         // 단순히 'dataframe' 타입이라고 해서 소스가 되는 것이 아니라, 실질적인 분석 대상인 경우만 선택
          const dfArt = artIds.find(id => {
             const art = cached[id] as Artifact | undefined
             if (!art) return false
+            
+            // 1. 기본 타입 체크
             const isDfType = ['dataframe', 'table', 'leaderboard', 'feature_importance'].includes(art.type)
             if (!isDfType) return false
             
-            // Exclude summary tables and meta-dataframes from becoming the next implicit source
-            const metaType = art.data?.type || ''
+            // 2. 이름/메타데이터를 통한 제외 로직 (Summary, Report 등 제외)
             const name = art.name.toLowerCase()
-            const isSummary = ['schema_summary', 'missing_summary', 'leaderboard', 'feature_importance'].includes(String(metaType)) || 
-                              name.includes('요약') || name.includes('importance') || name.includes('현황')
+            const metaType = String(art.data?.type || '').toLowerCase()
             
-            return !isSummary
+            const forbiddenKeywords = ['요약', 'summary', 'importance', '중요도', '현황', '리더보드', 'leaderboard', 'profile', 'metric', '보고서']
+            const isForbidden = forbiddenKeywords.some(kw => name.includes(kw) || metaType.includes(kw))
+            
+            // 3. 'create_dataframe' 스텝에서 생성된 것이거나, 이름에 '결과'가 포함되거나, 요약이 아닌 경우만 새 소스로 인정
+            return !isForbidden
          })
-         if (dfArt) implicitSourceId = dfArt
+         
+         if (dfArt) {
+            implicitSourceId = dfArt
+         }
       }
     })
     
     setPaths(newPaths)
-  }, [items, datasetId, cached])
+  }, [items, datasetId, cached, expandedTurnId])
 
   useEffect(() => {
     const observer = new ResizeObserver(() => updatePaths())
@@ -396,6 +496,54 @@ export default function HistoryGraphPanel() {
     const timer = setTimeout(updatePaths, 100)
     return () => clearTimeout(timer)
   }, [items, updatePaths])
+
+  const { backgroundPaths, foregroundPaths } = useMemo(() => {
+    if (!selectedNodeId) {
+      return { backgroundPaths: paths, foregroundPaths: [] as typeof paths }
+    }
+    return {
+      backgroundPaths: paths.filter((path) => path.fromId !== selectedNodeId && path.toId !== selectedNodeId),
+      foregroundPaths: paths.filter((path) => path.fromId === selectedNodeId || path.toId === selectedNodeId),
+    }
+  }, [paths, selectedNodeId])
+
+  const getArrowMarkerId = useCallback((color: string, variant: 'background' | 'foreground') => {
+    const family = color === '#3b82f6' ? 'blue' : 'indigo'
+    return `url(#arrowhead-${variant}-${family})`
+  }, [])
+
+  const renderPaths = useCallback((renderedPaths: typeof paths, variant: 'background' | 'foreground') => {
+    const strokeOpacity = variant === 'background' ? 0.32 : 1
+    const haloOpacity = variant === 'background' ? 0.45 : 0.8
+    const strokeWidth = variant === 'background' ? 1.5 : 2
+    const haloWidth = variant === 'background' ? 3 : 4
+
+    return (
+      <>
+        {renderedPaths.map((path) => (
+          <path
+            key={`${variant}-halo-${path.id}`}
+            d={path.d}
+            stroke="white"
+            strokeWidth={haloWidth}
+            fill="none"
+            opacity={haloOpacity}
+          />
+        ))}
+        {renderedPaths.map((path) => (
+          <path
+            key={`${variant}-${path.id}`}
+            d={path.d}
+            stroke={path.color}
+            strokeWidth={strokeWidth}
+            fill="none"
+            opacity={strokeOpacity}
+            markerEnd={getArrowMarkerId(path.color, variant)}
+          />
+        ))}
+      </>
+    )
+  }, [getArrowMarkerId])
 
   return (
     <div className="flex h-full flex-col bg-gray-50">
@@ -419,26 +567,28 @@ export default function HistoryGraphPanel() {
           </div>
         ) : (
           <div className="relative flex flex-col items-center w-full gap-14 pb-12 pt-6" ref={contentRef}>
-            {/* SVG Overlay for Connections - Increased z-index to 30 to be above icons */}
+            <svg className="absolute top-0 left-0 w-full h-full pointer-events-none" style={{ zIndex: 0, overflow: 'visible' }}>
+              <defs>
+                <marker id="arrowhead-background-blue" markerWidth="6" markerHeight="4" refX="5" refY="2" orient="auto">
+                  <polygon points="0 0, 6 2, 0 4" fill="#3b82f6" opacity="0.32" />
+                </marker>
+                <marker id="arrowhead-background-indigo" markerWidth="6" markerHeight="4" refX="5" refY="2" orient="auto">
+                  <polygon points="0 0, 6 2, 0 4" fill="#8b5cf6" opacity="0.32" />
+                </marker>
+              </defs>
+              {renderPaths(backgroundPaths, 'background')}
+            </svg>
+
             <svg className="absolute top-0 left-0 w-full h-full pointer-events-none" style={{ zIndex: 30, overflow: 'visible' }}>
               <defs>
-                <marker id="arrowhead-blue" markerWidth="6" markerHeight="4" refX="5" refY="2" orient="auto">
+                <marker id="arrowhead-foreground-blue" markerWidth="6" markerHeight="4" refX="5" refY="2" orient="auto">
                   <polygon points="0 0, 6 2, 0 4" fill="#3b82f6" />
                 </marker>
-                <marker id="arrowhead-indigo" markerWidth="6" markerHeight="4" refX="5" refY="2" orient="auto">
+                <marker id="arrowhead-foreground-indigo" markerWidth="6" markerHeight="4" refX="5" refY="2" orient="auto">
                   <polygon points="0 0, 6 2, 0 4" fill="#8b5cf6" />
                 </marker>
               </defs>
-              {paths.map(p => (
-                <path 
-                  key={p.id} 
-                  d={p.d} 
-                  stroke={p.color} 
-                  strokeWidth="1.5" 
-                  fill="none" 
-                  markerEnd={p.color === '#3b82f6' ? 'url(#arrowhead-blue)' : 'url(#arrowhead-indigo)'} 
-                />
-              ))}
+              {renderPaths(foregroundPaths, 'foreground')}
             </svg>
 
             {items.map((item, idx) => {
@@ -460,8 +610,10 @@ export default function HistoryGraphPanel() {
                             messageId={item.sysMsg!.id}
                             isTargetDataframe={isEffective}
                             isNextSource={id === nextSourceId}
+                            isSelected={selectedNodeId === `node-${id}`}
                             onScrollToArtifact={requestScrollToArtifact}
                             onSetAsTarget={handleSetAsTarget}
+                            onSelect={setSelectedNodeId}
                           />
                         )
                       })}
@@ -474,6 +626,7 @@ export default function HistoryGraphPanel() {
               const { userMsg, assistantMsg } = item
               const artifactIds = assistantMsg?.artifact_ids ?? []
               const sourceLabel = getSourceLabel(userMsg?.targetDataframeId)
+              const isExpanded = expandedTurnId === userMsg!.id
 
               return (
                 <div key={userMsg!.id} className="flex flex-col items-center w-full gap-10 z-10 relative">
@@ -482,10 +635,23 @@ export default function HistoryGraphPanel() {
                     msg={userMsg!}
                     onScrollTo={requestScrollTo}
                     sourceLabel={sourceLabel}
+                    isSelected={selectedNodeId === `node-msg-${userMsg!.id}`}
+                    onSelect={setSelectedNodeId}
                   />
 
-                  {/* 아티팩트 행 */}
                   {artifactIds.length > 0 && (
+                    <ResultGroupNode
+                      turnId={userMsg!.id}
+                      artifactCount={artifactIds.length}
+                      isExpanded={isExpanded}
+                      onToggle={handleToggleGroup}
+                      isSelected={selectedNodeId === `node-group-${userMsg!.id}`}
+                      onSelect={setSelectedNodeId}
+                    />
+                  )}
+
+                  {/* 아티팩트 행 */}
+                  {artifactIds.length > 0 && isExpanded && (
                     <div className="flex flex-row flex-wrap gap-12 justify-center w-full">
                       {artifactIds.map((id) => {
                         const isEffective = id === targetDataframeArtifactId ||
@@ -497,8 +663,10 @@ export default function HistoryGraphPanel() {
                             messageId={assistantMsg!.id}
                             isTargetDataframe={isEffective}
                             isNextSource={id === nextSourceId}
+                            isSelected={selectedNodeId === `node-${id}`}
                             onScrollToArtifact={requestScrollToArtifact}
                             onSetAsTarget={handleSetAsTarget}
+                            onSelect={setSelectedNodeId}
                           />
                         )
                       })}

@@ -228,7 +228,20 @@ def load_session_context(state: GraphState) -> GraphState:
         branch_config = active_branch_data.get("config") or {}
         branch_dataset_path = branch_config.get("dataset_path")
 
-        if not branch_dataset_path:
+        # 1순위: 요청 시 직접 지정된 아티팩트 (UI에서 '분석 대상으로 설정' 클릭 시)
+        selected_artifact_id = state.get("selected_artifact_id")
+        if selected_artifact_id:
+            cur.execute(
+                "SELECT file_path FROM artifacts WHERE id = ?",
+                (selected_artifact_id,),
+            )
+            art_row = cur.fetchone()
+            if art_row and art_row[0]:
+                dataset_path = art_row[0]
+                logger.info("요청 selected_artifact_id로 dataset_path 오버라이드", artifact_id=selected_artifact_id, path=dataset_path)
+
+        # 2순위: 브랜치 설정에 고정된 dataset_path 또는 source_artifact_id
+        elif not branch_dataset_path:
             source_artifact_id = branch_config.get("source_artifact_id")
             if source_artifact_id:
                 cur.execute(
@@ -240,7 +253,7 @@ def load_session_context(state: GraphState) -> GraphState:
                     branch_dataset_path = art_row[0]
                     logger.info("source_artifact_id로 dataset_path 해결", artifact_id=source_artifact_id, path=branch_dataset_path)
 
-        if branch_dataset_path:
+        if not selected_artifact_id and branch_dataset_path:
             dataset_path = branch_dataset_path
             logger.info("브랜치 dataset_path 오버라이드", path=branch_dataset_path)
 

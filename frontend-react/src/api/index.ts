@@ -175,6 +175,29 @@ export const branchesApi = {
 
 // ─── Artifacts ────────────────────────────────────────────────────────────────
 
+function normalizeTableRows(
+  columns: string[],
+  previewJson: Record<string, unknown>,
+): Record<string, unknown>[] {
+  const recordRows = previewJson.data
+  if (Array.isArray(recordRows)) {
+    return recordRows as Record<string, unknown>[]
+  }
+
+  const matrixRows = previewJson.rows
+  if (Array.isArray(matrixRows)) {
+    return matrixRows.map((row) => {
+      if (!Array.isArray(row)) return {} as Record<string, unknown>
+      return columns.reduce<Record<string, unknown>>((acc, col, index) => {
+        acc[col] = row[index]
+        return acc
+      }, {})
+    })
+  }
+
+  return []
+}
+
 function mapArtifactPreview(raw: Record<string, unknown>, sessionId: string): Artifact {
   const artifactType = String(raw.artifact_type ?? 'text') as ArtifactType
   const pj = (raw.preview_json ?? {}) as Record<string, unknown>
@@ -186,11 +209,15 @@ function mapArtifactPreview(raw: Record<string, unknown>, sessionId: string): Ar
     case 'table':
     case 'leaderboard':
     case 'feature_importance':
+      {
+        const columns = (pj.columns ?? []) as string[]
+        const rows = normalizeTableRows(columns, pj)
       data = {
-        rows: (pj.data ?? []) as Record<string, unknown>[],
-        columns: (pj.columns ?? []) as string[],
+        rows,
+        columns,
         total_rows: pj.total_rows as number | undefined,
         total_cols: pj.total_cols as number | undefined,
+      }
       }
       break
     case 'plot':

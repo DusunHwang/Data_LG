@@ -9,6 +9,38 @@ from app.worker.progress import ProgressReporter, clear_progress
 logger = get_logger(__name__)
 
 
+TARGET_INDEPENDENT_INTENTS = {
+    "dataset_profile",
+    "eda",
+    "subset_discovery",
+    "create_dataframe",
+}
+
+
+def _infer_requested_intent(mode: str, message: str) -> str:
+    """반복 실행 여부 판단용 경량 인텐트 추정."""
+    if mode == "dataset_profile":
+        return "dataset_profile"
+    if mode == "eda":
+        return "eda"
+    if mode == "subset_discovery":
+        return "subset_discovery"
+    if mode == "create_dataframe":
+        return "create_dataframe"
+    if mode in {"modeling", "baseline_modeling"}:
+        return "baseline_modeling"
+    if mode in {"shap", "shap_analysis"}:
+        return "shap_analysis"
+    if mode in {"optimization"}:
+        return "optimization"
+    if mode in {"simplify", "simplify_model"}:
+        return "simplify_model"
+
+    from app.graph.nodes.classify_intent import _keyword_classify
+
+    return _keyword_classify(message)
+
+
 def run_analysis_task(
     job_run_id: str,
     session_id: str,
@@ -61,10 +93,13 @@ def run_analysis_task(
             context_keys=list((context or {}).keys()),
         )
 
-        # 타겟이 복수면 iterative 실행 (단, 타겟 무관 모드는 한 번만 실행)
-        TARGET_INDEPENDENT_MODES = {"dataset_profile", "subset_discovery", "create_dataframe"}
+        # 타겟이 복수여도 프로파일/EDA/서브셋/데이터프레임 생성은 한 번만 실행
+        requested_intent = _infer_requested_intent(mode, message)
 
         def _run_once(tc, skip_finalize=False):
+            # context에서 UI 선택 아티팩트 ID 추출 (target_dataframe_id 우선)
+            sel_art_id = (context or {}).get("target_dataframe_id") or (context or {}).get("selected_artifact_id")
+            
             return run_analysis_graph(
                 job_run_id=job_run_id,
                 session_id=session_id,
@@ -73,19 +108,19 @@ def run_analysis_task(
                 branch_id=branch_id,
                 mode=mode,
                 selected_step_id=context.get("selected_step_id") if context else None,
-                selected_artifact_id=context.get("selected_artifact_id") if context else None,
+                selected_artifact_id=sel_art_id,
                 target_column=tc,
                 feature_columns=feature_columns or None,
                 skip_job_finalize=skip_finalize,
             )
 
-        if len(target_columns) > 1 and mode not in TARGET_INDEPENDENT_MODES:
+        if len(target_columns) > 1 and requested_intent not in TARGET_INDEPENDENT_INTENTS:
             all_artifact_ids: list[str] = []
             all_messages: list[str] = []
             final_state = {}
             for i, tc in enumerate(target_columns):
                 is_last = (i == len(target_columns) - 1)
-                reporter.update(20, f"타겟 '{tc}' 모델링 중... ({i+1}/{len(target_columns)})")
+                reporter.update(20, f"타겟 '{tc}' 분석 중... ({i+1}/{len(target_columns)})")
                 state = _run_once(tc, skip_finalize=not is_last)
                 final_state = state
                 all_artifact_ids.extend(state.get("created_artifact_ids", []))
@@ -93,7 +128,7 @@ def run_analysis_task(
                 if msg:
                     all_messages.append(f"[{tc}] {msg}")
             final_state["created_artifact_ids"] = all_artifact_ids
-            final_state["assistant_message"] = "\n\n".join(all_messages) or f"{len(target_columns)}개 타겟 모델링 완료"
+            final_state["assistant_message"] = "\n\n".join(all_messages) or f"{len(target_columns)}개 타겟 분석 완료"
         else:
             final_state = _run_once(target_columns[0] if target_columns else None)
 

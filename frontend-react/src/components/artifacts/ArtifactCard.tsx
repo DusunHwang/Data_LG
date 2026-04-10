@@ -435,8 +435,8 @@ function TableRenderer({ artifact, targetColumns = [] }: { artifact: Artifact; t
   const hasMore = rows.length > 20 && !showAll
 
   return (
-    <div className="overflow-auto max-h-72 scrollbar-thin border border-gray-100 rounded">
-      <table className="min-w-full text-xs border-collapse table-fixed">
+    <div className="overflow-x-auto overflow-y-auto max-h-72 scrollbar-thin border border-gray-100 rounded">
+      <table className="min-w-max w-full text-xs border-collapse table-auto">
         <thead className="z-10 sticky top-0">
           <tr>
             {columns.map((col) => {
@@ -444,10 +444,10 @@ function TableRenderer({ artifact, targetColumns = [] }: { artifact: Artifact; t
               return (
                 <th
                   key={col}
-                  className={`border border-gray-200 px-2 py-1.5 text-left font-semibold whitespace-nowrap overflow-hidden text-ellipsis ${
+                  className={`border border-gray-200 px-2 py-1.5 text-left font-semibold whitespace-nowrap ${
                     isTarget ? 'bg-amber-100 text-amber-800' : 'bg-gray-50 text-gray-600'
                   }`}
-                  style={{ width: columns.length > 5 ? '120px' : 'auto' }}
+                  style={{ minWidth: columns.length > 5 ? '120px' : 'max-content' }}
                 >
                   {col}
                 </th>
@@ -463,9 +463,10 @@ function TableRenderer({ artifact, targetColumns = [] }: { artifact: Artifact; t
                 return (
                   <td
                     key={col}
-                    className={`border-x border-gray-100 px-2 py-1.5 whitespace-nowrap overflow-hidden text-ellipsis ${
+                    className={`border-x border-gray-100 px-2 py-1.5 align-top whitespace-nowrap ${
                       isTarget ? 'bg-amber-50/50 text-amber-900 font-medium' : 'text-gray-700'
                     }`}
+                    style={{ minWidth: columns.length > 5 ? '120px' : 'max-content', maxWidth: 320 }}
                   >
                     {String(row[col] ?? '')}
                   </td>

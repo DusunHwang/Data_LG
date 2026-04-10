@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useCallback, memo } from 'react'
-import { Send, ChevronDown, ChevronRight, Zap, BarChart2, BrainCircuit, Target, ChevronsUpDown, FlaskConical } from 'lucide-react'
+import { Send, ChevronDown, ChevronRight, Zap, BarChart2, BrainCircuit, Target, ChevronsUpDown, FlaskConical, X } from 'lucide-react'
 import { analysisApi, artifactsApi } from '@/api'
 import { useChatStore, useSessionStore, useArtifactStore, genId } from '@/store'
 import type { ChatMessage } from '@/types'
@@ -34,7 +34,17 @@ export default function ChatPanel({ externalInput, immediateExecute, onExternalI
   const { sessionId, branchId, datasetId, targetColumn, targetColumnsByBranch, targetDataframeArtifactId, featureColumnsByBranch } = useSessionStore()
   const targetColumns = targetColumnsByBranch[branchId ?? ''] ?? (targetColumn ? [targetColumn] : [])
   const featureColumns = featureColumnsByBranch[branchId ?? ''] ?? []
-  const { histories, activeJobIds, addMessage, setActiveJob, scrollToMessageId, clearScrollTo, scrollToArtifactId, clearScrollToArtifact } = useChatStore()
+  const {
+    histories,
+    activeJobIds,
+    addMessage,
+    setActiveJob,
+    scrollToMessageId,
+    clearScrollTo,
+    requestScrollToArtifact,
+    scrollToArtifactId,
+    clearScrollToArtifact,
+  } = useChatStore()
 
   const [input, setInput] = useState('')
   const [mode, setMode] = useState('auto')
@@ -57,6 +67,9 @@ export default function ChatPanel({ externalInput, immediateExecute, onExternalI
   const currentBranchId = branchId ?? 'global'
   const messages = histories[currentBranchId] ?? []
   const activeJobId = activeJobIds[currentBranchId] ?? null
+
+  const { artifacts: cachedMap } = useArtifactStore()
+  const activeDf = targetDataframeArtifactId ? cachedMap[targetDataframeArtifactId] : null
 
   // 모두 접힌 상태인지 판단 (메시지가 있고 expandedMsgs가 비어있을 때)
   const allCollapsed = messages.length > 0 && expandedMsgs.size === 0
@@ -363,6 +376,33 @@ export default function ChatPanel({ externalInput, immediateExecute, onExternalI
 
       {/* Input area */}
       <div className="border-t border-gray-200 bg-white p-3 shrink-0">
+        {/* Quick access to active target dataframe */}
+        {targetDataframeArtifactId && (
+          <div className="flex items-center justify-between gap-2 px-3 py-1.5 mb-2 bg-teal-50 border border-teal-100 rounded-lg">
+            <div className="flex items-center gap-2 min-w-0">
+              <div className="h-2 w-2 rounded-full bg-teal-500 animate-pulse" />
+              <span className="text-[11px] text-teal-700 font-medium truncate">
+                분석 대상: {activeDf?.name || '데이터프레임'}
+              </span>
+            </div>
+            <div className="flex items-center gap-1 shrink-0">
+              <button
+                onClick={() => requestScrollToArtifact(targetDataframeArtifactId)}
+                className="text-[10px] bg-white border border-teal-200 text-teal-600 px-2 py-0.5 rounded hover:bg-teal-100 transition-colors"
+              >
+                위치로 이동
+              </button>
+              <button
+                onClick={() => useSessionStore.getState().setTargetDataframeArtifactId(null)}
+                className="text-[10px] text-gray-400 hover:text-red-500 p-0.5"
+                title="대상 해제"
+              >
+                <X className="h-3 w-3" />
+              </button>
+            </div>
+          </div>
+        )}
+
         {/* Quick actions row */}
         <div className="flex gap-1.5 mb-2 overflow-x-auto scrollbar-thin pb-1">
           {QUICK_ACTIONS.map((qa) => (
@@ -462,6 +502,10 @@ const MessageBubble = memo(({
   const lines = msg.content.split('\n').length
   const shouldToggle = lines > 3 || hasArtifacts
 
+  const [showAllArtifacts, setShowAllArtifacts] = useState(false)
+  const displayedArtifacts = showAllArtifacts ? artifacts : artifacts.slice(0, 3)
+  const remainingCount = artifacts.length - displayedArtifacts.length
+
   // B: 접힌 상태와 무관하게 백그라운드에서 아티팩트 프리페치
   // (렌더링은 isExpanded일 때만, fetch는 항상 수행해 확장 시 즉시 표시)
   useEffect(() => {
@@ -501,7 +545,7 @@ const MessageBubble = memo(({
   }
 
   return (
-    <div data-message-id={msg.id} className={`flex flex-col ${isUser ? 'items-end' : 'items-start'}`}>
+    <div data-message-id={msg.id} className={`flex flex-col ${isUser ? 'items-end' : 'items-start'} ${isUser ? '' : 'w-full'}`}>
       <div className={isUser ? 'chat-bubble-user' : 'chat-bubble-assistant'}>
 
         {/* ── 접힌 상태 ── */}
@@ -530,27 +574,6 @@ const MessageBubble = memo(({
             {/* ── 펼친 상태: 본문 ── */}
             <div className="text-sm whitespace-pre-wrap leading-relaxed">{msg.content}</div>
 
-            {/* ── 인라인 아티팩트 (말풍선 안) ── */}
-            {hasArtifacts && (
-              <div className="mt-3 space-y-2">
-                {/* 로딩 스켈레톤 */}
-                {artifactIds
-                  .filter((id) => !cachedMap[id])
-                  .map((id) => (
-                    <div key={id} className="rounded-xl border border-gray-200 bg-white p-4 animate-pulse">
-                      <div className="h-3 bg-gray-200 rounded w-1/4 mb-3" />
-                      <div className="h-32 bg-gray-100 rounded" />
-                    </div>
-                  ))}
-                {/* 캐시된 아티팩트 */}
-                {artifacts.map((artifact) => (
-                  <div key={artifact.id} data-artifact-id={artifact.id}>
-                    <ArtifactCard artifact={artifact} />
-                  </div>
-                ))}
-              </div>
-            )}
-
             {/* ── 하단: 타임스탬프 + 접기 버튼 ── */}
             <div className="mt-2 flex items-center justify-between">
               <span className="text-xs opacity-40">
@@ -569,7 +592,43 @@ const MessageBubble = memo(({
           </>
         )}
       </div>
+
+      {!isUser && isExpanded && hasArtifacts && (
+        <div className="mt-3 w-full max-w-full space-y-2">
+          {artifactIds
+            .filter((id) => !cachedMap[id])
+            .slice(0, 3)
+            .map((id) => (
+              <div key={id} className="rounded-xl border border-gray-200 bg-white p-4 animate-pulse">
+                <div className="h-3 bg-gray-200 rounded w-1/4 mb-3" />
+                <div className="h-32 bg-gray-100 rounded" />
+              </div>
+            ))}
+
+          {displayedArtifacts.map((artifact) => (
+            <div key={artifact.id} data-artifact-id={artifact.id}>
+              <ArtifactCard artifact={artifact} />
+            </div>
+          ))}
+
+          {remainingCount > 0 && (
+            <button
+              onClick={() => setShowAllArtifacts(true)}
+              className="w-full py-2 bg-gray-100/50 hover:bg-gray-200/50 border border-dashed border-gray-300 rounded-lg text-xs text-gray-500 font-medium transition-colors"
+            >
+              결과 {remainingCount}개 더보기
+            </button>
+          )}
+          {showAllArtifacts && artifacts.length > 3 && (
+            <button
+              onClick={() => setShowAllArtifacts(false)}
+              className="w-full py-1 text-[10px] text-gray-400 hover:text-gray-600"
+            >
+              간략히 보기
+            </button>
+          )}
+        </div>
+      )}
     </div>
   )
 })
-
