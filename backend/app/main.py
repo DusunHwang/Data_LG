@@ -59,6 +59,45 @@ async def _cleanup_stale_jobs_on_startup() -> None:
         )
 
 
+async def _ensure_model_run_dataset_columns() -> None:
+    """model_runs에 데이터 기준 컬럼을 보장하고 기존 값을 backfill."""
+    from sqlalchemy import text
+
+    from app.db.base import AsyncSessionLocal
+
+    async with AsyncSessionLocal() as db:
+        cols_result = await db.execute(text("PRAGMA table_info(model_runs)"))
+        existing_cols = {row[1] for row in cols_result.fetchall()}
+
+        if "dataset_path" not in existing_cols:
+            await db.execute(text("ALTER TABLE model_runs ADD COLUMN dataset_path VARCHAR(1024)"))
+        if "source_artifact_id" not in existing_cols:
+            await db.execute(text("ALTER TABLE model_runs ADD COLUMN source_artifact_id VARCHAR(36)"))
+
+        await db.execute(text("CREATE INDEX IF NOT EXISTS ix_model_runs_dataset_path ON model_runs(dataset_path)"))
+        await db.execute(text("CREATE INDEX IF NOT EXISTS ix_model_runs_source_artifact_id ON model_runs(source_artifact_id)"))
+
+        await db.execute(text("""
+            UPDATE model_runs
+            SET dataset_path = (
+                SELECT json_extract(job_runs.params, '$.dataset_path')
+                FROM job_runs
+                WHERE job_runs.id = model_runs.job_run_id
+            )
+            WHERE (dataset_path IS NULL OR dataset_path = '') AND job_run_id IS NOT NULL
+        """))
+        await db.execute(text("""
+            UPDATE model_runs
+            SET source_artifact_id = (
+                SELECT json_extract(job_runs.params, '$.source_artifact_id')
+                FROM job_runs
+                WHERE job_runs.id = model_runs.job_run_id
+            )
+            WHERE (source_artifact_id IS NULL OR source_artifact_id = '') AND job_run_id IS NOT NULL
+        """))
+        await db.commit()
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """앱 수명 주기 관리"""
@@ -74,6 +113,7 @@ async def lifespan(app: FastAPI):
     artifact_root.mkdir(parents=True, exist_ok=True)
     logger.info("아티팩트 저장소 초기화", path=str(artifact_root))
 
+    await _ensure_model_run_dataset_columns()
     await _cleanup_stale_jobs_on_startup()
 
     yield

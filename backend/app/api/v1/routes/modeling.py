@@ -108,6 +108,7 @@ async def run_baseline_modeling(
             str(branch_id),
             dataset_path,
             body.target_column,
+            source_artifact_id,
             body.feature_columns,
             body.test_size,
             body.cv_folds,

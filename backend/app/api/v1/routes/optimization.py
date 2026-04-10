@@ -21,6 +21,12 @@ logger = get_logger(__name__)
 router = APIRouter(prefix="/optimization", tags=["최적화"])
 
 
+def _extract_model_dataset_info(model_run) -> tuple[str | None, str | None]:
+    return getattr(model_run, "dataset_path", None), (
+        str(model_run.source_artifact_id) if getattr(model_run, "source_artifact_id", None) else None
+    )
+
+
 @router.post("/model-availability", response_model=dict)
 async def get_model_availability(
     body: dict,
@@ -57,7 +63,14 @@ async def get_model_availability(
 
     statuses = []
     for target_column in target_columns:
-        champion = await model_repo.get_champion_by_target(branch_id, target_column)
+        champion = await model_repo.get_champion_by_target(
+            branch_id,
+            target_column,
+            desired_dataset_path,
+            UUID(source_artifact_id) if source_artifact_id else None,
+        )
+        if not champion:
+            champion = await model_repo.get_champion_by_target(branch_id, target_column)
         if not champion:
             statuses.append({
                 "target_column": target_column,
@@ -73,8 +86,15 @@ async def get_model_availability(
             import json as _json
             meta = _json.loads(meta)
         model_dataset_path = meta.get("dataset_path") if isinstance(meta, dict) else None
+        model_source_artifact_id = meta.get("source_artifact_id") if isinstance(meta, dict) else None
+        run_dataset_path, run_source_artifact_id = _extract_model_dataset_info(champion)
+        model_dataset_path = model_dataset_path or run_dataset_path
+        model_source_artifact_id = model_source_artifact_id or run_source_artifact_id
 
-        dataset_matches = bool(model_dataset_path and model_dataset_path == desired_dataset_path)
+        dataset_matches = bool(
+            (source_artifact_id and model_source_artifact_id == source_artifact_id) or
+            (model_dataset_path and model_dataset_path == desired_dataset_path)
+        )
         statuses.append({
             "target_column": target_column,
             "ready": dataset_matches,
@@ -86,6 +106,7 @@ async def get_model_availability(
             ),
             "model_run_id": str(champion.id),
             "model_dataset_path": model_dataset_path,
+            "model_source_artifact_id": model_source_artifact_id,
         })
 
     return success_response({
@@ -236,7 +257,19 @@ async def run_null_importance(
     session_obj = await validate_user_session(session_id, current_user.id, db)
 
     model_repo = ModelRunRepository(db)
-    champion = await model_repo.get_champion(branch_id)
+    from app.db.repositories.artifact import ArtifactRepository
+    artifact_repo = ArtifactRepository(db)
+    source_artifact_id = body.get("source_artifact_id")
+    source_artifact = await artifact_repo.get(UUID(source_artifact_id)) if source_artifact_id else None
+    source_dataset_path = source_artifact.file_path if source_artifact and source_artifact.file_path else None
+
+    champion = await model_repo.get_champion(
+        branch_id,
+        source_dataset_path,
+        UUID(source_artifact_id) if source_artifact_id else None,
+    )
+    if not champion:
+        champion = await model_repo.get_champion(branch_id)
     if not champion:
         raise HTTPException(
             status_code=400,
@@ -255,19 +288,21 @@ async def run_null_importance(
     if not target_columns:
         raise HTTPException(status_code=400, detail=error_response("NO_TARGET", "타겟 컬럼이 없습니다."))
 
-    from app.db.repositories.artifact import ArtifactRepository
-    artifact_repo = ArtifactRepository(db)
     dataset_repo = DatasetRepository(db)
     active_dataset = await dataset_repo.get(session_obj.active_dataset_id) if session_obj.active_dataset_id else None
-    source_artifact_id = body.get("source_artifact_id")
-    source_artifact = await artifact_repo.get(UUID(source_artifact_id)) if source_artifact_id else None
-    source_dataset_path = source_artifact.file_path if source_artifact and source_artifact.file_path else None
 
     target_specs: list[dict] = []
     missing_targets: list[str] = []
 
     for target_column in target_columns:
-        target_champion = await model_repo.get_champion_by_target(branch_id, target_column)
+        target_champion = await model_repo.get_champion_by_target(
+            branch_id,
+            target_column,
+            source_dataset_path,
+            UUID(source_artifact_id) if source_artifact_id else None,
+        )
+        if not target_champion:
+            target_champion = await model_repo.get_champion_by_target(branch_id, target_column)
         if not target_champion:
             missing_targets.append(target_column)
             continue
@@ -280,7 +315,7 @@ async def run_null_importance(
         if isinstance(meta, str):
             import json as _json
             meta = _json.loads(meta)
-        dataset_path = source_dataset_path or meta.get("dataset_path") or (active_dataset.file_path if active_dataset else None)
+        dataset_path = source_dataset_path or meta.get("dataset_path") or target_champion.dataset_path or (active_dataset.file_path if active_dataset else None)
         if not dataset_path:
             raise HTTPException(status_code=400, detail=error_response("NO_DATASET", f"데이터셋이 없습니다. ({target_column})"))
 
@@ -438,9 +473,22 @@ async def run_constrained_inverse_optimization(
     async def _get_model_info(target_col: str | None):
         """타겟별 챔피언 모델 정보 반환"""
         if target_col:
-            champion_model = await model_repo.get_champion_by_target(branch_id, target_col)
+            champion_model = await model_repo.get_champion_by_target(
+                branch_id,
+                target_col,
+                source_artifact.file_path if source_artifact and source_artifact.file_path else None,
+                UUID(source_artifact_id) if source_artifact_id else None,
+            )
+            if not champion_model:
+                champion_model = await model_repo.get_champion_by_target(branch_id, target_col)
         else:
-            champion_model = await model_repo.get_champion(branch_id)
+            champion_model = await model_repo.get_champion(
+                branch_id,
+                source_artifact.file_path if source_artifact and source_artifact.file_path else None,
+                UUID(source_artifact_id) if source_artifact_id else None,
+            )
+            if not champion_model:
+                champion_model = await model_repo.get_champion(branch_id)
         if not champion_model:
             raise HTTPException(
                 status_code=400,
@@ -458,7 +506,7 @@ async def run_constrained_inverse_optimization(
             "feature_names": artifact_metadata.get("feature_names", []),
             "categorical_features": artifact_metadata.get("categorical_features", []),
             "target_column": artifact_metadata.get("target_column") or champion_model.target_column or target_col or "",
-            "dataset_path": artifact_metadata.get("dataset_path"),
+            "dataset_path": artifact_metadata.get("dataset_path") or champion_model.dataset_path,
         }
 
     # 최적화 대상 모델

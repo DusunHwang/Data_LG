@@ -18,6 +18,14 @@ type Step = 'subset' | 'ni_setup' | 'ni_running' | 'feat_config' | 'target_confi
 
 const POLL_MS = 3_000
 
+function isSelectableOptimizationDataframe(a: Artifact) {
+  if (a.type !== 'dataframe') return false
+  const metaType = String(a.data?.type ?? '')
+  if (metaType.startsWith('subset_') && metaType.endsWith('_df')) return true
+  if (metaType === 'create_dataframe' || metaType === 'create_dataframe_result') return true
+  return a.name.includes('서브 데이터셋') || (a.name.includes('서브셋') && a.name.includes('데이터'))
+}
+
 export default function InverseOptimizationModal({ onClose, variant = 'modal' }: Props) {
   const { sessionId, branchId, datasetId, targetDataframeArtifactId, dataframeConfigsByBranch } = useSessionStore()
   const { artifacts: cached } = useArtifactStore()
@@ -25,19 +33,19 @@ export default function InverseOptimizationModal({ onClose, variant = 'modal' }:
   const currentBranchId = branchId ?? 'global'
   const activeArtifactId = targetDataframeArtifactId ?? (datasetId ? `dataset-${datasetId}` : null)
 
-  const isSubsetDataframeArtifact = useCallback((a: Artifact) => {
-    if (a.type !== 'dataframe') return false
-    const metaType = String(a.data?.type ?? '')
-    if (metaType.startsWith('subset_') && metaType.endsWith('_df')) return true
-    return a.name.includes('서브셋') && a.name.includes('데이터')
-  }, [])
+  const configuredArtifactIds = Object.entries(dataframeConfigsByBranch[currentBranchId] ?? {})
+    .filter(([, config]) => config.targetColumns.length > 0 && config.featureColumns.length > 0)
+    .map(([artifactId]) => artifactId)
 
-  // ── 서브셋 아티팩트 목록 ──────────────────────────────────────────────────
-  const subsetArtifacts: Artifact[] = Object.values(cached).filter((a) => {
-    if (!isSubsetDataframeArtifact(a)) return false
-    const config = dataframeConfigsByBranch[currentBranchId]?.[a.id]
-    return (config?.targetColumns.length ?? 0) > 0 && (config?.featureColumns.length ?? 0) > 0
-  })
+  const sourceCandidates = configuredArtifactIds
+    .filter((artifactId) => artifactId === activeArtifactId || (!artifactId.startsWith('dataset-') && isSelectableOptimizationDataframe(cached[artifactId])))
+    .map((artifactId) => ({
+      id: artifactId,
+      label:
+        artifactId === activeArtifactId
+          ? `${artifactId.startsWith('dataset-') ? '현재 기본 데이터셋' : '현재 분석 데이터'}${cached[artifactId]?.name ? ` · ${cached[artifactId].name}` : ''}`
+          : (cached[artifactId]?.name ?? artifactId),
+    }))
 
   // ── Wizard state ─────────────────────────────────────────────────────────
   const [step, setStep] = useState<Step>('subset')
@@ -426,8 +434,8 @@ export default function InverseOptimizationModal({ onClose, variant = 'modal' }:
             {step === 'subset' ? (
               <div className="space-y-3">
                 <p className="text-xs text-gray-500">
-                  타겟과 변수 선택이 완료된 데이터프레임만 서브셋 후보로 표시됩니다.
-                  이후 분석과 최적화는 현재 확정된 타겟/변수 집합을 기준으로만 진행됩니다.
+                  타겟과 변수 선택이 완료된 분석 데이터프레임만 후보로 표시됩니다.
+                  이후 분석과 최적화는 여기서 선택한 데이터 기준으로 진행됩니다.
                 </p>
                 {!hasCompletedTargetAndFeatureSelection && (
                   <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2">
@@ -436,10 +444,10 @@ export default function InverseOptimizationModal({ onClose, variant = 'modal' }:
                     </p>
                   </div>
                 )}
-                {hasCompletedTargetAndFeatureSelection && subsetArtifacts.length === 0 && (
+                {hasCompletedTargetAndFeatureSelection && sourceCandidates.length === 0 && (
                   <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
                     <p className="text-xs text-slate-600">
-                      현재 타겟/변수 조합을 모두 포함하는 서브셋 데이터프레임이 없습니다.
+                      현재 브랜치에 타겟/변수 선택이 완료된 분석 데이터프레임이 없습니다.
                     </p>
                   </div>
                 )}
@@ -449,9 +457,11 @@ export default function InverseOptimizationModal({ onClose, variant = 'modal' }:
                   disabled={!hasCompletedTargetAndFeatureSelection}
                   className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-red/30"
                 >
-                  <option value="">서브셋 선택 안 함 (전체 피처 사용)</option>
-                  {subsetArtifacts.map((a) => (
-                    <option key={a.id} value={a.id}>{a.name}</option>
+                  <option value="">현재 분석 데이터 사용</option>
+                  {sourceCandidates
+                    .filter((candidate) => candidate.id !== activeArtifactId)
+                    .map((candidate) => (
+                    <option key={candidate.id} value={candidate.id}>{candidate.label}</option>
                   ))}
                 </select>
                 {selectedSubsetId && subsetFeatures.length > 0 && (

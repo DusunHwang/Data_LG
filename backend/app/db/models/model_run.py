@@ -57,6 +57,13 @@ class ModelRun(BaseModel):
     n_test: Mapped[int | None] = mapped_column(Integer, nullable=True)
     n_features: Mapped[int | None] = mapped_column(Integer, nullable=True)
     target_column: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    dataset_path: Mapped[str | None] = mapped_column(String(1024), nullable=True, index=True)
+    source_artifact_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUIDString,
+        ForeignKey("artifacts.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
 
     # 하이퍼파라미터 및 피처 중요도
     hyperparams: Mapped[dict | None] = mapped_column(JSON, nullable=True)
@@ -76,6 +83,7 @@ class ModelRun(BaseModel):
     branch = relationship("Branch", back_populates="model_runs")
     job_run = relationship("JobRun")
     model_artifact = relationship("Artifact", foreign_keys=[model_artifact_id])
+    source_artifact = relationship("Artifact", foreign_keys=[source_artifact_id])
 
     def __repr__(self) -> str:
         return f"<ModelRun id={self.id} model={self.model_name} status={self.status}>"

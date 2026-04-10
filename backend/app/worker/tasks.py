@@ -206,6 +206,7 @@ def run_baseline_modeling_task(
     branch_id: str,
     dataset_path: str,
     target_column: str,
+    source_artifact_id: str | None = None,
     feature_columns: list[str] | None = None,
     test_size: float = 0.2,
     cv_folds: int = 5,
@@ -275,7 +276,15 @@ def run_baseline_modeling_task(
         token.check()
 
         # DB에 결과 저장
-        _save_model_results_sync(job_run_id, branch_id, results, target_column)
+        _save_model_results_sync(
+            job_run_id,
+            session_id,
+            branch_id,
+            results,
+            target_column,
+            dataset_path,
+            source_artifact_id,
+        )
 
         result = {
             "status": "completed",
@@ -369,6 +378,7 @@ def _train_single_model(
         feature_importances = dict(zip(X.columns, abs(model.coef_).tolist()))
 
     return {
+        "model": model,
         "cv_rmse": float(cv_rmse_scores.mean()),
         "cv_mae": float(cv_mae_scores.mean()),
         "cv_r2": float(cv_r2_scores.mean()),
@@ -378,19 +388,26 @@ def _train_single_model(
         "n_train": len(X_train),
         "n_test": len(X_test),
         "n_features": len(X.columns),
+        "feature_names": list(X.columns),
         "feature_importances": feature_importances,
     }
 
 
 def _save_model_results_sync(
     job_run_id: str,
+    session_id: str,
     branch_id: str,
     results: list[dict],
     target_column: str,
+    dataset_path: str,
+    source_artifact_id: str | None = None,
 ) -> None:
     """동기 방식으로 모델 결과 DB 저장"""
     import json
+    import os
     import uuid
+    import joblib
+    from app.graph.helpers import get_artifact_dir, save_artifact_to_db
     from app.worker.job_runner import get_sync_db_connection
     from datetime import datetime, timezone
 
@@ -401,25 +418,58 @@ def _save_model_results_sync(
     try:
         cur = conn.cursor()
         now = datetime.now(timezone.utc)
+        model_dir = get_artifact_dir(session_id, "model")
 
         # 최고 모델 찾기 (RMSE 기준)
         best_result = min(results, key=lambda r: r.get("cv_rmse", float("inf")))
+        cur.execute(
+            """
+            UPDATE model_runs
+            SET is_champion = 0, updated_at = ?
+            WHERE branch_id = ? AND target_column = ? AND COALESCE(dataset_path, '') = ? AND COALESCE(source_artifact_id, '') = ?
+            """,
+            (now, branch_id, target_column, dataset_path or "", source_artifact_id or ""),
+        )
 
         for result in results:
             model_id = str(uuid.uuid4())
             is_champion = (result == best_result)
+            model_artifact_id = None
+
+            if result.get("model") is not None:
+                model_path = os.path.join(model_dir, f"model_{model_id}.pkl")
+                joblib.dump(result["model"], model_path)
+                model_artifact_id = save_artifact_to_db(
+                    conn,
+                    None,
+                    session_id,
+                    "model",
+                    f"{result['model_name']} 모델 [{target_column}]",
+                    model_path,
+                    "application/octet-stream",
+                    os.path.getsize(model_path),
+                    {"target_column": target_column, "model_name": result["model_name"]},
+                    {
+                        "type": "baseline_model",
+                        "target_column": target_column,
+                        "feature_names": result.get("feature_names", []),
+                        "dataset_path": dataset_path,
+                        "source_artifact_id": source_artifact_id,
+                        "is_champion": is_champion,
+                    },
+                )
 
             cur.execute("""
                 INSERT INTO model_runs (
                     id, branch_id, job_run_id, model_name, model_type, status,
                     cv_rmse, cv_mae, cv_r2, test_rmse, test_mae, test_r2,
-                    n_train, n_test, n_features, target_column,
-                    feature_importances, is_champion, created_at, updated_at
+                    n_train, n_test, n_features, target_column, dataset_path, source_artifact_id,
+                    feature_importances, is_champion, model_artifact_id, created_at, updated_at
                 ) VALUES (
                     ?, ?, ?, ?, ?, 'completed',
                     ?, ?, ?, ?, ?, ?,
-                    ?, ?, ?, ?,
-                    ?, ?, ?, ?
+                    ?, ?, ?, ?, ?, ?,
+                    ?, ?, ?, ?, ?
                 )
             """, (
                 model_id, branch_id, job_run_id,
@@ -427,9 +477,9 @@ def _save_model_results_sync(
                 result.get("cv_rmse"), result.get("cv_mae"), result.get("cv_r2"),
                 result.get("test_rmse"), result.get("test_mae"), result.get("test_r2"),
                 result.get("n_train"), result.get("n_test"), result.get("n_features"),
-                target_column,
+                target_column, dataset_path, source_artifact_id,
                 json.dumps(result.get("feature_importances", {})),
-                is_champion, now, now,
+                is_champion, model_artifact_id, now, now,
             ))
 
         conn.commit()
