@@ -19,6 +19,14 @@ TARGET_INDEPENDENT_INTENTS = {
 
 def _infer_requested_intent(mode: str, message: str) -> str:
     """반복 실행 여부 판단용 경량 인텐트 추정."""
+    normalized = " ".join((message or "").lower().split())
+    if any(keyword in normalized for keyword in [
+        "타겟과 설정된 변수들만으로 데이터 프레임 새로 구성해줘",
+        "타겟과 설정된 변수들만으로 데이터프레임 새로 구성해줘",
+        "타겟과 설정된 변수만으로 데이터 프레임 새로 구성해줘",
+        "타겟과 설정된 변수만으로 데이터프레임 새로 구성해줘",
+    ]):
+        return "create_dataframe"
     if mode == "dataset_profile":
         return "dataset_profile"
     if mode == "eda":
