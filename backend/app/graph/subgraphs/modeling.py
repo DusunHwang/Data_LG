@@ -368,6 +368,9 @@ def _save_modeling_artifacts(
     plot_dir = get_artifact_dir(session_id, "plot")
 
     dataset_path = state.get("dataset_path")
+    source_artifact_id = state.get("selected_artifact_id")
+    if source_artifact_id and str(source_artifact_id).startswith("dataset-"):
+        source_artifact_id = None
 
     conn = None
     try:
@@ -379,8 +382,15 @@ def _save_modeling_artifacts(
         if branch_id:
             # 이전 챔피언 상태 초기화
             cur.execute(
-                "UPDATE model_runs SET is_champion = false WHERE branch_id = ?",
-                (branch_id,)
+                """
+                UPDATE model_runs
+                SET is_champion = false
+                WHERE branch_id = ?
+                  AND target_column = ?
+                  AND COALESCE(dataset_path, '') = ?
+                  AND COALESCE(source_artifact_id, '') = ?
+                """,
+                (branch_id, target_col, dataset_path or "", source_artifact_id or ""),
             )
 
             step_id = str(uuid_module.uuid4())
@@ -467,6 +477,7 @@ def _save_modeling_artifacts(
                     "target_column": target_col,
                     "categorical_features": r.get("categorical_features", []),
                     "dataset_path": dataset_path,
+                    "source_artifact_id": source_artifact_id,
                 },
             )
             created_artifact_ids.append(model_artifact_id)
@@ -527,12 +538,12 @@ def _save_modeling_artifacts(
                     INSERT INTO model_runs (
                         id, branch_id, job_run_id, model_name, model_type, status,
                         test_rmse, test_mae, test_r2, n_train, n_test, n_features,
-                        target_column, hyperparams, feature_importances, is_champion,
+                        target_column, dataset_path, source_artifact_id, hyperparams, feature_importances, is_champion,
                         model_artifact_id, created_at, updated_at
                     ) VALUES (
                         ?, ?, ?, ?, 'lightgbm', 'completed',
                         ?, ?, ?, ?, ?, ?,
-                        ?, ?, ?, ?,
+                        ?, ?, ?, ?, ?, ?,
                         ?, ?, ?
                     )
                     """,
@@ -548,6 +559,8 @@ def _save_modeling_artifacts(
                         r["n_val"],
                         r["n_features"],
                         target_col,
+                        dataset_path,
+                        source_artifact_id,
                         json.dumps(LGBM_PARAMS),
                         json.dumps(r["feature_importances"]),
                         is_champion,

@@ -20,6 +20,29 @@ from app.worker.progress import ProgressReporter
 logger = get_logger(__name__)
 
 
+def _apply_saved_preprocessing(
+    frame: pd.DataFrame,
+    categorical_features: list[str],
+    categorical_encoders: dict[str, dict[str, int]] | None = None,
+) -> pd.DataFrame:
+    """모델 학습 시 저장한 범주형 인코딩 규칙을 동일하게 적용한다."""
+    categorical_encoders = categorical_encoders or {}
+    processed = frame.copy()
+
+    for col in processed.columns:
+        if col in categorical_features:
+            raw = processed[col].fillna("__missing__").astype(str)
+            mapping = categorical_encoders.get(col) or {}
+            if not mapping:
+                labels = sorted(set(raw.tolist()))
+                mapping = {label: idx for idx, label in enumerate(labels)}
+            processed[col] = raw.map(lambda value: mapping.get(value, -1)).astype(float)
+        else:
+            processed[col] = processed[col].fillna(processed[col].median() if pd.api.types.is_numeric_dtype(processed[col]) else 0.0)
+
+    return processed
+
+
 # ─────────────────────────────────────────────────────────
 # Phase 1: Null Importance 분석
 # ─────────────────────────────────────────────────────────
@@ -30,6 +53,7 @@ def _compute_null_importance_for_target(
     dataset_path: str,
     target_column: str,
     categorical_features: list,
+    categorical_encoders: dict | None,
     n_permutations: int = 30,
     progress_cb: Optional[Callable[[int, str], None]] = None,
 ) -> dict:
@@ -75,7 +99,11 @@ def _compute_null_importance_for_target(
         )
         raise ValueError(f"데이터셋에 모델 피처가 없습니다. (모델 피처: {feature_names[:5]}...)")
 
-    X = df[available].copy()
+    X = _apply_saved_preprocessing(
+        df[available].copy(),
+        list(categorical_features or []),
+        categorical_encoders or {},
+    )
 
     if target_column not in df.columns:
         raise ValueError(f"데이터셋에 타겟 컬럼 '{target_column}'이 없습니다.")
@@ -84,12 +112,6 @@ def _compute_null_importance_for_target(
     if y.isnull().any():
         logger.info("타겟 컬럼 결측치 처리 (중앙값)", column=target_column)
         y = y.fillna(y.median())
-
-    for col in categorical_features:
-        if col in X.columns:
-            X[col] = X[col].astype("category")
-
-    X = X.fillna(X.median(numeric_only=True))
 
     max_rows = 3000
     if len(X) > max_rows:
@@ -337,6 +359,7 @@ def run_null_importance_task(
                 spec["dataset_path"],
                 target_column,
                 spec.get("categorical_features", []),
+                spec.get("categorical_encoders", {}),
                 n_permutations=n_permutations,
                 progress_cb=progress_cb,
             )
@@ -371,6 +394,7 @@ def run_inverse_optimize_task(
     direction: str,                 # "maximize" | "minimize"
     target_column: str,
     categorical_features: list,
+    categorical_encoders: dict | None,
     dataset_path: str,
     n_calls: int = 300,
 ) -> dict:
@@ -395,11 +419,11 @@ def run_inverse_optimize_task(
         if not available_features:
              raise ValueError("데이터셋에 모델 피처가 하나도 없습니다.")
              
-        X_ref_avail = df[available_features].copy()
-        for col in categorical_features:
-            if col in X_ref_avail.columns:
-                X_ref_avail[col] = X_ref_avail[col].astype("category")
-        X_ref_avail = X_ref_avail.fillna(X_ref_avail.median(numeric_only=True))
+        X_ref_avail = _apply_saved_preprocessing(
+            df[available_features].copy(),
+            list(categorical_features or []),
+            categorical_encoders or {},
+        )
 
         # 탐색 공간: selected_features에 대해 [min*(1-r), max*(1+r)]
         bounds = []
@@ -474,7 +498,12 @@ def run_inverse_optimize_task(
                 
                 for col in categorical_features:
                     if col in input_df.columns:
-                        input_df[col] = input_df[col].astype("category")
+                        if categorical_encoders and col in categorical_encoders:
+                            input_df[col] = input_df[col].fillna("__missing__").astype(str).map(
+                                lambda value: categorical_encoders[col].get(value, -1)
+                            )
+                        else:
+                            input_df[col] = input_df[col].astype("category")
                 pred = model.predict(input_df)[0]
                 return sign * float(pred)
             except Exception:
@@ -503,7 +532,12 @@ def run_inverse_optimize_task(
             input_df = pd.DataFrame([optimal_row])[feature_names]
             for col in categorical_features:
                 if col in input_df.columns:
-                    input_df[col] = input_df[col].astype("category")
+                    if categorical_encoders and col in categorical_encoders:
+                        input_df[col] = input_df[col].fillna("__missing__").astype(str).map(
+                            lambda value: categorical_encoders[col].get(value, -1)
+                        )
+                    else:
+                        input_df[col] = input_df[col].astype("category")
             optimal_prediction = float(model.predict(input_df)[0])
         except Exception:
             optimal_prediction = -sign * result_opt.fun
@@ -513,7 +547,12 @@ def run_inverse_optimize_task(
             base_input = pd.DataFrame([base_row])[feature_names]
             for col in categorical_features:
                 if col in base_input.columns:
-                    base_input[col] = base_input[col].astype("category")
+                    if categorical_encoders and col in categorical_encoders:
+                        base_input[col] = base_input[col].fillna("__missing__").astype(str).map(
+                            lambda value: categorical_encoders[col].get(value, -1)
+                        )
+                    else:
+                        base_input[col] = base_input[col].astype("category")
             baseline_prediction = float(model.predict(base_input)[0])
         except Exception:
             baseline_prediction = None
@@ -582,15 +621,12 @@ def run_constrained_inverse_optimize_task(
     expand_ratio: float,
     direction: str,                 # "maximize" | "minimize"
     categorical_features: list,
+    categorical_encoders: dict | None,
     dataset_path: str,
     n_calls: int = 300,
     model_type: str = "lgbm",          # "lgbm" | "bcm"
-    # 제약 조건 (선택, 이중 타겟용)
-    constraint_model_path: Optional[str] = None,
-    constraint_feature_names: Optional[list] = None,
-    constraint_target_column: Optional[str] = None,
-    constraint_type: Optional[str] = None,   # "gte" | "lte"
-    constraint_threshold: Optional[float] = None,
+    # 제약 조건 (선택, 다중 타겟용)
+    constraints: Optional[list] = None,
     constraint_penalty: float = 1e6,
 ) -> dict:
     """
@@ -607,18 +643,26 @@ def run_constrained_inverse_optimize_task(
 
         reporter.update(5, "모델 로드 중...")
         lgbm_model = joblib.load(model_path)
-        constraint_model = joblib.load(constraint_model_path) if constraint_model_path else None
+        constraint_specs = []
+        for constraint in constraints or []:
+            model_path_item = constraint.get("model_path")
+            if not model_path_item:
+                continue
+            constraint_specs.append({
+                **constraint,
+                "model": joblib.load(model_path_item),
+            })
 
         reporter.update(10, "데이터 로드 및 탐색 공간 구성 중...")
         df = pd.read_parquet(dataset_path)
 
         # 모델에 필요한 피처 중 데이터셋에 있는 것만 우선 선택
         available_features = [f for f in feature_names if f in df.columns]
-        X_ref_avail = df[available_features].copy()
-        for col in categorical_features:
-            if col in X_ref_avail.columns:
-                X_ref_avail[col] = X_ref_avail[col].astype("category")
-        X_ref_avail = X_ref_avail.fillna(X_ref_avail.median(numeric_only=True))
+        X_ref_avail = _apply_saved_preprocessing(
+            df[available_features].copy(),
+            list(categorical_features or []),
+            categorical_encoders or {},
+        )
 
         # BCM 모델 구성 (요청 시)
         if model_type == "bcm":
@@ -633,10 +677,11 @@ def run_constrained_inverse_optimize_task(
                 if col not in X_bcm.columns:
                     X_bcm[col] = 0.0
             X_bcm = X_bcm[feature_names]
-            for col in categorical_features:
-                if col in X_bcm.columns:
-                    X_bcm[col] = X_bcm[col].astype("category")
-            X_bcm = X_bcm.fillna(X_bcm.median(numeric_only=True))
+            X_bcm = _apply_saved_preprocessing(
+                X_bcm,
+                list(categorical_features or []),
+                categorical_encoders or {},
+            )
 
             def bcm_progress(pct: int, msg: str):
                 mapped = 12 + int(pct * 13 / 100)
@@ -682,8 +727,8 @@ def run_constrained_inverse_optimize_task(
                 if feat not in base_row:
                     base_row[feat] = 0.0
             
-            if constraint_model_path and constraint_feature_names:
-                for feat in constraint_feature_names:
+            for constraint in constraint_specs:
+                for feat in constraint.get("feature_names", []) or []:
                     if feat not in base_row:
                         base_row[feat] = 0.0
         except Exception as e:
@@ -699,10 +744,11 @@ def run_constrained_inverse_optimize_task(
             # feat_list에 있는 모든 피처가 row에 있음을 보장
             data = {f: [row.get(f, 0.0)] for f in feat_list}
             input_df = pd.DataFrame(data)[feat_list]
-            for col in cat_feats:
-                if col in input_df.columns:
-                    input_df[col] = input_df[col].astype("category")
-            return input_df
+            return _apply_saved_preprocessing(
+                input_df,
+                list(cat_feats or []),
+                categorical_encoders or {},
+            )
 
         def objective(x):
             call_count[0] += 1
@@ -723,18 +769,20 @@ def run_constrained_inverse_optimize_task(
 
             # 제약 패널티
             penalty = 0.0
-            if constraint_model and constraint_type and constraint_threshold is not None:
+            for constraint in constraint_specs:
+                constraint_type = constraint.get("type")
+                constraint_threshold = constraint.get("threshold")
                 try:
-                    pred_c = float(constraint_model.predict(
-                        build_input(row, constraint_feature_names, categorical_features)
+                    pred_c = float(constraint["model"].predict(
+                        build_input(row, constraint.get("feature_names", []), categorical_features)
                     )[0])
                     if constraint_type == "gte":
-                        violation = max(0.0, constraint_threshold - pred_c)
+                        violation = max(0.0, float(constraint_threshold) - pred_c)
                     else:
-                        violation = max(0.0, pred_c - constraint_threshold)
-                    penalty = constraint_penalty * violation
+                        violation = max(0.0, pred_c - float(constraint_threshold))
+                    penalty += constraint_penalty * violation
                 except Exception:
-                    penalty = constraint_penalty
+                    penalty += constraint_penalty
 
             return sign * pred_primary + penalty
 
@@ -764,10 +812,19 @@ def run_constrained_inverse_optimize_task(
         optimal_prediction = safe_predict(model, optimal_row, feature_names, categorical_features)
         baseline_prediction = safe_predict(model, base_row, feature_names, categorical_features)
 
-        # 제약 타겟 예측값 (이중 타겟)
-        constraint_prediction = None
-        if constraint_model:
-            constraint_prediction = safe_predict(constraint_model, optimal_row, constraint_feature_names, categorical_features)
+        constraint_results = []
+        for constraint in constraint_specs:
+            constraint_results.append({
+                "target_column": constraint.get("target_column"),
+                "type": constraint.get("type"),
+                "threshold": constraint.get("threshold"),
+                "prediction": safe_predict(
+                    constraint["model"],
+                    optimal_row,
+                    constraint.get("feature_names", []),
+                    categorical_features,
+                ),
+            })
 
         optimal_features = {
             feat: float(optimal_row[feat])
@@ -802,11 +859,11 @@ def run_constrained_inverse_optimize_task(
             "selected_features": selected_features,
             "n_evaluations": call_count[0],
             "convergence": bool(result_opt.success),
-            # 이중 타겟
-            "constraint_target_column": constraint_target_column,
-            "constraint_type": constraint_type,
-            "constraint_threshold": constraint_threshold,
-            "constraint_prediction": constraint_prediction,
+            "constraints": constraint_results,
+            "constraint_target_column": constraint_results[0]["target_column"] if constraint_results else None,
+            "constraint_type": constraint_results[0]["type"] if constraint_results else None,
+            "constraint_threshold": constraint_results[0]["threshold"] if constraint_results else None,
+            "constraint_prediction": constraint_results[0]["prediction"] if constraint_results else None,
         }
 
         _save_inverse_optimize_artifact(result, session_id, branch_id, job_run_id)

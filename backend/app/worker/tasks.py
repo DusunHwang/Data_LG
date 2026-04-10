@@ -245,13 +245,19 @@ def run_baseline_modeling_task(
 
         X = df[feature_columns].copy()
         y = df[target_column].copy()
+        categorical_features: list[str] = []
+        categorical_encoders: dict[str, dict[str, int]] = {}
 
         # 결측값 처리
         for col in X.columns:
             if X[col].dtype == "object" or str(X[col].dtype) == "category":
+                categorical_features.append(col)
                 X[col] = X[col].fillna("__missing__").astype(str)
                 le = LabelEncoder()
                 X[col] = le.fit_transform(X[col])
+                categorical_encoders[col] = {
+                    str(label): int(idx) for idx, label in enumerate(le.classes_)
+                }
             else:
                 X[col] = X[col].fillna(X[col].median())
 
@@ -275,6 +281,10 @@ def run_baseline_modeling_task(
                     model_name, X, y, test_size, cv_folds
                 )
                 model_result["model_name"] = model_name
+                model_result["categorical_features"] = list(categorical_features)
+                model_result["categorical_encoders"] = {
+                    col: mapping.copy() for col, mapping in categorical_encoders.items()
+                }
                 results.append(model_result)
             except Exception as e:
                 logger.warning("모델 훈련 실패", model=model_name, error=str(e))
@@ -461,6 +471,8 @@ def _save_model_results_sync(
                         "type": "baseline_model",
                         "target_column": target_column,
                         "feature_names": result.get("feature_names", []),
+                        "categorical_features": result.get("categorical_features", []),
+                        "categorical_encoders": result.get("categorical_encoders", {}),
                         "dataset_path": dataset_path,
                         "source_artifact_id": source_artifact_id,
                         "is_champion": is_champion,

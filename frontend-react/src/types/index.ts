@@ -321,7 +321,12 @@ export interface ConstrainedInverseRunRequest {
   n_calls?: number
   model_type?: 'lgbm' | 'bcm'
   source_artifact_id?: string
-  // 제약 조건 (이중 타겟)
+  // 제약 조건
+  constraints?: Array<{
+    target_column: string
+    type: 'gte' | 'lte'
+    threshold: number
+  }>
   constraint_target_column?: string
   constraint_type?: 'gte' | 'lte'
   constraint_threshold?: number
@@ -339,7 +344,12 @@ export interface InverseRunResult {
   direction: string
   target_column: string
   selected_features: string[]
-  // 이중 타겟
+  constraints?: Array<{
+    target_column: string
+    type: string
+    threshold: number
+    prediction?: number | null
+  }>
   constraint_target_column?: string
   constraint_type?: string
   constraint_threshold?: number

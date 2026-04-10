@@ -63,20 +63,26 @@ async def get_model_availability(
 
     statuses = []
     for target_column in target_columns:
-        champion = await model_repo.get_champion_by_target(
-            branch_id,
-            target_column,
-            desired_dataset_path,
-            UUID(source_artifact_id) if source_artifact_id else None,
-        )
-        if not champion:
+        champion = None
+        if source_artifact_id or desired_dataset_path:
+            champion = await model_repo.get_champion_by_target(
+                branch_id,
+                target_column,
+                desired_dataset_path,
+                UUID(source_artifact_id) if source_artifact_id else None,
+            )
+        if not champion and not source_artifact_id:
             champion = await model_repo.get_champion_by_target(branch_id, target_column)
         if not champion:
             statuses.append({
                 "target_column": target_column,
                 "ready": False,
                 "reason": "missing_champion",
-                "message": f"'{target_column}' 타겟의 챔피언 모델이 없습니다.",
+                "message": (
+                    f"'{target_column}' 타겟의 현재 선택 데이터 기준 챔피언 모델이 없습니다."
+                    if source_artifact_id else
+                    f"'{target_column}' 타겟의 챔피언 모델이 없습니다."
+                ),
             })
             continue
 
@@ -263,12 +269,14 @@ async def run_null_importance(
     source_artifact = await artifact_repo.get(UUID(source_artifact_id)) if source_artifact_id else None
     source_dataset_path = source_artifact.file_path if source_artifact and source_artifact.file_path else None
 
-    champion = await model_repo.get_champion(
-        branch_id,
-        source_dataset_path,
-        UUID(source_artifact_id) if source_artifact_id else None,
-    )
-    if not champion:
+    champion = None
+    if source_artifact_id or source_dataset_path:
+        champion = await model_repo.get_champion(
+            branch_id,
+            source_dataset_path,
+            UUID(source_artifact_id) if source_artifact_id else None,
+        )
+    if not champion and not source_artifact_id:
         champion = await model_repo.get_champion(branch_id)
     if not champion:
         raise HTTPException(
@@ -295,13 +303,15 @@ async def run_null_importance(
     missing_targets: list[str] = []
 
     for target_column in target_columns:
-        target_champion = await model_repo.get_champion_by_target(
-            branch_id,
-            target_column,
-            source_dataset_path,
-            UUID(source_artifact_id) if source_artifact_id else None,
-        )
-        if not target_champion:
+        target_champion = None
+        if source_artifact_id or source_dataset_path:
+            target_champion = await model_repo.get_champion_by_target(
+                branch_id,
+                target_column,
+                source_dataset_path,
+                UUID(source_artifact_id) if source_artifact_id else None,
+            )
+        if not target_champion and not source_artifact_id:
             target_champion = await model_repo.get_champion_by_target(branch_id, target_column)
         if not target_champion:
             missing_targets.append(target_column)
@@ -324,6 +334,7 @@ async def run_null_importance(
             "model_path": model_artifact.file_path,
             "feature_names": meta.get("feature_names", []),
             "categorical_features": meta.get("categorical_features", []),
+            "categorical_encoders": meta.get("categorical_encoders", {}),
             "dataset_path": dataset_path,
         })
 
@@ -400,6 +411,7 @@ async def run_inverse_optimization(
     meta = model_artifact.meta or {}
     feature_names = meta.get("feature_names", [])
     categorical_features = meta.get("categorical_features", [])
+    categorical_encoders = meta.get("categorical_encoders", {})
     target_column = meta.get("target_column") or body.get("target_column", "")
 
     dataset_path = meta.get("dataset_path")
@@ -442,6 +454,7 @@ async def run_inverse_optimization(
         body.get("direction", "maximize"),
         target_column,
         categorical_features,
+        categorical_encoders,
         dataset_path,
         body.get("n_calls", 300),
         job_id=str(job_run.id),
@@ -465,6 +478,15 @@ async def run_constrained_inverse_optimization(
     opt_target = body.get("target_column")        # 최적화 대상 타겟
     con_target = body.get("constraint_target_column")  # 제약 타겟 (선택)
     source_artifact_id = body.get("source_artifact_id")
+    constraints = body.get("constraints")
+    if not isinstance(constraints, list):
+        constraints = []
+    if not constraints and con_target:
+        constraints = [{
+            "target_column": con_target,
+            "type": body.get("constraint_type"),
+            "threshold": body.get("constraint_threshold"),
+        }]
 
     from app.db.repositories.artifact import ArtifactRepository
     model_repo = ModelRunRepository(db)
@@ -473,26 +495,37 @@ async def run_constrained_inverse_optimization(
     async def _get_model_info(target_col: str | None):
         """타겟별 챔피언 모델 정보 반환"""
         if target_col:
-            champion_model = await model_repo.get_champion_by_target(
-                branch_id,
-                target_col,
-                source_artifact.file_path if source_artifact and source_artifact.file_path else None,
-                UUID(source_artifact_id) if source_artifact_id else None,
-            )
-            if not champion_model:
+            champion_model = None
+            if source_artifact_id or (source_artifact and source_artifact.file_path):
+                champion_model = await model_repo.get_champion_by_target(
+                    branch_id,
+                    target_col,
+                    source_artifact.file_path if source_artifact and source_artifact.file_path else None,
+                    UUID(source_artifact_id) if source_artifact_id else None,
+                )
+            if not champion_model and not source_artifact_id:
                 champion_model = await model_repo.get_champion_by_target(branch_id, target_col)
         else:
-            champion_model = await model_repo.get_champion(
-                branch_id,
-                source_artifact.file_path if source_artifact and source_artifact.file_path else None,
-                UUID(source_artifact_id) if source_artifact_id else None,
-            )
-            if not champion_model:
+            champion_model = None
+            if source_artifact_id or (source_artifact and source_artifact.file_path):
+                champion_model = await model_repo.get_champion(
+                    branch_id,
+                    source_artifact.file_path if source_artifact and source_artifact.file_path else None,
+                    UUID(source_artifact_id) if source_artifact_id else None,
+                )
+            if not champion_model and not source_artifact_id:
                 champion_model = await model_repo.get_champion(branch_id)
         if not champion_model:
             raise HTTPException(
                 status_code=400,
-                detail=error_response("NO_CHAMPION_MODEL", f"챔피언 모델이 없습니다 (target={target_col})."),
+                detail=error_response(
+                    "NO_CHAMPION_MODEL",
+                    (
+                        f"현재 선택 데이터 기준 챔피언 모델이 없습니다 (target={target_col})."
+                        if source_artifact_id else
+                        f"챔피언 모델이 없습니다 (target={target_col})."
+                    ),
+                ),
             )
         model_artifact = await artifact_repo.get(champion_model.model_artifact_id)
         if not model_artifact or not model_artifact.file_path:
@@ -505,6 +538,7 @@ async def run_constrained_inverse_optimization(
             "model_path": model_artifact.file_path,
             "feature_names": artifact_metadata.get("feature_names", []),
             "categorical_features": artifact_metadata.get("categorical_features", []),
+            "categorical_encoders": artifact_metadata.get("categorical_encoders", {}),
             "target_column": artifact_metadata.get("target_column") or champion_model.target_column or target_col or "",
             "dataset_path": artifact_metadata.get("dataset_path") or champion_model.dataset_path,
         }
@@ -512,8 +546,18 @@ async def run_constrained_inverse_optimization(
     # 최적화 대상 모델
     opt_info = await _get_model_info(opt_target)
 
-    # 제약 모델 (이중 타겟)
-    con_info = await _get_model_info(con_target) if con_target else None
+    constraint_infos = []
+    for constraint in constraints:
+        target = constraint.get("target_column")
+        if not target:
+            continue
+        info = await _get_model_info(target)
+        constraint_infos.append({
+            **constraint,
+            "model_path": info["model_path"],
+            "feature_names": info["feature_names"],
+            "target_column": info["target_column"],
+        })
 
     # 데이터셋: 모델이 학습된 데이터셋 우선 사용
     source_artifact = await artifact_repo.get(UUID(source_artifact_id)) if source_artifact_id else None
@@ -553,15 +597,11 @@ async def run_constrained_inverse_optimization(
         body.get("expand_ratio", 0.125),
         body.get("direction", "maximize"),
         opt_info["categorical_features"],
+        opt_info["categorical_encoders"],
         dataset_path,
         body.get("n_calls", 300),
         body.get("model_type", "lgbm"),
-        # 제약 조건
-        con_info["model_path"] if con_info else None,
-        con_info["feature_names"] if con_info else None,
-        con_info["target_column"] if con_info else None,
-        body.get("constraint_type"),
-        body.get("constraint_threshold"),
+        constraint_infos,
         job_id=str(job_run.id),
     )
     job_run.rq_job_id = rq_job.id

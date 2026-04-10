@@ -70,6 +70,7 @@ export default function InverseOptimizationModal({ onClose, variant = 'modal' }:
   const effectiveConfig = effectiveArtifactId ? dataframeConfigsByBranch[currentBranchId]?.[effectiveArtifactId] : undefined
   const targetColumns: string[] = effectiveConfig?.targetColumns ?? []
   const featureColumns: string[] = effectiveConfig?.featureColumns ?? []
+  const [selectedTargetColumns, setSelectedTargetColumns] = useState<string[]>([])
   const hasCompletedTargetAndFeatureSelection = targetColumns.length > 0 && featureColumns.length > 0
   const sourceArtifactId = effectiveArtifactId && !effectiveArtifactId.startsWith('dataset-')
     ? effectiveArtifactId
@@ -95,9 +96,7 @@ export default function InverseOptimizationModal({ onClose, variant = 'modal' }:
   const [nCalls, setNCalls] = useState(300)
   // 제약 (이중 타겟)
   const [useConstraint, setUseConstraint] = useState(false)
-  const [conTarget, setConTarget] = useState<string>('')
-  const [conType, setConType] = useState<'gte' | 'lte'>('gte')
-  const [conThreshold, setConThreshold] = useState<number>(0)
+  const [constraintConfigs, setConstraintConfigs] = useState<Record<string, { enabled: boolean; type: 'gte' | 'lte'; threshold: number }>>({})
 
   // ── Job polling ──────────────────────────────────────────────────────────
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
@@ -109,13 +108,24 @@ export default function InverseOptimizationModal({ onClose, variant = 'modal' }:
   useEffect(() => stopPolling, [stopPolling])
 
   useEffect(() => {
-    setOptTarget((prev) => (targetColumns.includes(prev) ? prev : (targetColumns[0] ?? '')))
-    setUseConstraint(targetColumns.length >= 2)
-    setConTarget((prev) => {
-      if (prev && prev !== optTarget && targetColumns.includes(prev)) return prev
-      return targetColumns.find((t) => t !== (targetColumns[0] ?? '')) ?? ''
+    setSelectedTargetColumns((prev) => {
+      const filtered = prev.filter((target) => targetColumns.includes(target))
+      return filtered.length > 0 ? filtered : [...targetColumns]
     })
   }, [targetColumns])
+
+  useEffect(() => {
+    setOptTarget((prev) => (selectedTargetColumns.includes(prev) ? prev : (selectedTargetColumns[0] ?? '')))
+    setUseConstraint(selectedTargetColumns.length >= 2)
+    setConstraintConfigs((prev) => {
+      const next: Record<string, { enabled: boolean; type: 'gte' | 'lte'; threshold: number }> = {}
+      for (const target of selectedTargetColumns) {
+        if (target === (selectedTargetColumns[0] ?? '')) continue
+        next[target] = prev[target] ?? { enabled: false, type: 'gte', threshold: 0 }
+      }
+      return next
+    })
+  }, [selectedTargetColumns])
 
   const startPolling = useCallback((jobId: string, onDone: (j: Job) => void, onFail?: (j: Job) => void) => {
     stopPolling()
@@ -140,7 +150,7 @@ export default function InverseOptimizationModal({ onClose, variant = 'modal' }:
   }, [stopPolling])
 
   const refreshAvailability = useCallback(async () => {
-    if (!sessionId || !branchId || targetColumns.length === 0) {
+    if (!sessionId || !branchId || selectedTargetColumns.length === 0) {
       setAvailability(null)
       return
     }
@@ -149,7 +159,7 @@ export default function InverseOptimizationModal({ onClose, variant = 'modal' }:
       const res = await optimizationApi.modelAvailability({
         session_id: sessionId,
         branch_id: branchId,
-        target_columns: targetColumns,
+        target_columns: selectedTargetColumns,
         ...(sourceArtifactId ? { source_artifact_id: sourceArtifactId } : {}),
       })
       setAvailability(res)
@@ -158,14 +168,14 @@ export default function InverseOptimizationModal({ onClose, variant = 'modal' }:
     } finally {
       setAvailabilityLoading(false)
     }
-  }, [branchId, sessionId, sourceArtifactId, targetColumns])
+  }, [branchId, sessionId, sourceArtifactId, selectedTargetColumns])
 
   useEffect(() => {
     void refreshAvailability()
   }, [refreshAvailability])
 
   const missingTargets = (availability?.statuses ?? []).filter((s) => !s.ready)
-  const allTargetsReady = targetColumns.length > 0 && missingTargets.length === 0
+  const allTargetsReady = selectedTargetColumns.length > 0 && missingTargets.length === 0
 
   const runPrepModeling = async (target: string) => {
     if (!sessionId || !branchId) return
@@ -228,14 +238,14 @@ export default function InverseOptimizationModal({ onClose, variant = 'modal' }:
       addMessage(currentBranchId, {
         id: genId(),
         role: 'user',
-        content: `[최적화 가이드] 피처 유의성 분석을 시작합니다. 타겟: ${targetColumns.join(', ')}${sourceArtifactId ? ` / 데이터프레임: ${cached[sourceArtifactId]?.name ?? sourceArtifactId}` : ''}`,
+        content: `[최적화 가이드] 피처 유의성 분석을 시작합니다. 타겟: ${selectedTargetColumns.join(', ')}${sourceArtifactId ? ` / 데이터프레임: ${cached[sourceArtifactId]?.name ?? sourceArtifactId}` : ''}`,
         timestamp: new Date().toISOString(),
       })
       const res = await optimizationApi.nullImportance({
         session_id: sessionId,
         branch_id: branchId,
         n_permutations: nPermutations,
-        target_columns: targetColumns,
+        target_columns: selectedTargetColumns,
         ...(sourceArtifactId ? { source_artifact_id: sourceArtifactId } : {}),
       })
       setActiveJob(currentBranchId, res.job_id)
@@ -278,11 +288,21 @@ export default function InverseOptimizationModal({ onClose, variant = 'modal' }:
       Object.entries(fixedValues).filter(([k]) => fixedEnabled[k])
     )
 
+    const activeConstraints = useConstraint
+      ? otherTargets
+          .filter((target) => constraintConfigs[target]?.enabled)
+          .map((target) => ({
+            target_column: target,
+            type: constraintConfigs[target]?.type ?? 'gte',
+            threshold: constraintConfigs[target]?.threshold ?? 0,
+          }))
+      : []
+
     try {
       addMessage(currentBranchId, {
         id: genId(),
         role: 'user',
-        content: `[최적화 가이드] 모델기반 최적화를 시작합니다. 목표: ${optTarget} ${direction === 'maximize' ? '최대화' : '최소화'} / 피처 ${finalFeatures.join(', ')}`,
+        content: `[최적화 가이드] 모델기반 최적화를 시작합니다. 목표: ${optTarget} ${direction === 'maximize' ? '최대화' : '최소화'}${activeConstraints.length > 0 ? ` / 제약 ${activeConstraints.map((c) => `${c.target_column} ${c.type === 'gte' ? '≥' : '≤'} ${c.threshold}`).join(', ')}` : ''} / 피처 ${finalFeatures.join(', ')}`,
         timestamp: new Date().toISOString(),
       })
       const res = await optimizationApi.constrainedInverseRun({
@@ -297,10 +317,11 @@ export default function InverseOptimizationModal({ onClose, variant = 'modal' }:
         n_calls: nCalls,
         model_type: modelType,
         ...(sourceArtifactId ? { source_artifact_id: sourceArtifactId } : {}),
-        ...(useConstraint && conTarget && conTarget !== optTarget ? {
-          constraint_target_column: conTarget,
-          constraint_type: conType,
-          constraint_threshold: conThreshold,
+        ...(activeConstraints.length > 0 ? {
+          constraints: activeConstraints,
+          constraint_target_column: activeConstraints[0].target_column,
+          constraint_type: activeConstraints[0].type,
+          constraint_threshold: activeConstraints[0].threshold,
         } : {}),
       })
       setActiveJob(currentBranchId, res.job_id)
@@ -384,7 +405,7 @@ export default function InverseOptimizationModal({ onClose, variant = 'modal' }:
       })
     : []
 
-  const otherTargets = targetColumns.filter((t) => t !== optTarget)
+  const otherTargets = selectedTargetColumns.filter((t) => t !== optTarget)
 
   const isSidebar = variant === 'sidebar'
 
@@ -513,8 +534,35 @@ export default function InverseOptimizationModal({ onClose, variant = 'modal' }:
                     </button>
                   </div>
                   {targetColumns.length > 1 && (
+                    <div className="rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-2.5 space-y-2">
+                      <p className="text-xs font-medium text-indigo-700">이번 실행에 포함할 타겟</p>
+                      <div className="space-y-1.5">
+                        {targetColumns.map((target) => (
+                          <label key={target} className="flex items-center gap-2 text-xs text-indigo-700">
+                            <input
+                              type="checkbox"
+                              className="accent-brand-red"
+                              checked={selectedTargetColumns.includes(target)}
+                              onChange={(e) => {
+                                setSelectedTargetColumns((prev) => {
+                                  if (e.target.checked) return [...prev, target]
+                                  if (prev.length <= 1) return prev
+                                  return prev.filter((item) => item !== target)
+                                })
+                              }}
+                            />
+                            <span>{target}</span>
+                          </label>
+                        ))}
+                      </div>
+                      <p className="text-[11px] text-indigo-600">
+                        타겟 상속은 유지하되, 이번 피처 유의성 분석과 최적화에 실제로 포함할 타겟만 선택할 수 있습니다.
+                      </p>
+                    </div>
+                  )}
+                  {selectedTargetColumns.length > 1 && (
                     <p className="text-xs text-indigo-600">
-                      다중 타겟 모드: {targetColumns.join(', ')} 각각에 대해 Null Importance를 수행한 뒤,
+                      다중 타겟 모드: {selectedTargetColumns.join(', ')} 각각에 대해 Null Importance를 수행한 뒤,
                       여러 타겟을 함께 설명하는 커버리지 기반 합집합 피처 랭킹을 생성합니다.
                     </p>
                   )}
@@ -530,7 +578,7 @@ export default function InverseOptimizationModal({ onClose, variant = 'modal' }:
                       <p className="text-xs text-slate-500">준비 상태 확인 중...</p>
                     ) : (
                       <div className="space-y-1.5">
-                        {(availability?.statuses ?? targetColumns.map((target) => ({
+                        {(availability?.statuses ?? selectedTargetColumns.map((target) => ({
                           target_column: target,
                           ready: false,
                           reason: 'missing_champion' as const,
@@ -680,7 +728,7 @@ export default function InverseOptimizationModal({ onClose, variant = 'modal' }:
                       <select value={optTarget} onChange={(e) => setOptTarget(e.target.value)}
                         className="w-full rounded border border-gray-300 px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-brand-red/30"
                       >
-                        {targetColumns.map((t) => <option key={t} value={t}>{t}</option>)}
+                        {selectedTargetColumns.map((t) => <option key={t} value={t}>{t}</option>)}
                       </select>
                     </div>
                     <div>
@@ -701,7 +749,7 @@ export default function InverseOptimizationModal({ onClose, variant = 'modal' }:
                   </div>
 
                   {/* 이중 타겟 제약 */}
-                  {targetColumns.length >= 2 && (
+                  {selectedTargetColumns.length >= 2 && (
                     <div className="rounded-lg border border-indigo-200 bg-indigo-50 p-3 space-y-3">
                       <label className="flex items-center gap-2 text-xs font-medium text-indigo-700 cursor-pointer">
                         <input type="checkbox" checked={useConstraint}
@@ -711,36 +759,57 @@ export default function InverseOptimizationModal({ onClose, variant = 'modal' }:
                         이중 타겟 제약 조건 사용
                       </label>
                       {useConstraint && (
-                        <div className="grid grid-cols-3 gap-2">
-                          <div>
-                            <label className="text-xs text-indigo-600 block mb-1">제약 타겟</label>
-                            <select value={conTarget} onChange={(e) => setConTarget(e.target.value)}
-                              className="w-full rounded border border-indigo-200 px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-indigo-400"
-                            >
-                              {otherTargets.map((t) => <option key={t} value={t}>{t}</option>)}
-                            </select>
-                          </div>
-                          <div>
-                            <label className="text-xs text-indigo-600 block mb-1">조건</label>
-                            <select value={conType} onChange={(e) => setConType(e.target.value as 'gte' | 'lte')}
-                              className="w-full rounded border border-indigo-200 px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-indigo-400"
-                            >
-                              <option value="gte">≥ 이상</option>
-                              <option value="lte">≤ 이하</option>
-                            </select>
-                          </div>
-                          <div>
-                            <label className="text-xs text-indigo-600 block mb-1">기준값</label>
-                            <input type="number" step="any" value={conThreshold}
-                              onChange={(e) => setConThreshold(Number(e.target.value))}
-                              className="w-full rounded border border-indigo-200 px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-indigo-400"
-                            />
-                          </div>
+                        <div className="space-y-2">
+                          {otherTargets.map((target) => {
+                            const config = constraintConfigs[target] ?? { enabled: false, type: 'gte' as const, threshold: 0 }
+                            return (
+                              <div key={target} className="grid grid-cols-[1.3fr_0.9fr_1fr] gap-2 items-end">
+                                <label className="flex items-center gap-2 text-xs text-indigo-700">
+                                  <input
+                                    type="checkbox"
+                                    checked={config.enabled}
+                                    onChange={(e) => setConstraintConfigs((prev) => ({
+                                      ...prev,
+                                      [target]: { ...(prev[target] ?? config), enabled: e.target.checked },
+                                    }))}
+                                    className="accent-indigo-600"
+                                  />
+                                  <span>{target}</span>
+                                </label>
+                                <select
+                                  value={config.type}
+                                  disabled={!config.enabled}
+                                  onChange={(e) => setConstraintConfigs((prev) => ({
+                                    ...prev,
+                                    [target]: { ...(prev[target] ?? config), type: e.target.value as 'gte' | 'lte' },
+                                  }))}
+                                  className="w-full rounded border border-indigo-200 px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-indigo-400 disabled:opacity-50"
+                                >
+                                  <option value="gte">≥ 이상</option>
+                                  <option value="lte">≤ 이하</option>
+                                </select>
+                                <input
+                                  type="number"
+                                  step="any"
+                                  value={config.threshold}
+                                  disabled={!config.enabled}
+                                  onChange={(e) => setConstraintConfigs((prev) => ({
+                                    ...prev,
+                                    [target]: { ...(prev[target] ?? config), threshold: Number(e.target.value) },
+                                  }))}
+                                  className="w-full rounded border border-indigo-200 px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-indigo-400 disabled:opacity-50"
+                                />
+                              </div>
+                            )
+                          })}
                         </div>
                       )}
                       {useConstraint && (
                         <p className="text-xs text-indigo-500">
-                          조건: <strong>{conTarget}</strong> {conType === 'gte' ? '≥' : '≤'} {conThreshold} 를 만족하면서 <strong>{optTarget}</strong> {direction === 'maximize' ? '최대화' : '최소화'}
+                          조건: {otherTargets
+                            .filter((target) => constraintConfigs[target]?.enabled)
+                            .map((target) => `${target} ${constraintConfigs[target]?.type === 'gte' ? '≥' : '≤'} ${constraintConfigs[target]?.threshold ?? 0}`)
+                            .join(', ') || '없음'} 를 만족하면서 <strong>{optTarget}</strong> {direction === 'maximize' ? '최대화' : '최소화'}
                         </p>
                       )}
                     </div>
@@ -916,7 +985,17 @@ function InverseResult({ result }: { result: InverseRunResult }) {
   const optFeats = result.optimal_features ?? {}
   const baseFeats = result.baseline_features ?? {}
   const fixedFeats = result.fixed_features ?? {}
-  const hasConstraint = !!result.constraint_target_column
+  const constraints = result.constraints ?? (
+    result.constraint_target_column
+      ? [{
+          target_column: result.constraint_target_column,
+          type: result.constraint_type ?? 'gte',
+          threshold: result.constraint_threshold ?? 0,
+          prediction: result.constraint_prediction,
+        }]
+      : []
+  )
+  const hasConstraint = constraints.length > 0
 
   // 모든 피처 키 합집합 (선택된 피처들 위주)
   const allFeatureKeys = Array.from(new Set([
@@ -934,19 +1013,24 @@ function InverseResult({ result }: { result: InverseRunResult }) {
         </span>
       </div>
 
-      <div className={`grid gap-3 ${hasConstraint ? 'grid-cols-3' : 'grid-cols-2'}`}>
+      <div className={`grid gap-3 ${hasConstraint ? 'grid-cols-2' : 'grid-cols-2'}`}>
         <MetricCard label={`최적 예측 (${result.target_column})`} value={result.optimal_prediction?.toFixed(4) ?? '-'} highlight />
         {result.baseline_prediction !== undefined && (
           <MetricCard label="베이스라인" value={result.baseline_prediction.toFixed(4)} delta={result.improvement} />
         )}
-        {hasConstraint && result.constraint_prediction !== undefined && (
-          <MetricCard
-            label={`${result.constraint_target_column} (${result.constraint_type === 'gte' ? '≥' : '≤'} ${result.constraint_threshold})`}
-            value={result.constraint_prediction.toFixed(4)}
-            highlight={false}
-          />
-        )}
       </div>
+      {hasConstraint && (
+        <div className={`grid gap-3 ${constraints.length >= 2 ? 'grid-cols-2' : 'grid-cols-1'}`}>
+          {constraints.map((constraint) => (
+            <MetricCard
+              key={constraint.target_column}
+              label={`${constraint.target_column} (${constraint.type === 'gte' ? '≥' : '≤'} ${constraint.threshold})`}
+              value={constraint.prediction?.toFixed(4) ?? '-'}
+              highlight={false}
+            />
+          ))}
+        </div>
+      )}
 
       <div>
         <p className="text-xs font-semibold text-gray-600 mb-2">피처별 최적화 결과</p>

@@ -68,7 +68,16 @@ def run_shap_simplify_subgraph(state: GraphState) -> GraphState:
 
     try:
         # 1. 챔피언 모델 로드
-        champion_info = _load_champion_model(branch_id)
+        source_artifact_id = state.get("selected_artifact_id")
+        if source_artifact_id and str(source_artifact_id).startswith("dataset-"):
+            source_artifact_id = None
+
+        champion_info = _load_champion_model(
+            branch_id,
+            target_col,
+            dataset_path,
+            source_artifact_id,
+        )
         if not champion_info:
             return {**state, "error_code": "NO_CHAMPION_MODEL",
                     "error_message": "챔피언 모델을 찾을 수 없습니다. 먼저 모델링을 실행하세요."}
@@ -153,9 +162,14 @@ def run_shap_simplify_subgraph(state: GraphState) -> GraphState:
         return {**state, "error_code": "SHAP_ERROR", "error_message": f"SHAP 분석 중 오류: {str(e)}"}
 
 
-def _load_champion_model(branch_id: Optional[str]) -> Optional[dict]:
-    """브랜치의 챔피언 모델 로드"""
-    if not branch_id:
+def _load_champion_model(
+    branch_id: Optional[str],
+    target_col: Optional[str],
+    dataset_path: Optional[str],
+    source_artifact_id: Optional[str],
+) -> Optional[dict]:
+    """현재 타겟/데이터 기준의 챔피언 모델 로드"""
+    if not branch_id or not target_col:
         return None
 
     conn = None
@@ -163,36 +177,44 @@ def _load_champion_model(branch_id: Optional[str]) -> Optional[dict]:
         conn = get_sync_db_connection()
         cur = conn.cursor()
 
-        # 챔피언 모델 아티팩트 찾기
-        cur.execute(
-            """
+        query = """
             SELECT mr.id, a.file_path, a.meta
             FROM model_runs mr
             JOIN artifacts a ON mr.model_artifact_id = a.id
             WHERE mr.branch_id = ?
+              AND mr.target_column = ?
               AND mr.is_champion = true
               AND mr.status = 'completed'
-            ORDER BY mr.created_at DESC
-            LIMIT 1
-            """,
-            (branch_id,),
-        )
+        """
+        params = [branch_id, target_col]
+        if source_artifact_id:
+            query += " AND mr.source_artifact_id = ?"
+            params.append(source_artifact_id)
+        elif dataset_path:
+            query += " AND mr.dataset_path = ?"
+            params.append(dataset_path)
+        query += " ORDER BY mr.created_at DESC LIMIT 1"
+        cur.execute(query, tuple(params))
         row = cur.fetchone()
 
         if not row:
-            # is_champion이 없으면 최근 모델 사용
-            cur.execute(
-                """
+            fallback_query = """
                 SELECT mr.id, a.file_path, a.meta
                 FROM model_runs mr
                 JOIN artifacts a ON mr.model_artifact_id = a.id
                 WHERE mr.branch_id = ?
+                  AND mr.target_column = ?
                   AND mr.status = 'completed'
-                ORDER BY mr.test_rmse ASC, mr.created_at DESC
-                LIMIT 1
-                """,
-                (branch_id,),
-            )
+            """
+            fallback_params = [branch_id, target_col]
+            if source_artifact_id:
+                fallback_query += " AND mr.source_artifact_id = ?"
+                fallback_params.append(source_artifact_id)
+            elif dataset_path:
+                fallback_query += " AND mr.dataset_path = ?"
+                fallback_params.append(dataset_path)
+            fallback_query += " ORDER BY mr.test_rmse ASC, mr.created_at DESC LIMIT 1"
+            cur.execute(fallback_query, tuple(fallback_params))
             row = cur.fetchone()
 
         if not row:
