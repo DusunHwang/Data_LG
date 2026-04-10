@@ -69,7 +69,18 @@ export const useSessionStore = create<SessionState>()(
       targetDataframeArtifactId: null,
       setSessionId: (id) => set({ sessionId: id, branchId: null, targetDataframeArtifactId: null }),
       setBranchId: (id) => set({ branchId: id }),
-      setDatasetId: (id) => set({ datasetId: id }),
+      setDatasetId: (id) =>
+        set((state) => {
+          if (id === state.datasetId) return { datasetId: id }
+          // 데이터셋이 바뀌면 모든 브랜치의 타겟/변수 설정 리셋
+          return {
+            datasetId: id,
+            targetColumnsByBranch: {},
+            featureColumnsByBranch: {},
+            targetColumn: null,
+            targetDataframeArtifactId: null,
+          }
+        }),
       setTargetColumn: (col) => set({ targetColumn: col }),
       setTargetColumns: (branchId, cols) =>
         set((state) => ({

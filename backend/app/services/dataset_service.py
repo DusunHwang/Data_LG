@@ -141,7 +141,7 @@ class DatasetService:
             "file_size_bytes": len(data),
             "schema_profile": {"columns": profile["columns"]},
             "missing_profile": profile["missing_summary"],
-            "target_candidates": profile["target_candidates"],
+            "target_candidates": [],
         })
 
         # 세션의 활성 데이터셋으로 설정
@@ -185,7 +185,7 @@ class DatasetService:
             "file_size_bytes": len(parquet_data),
             "schema_profile": {"columns": profile["columns"]},
             "missing_profile": profile["missing_summary"],
-            "target_candidates": profile["target_candidates"],
+            "target_candidates": [],
         })
 
         if set_active:

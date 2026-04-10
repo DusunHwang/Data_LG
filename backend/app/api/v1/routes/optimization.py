@@ -179,11 +179,13 @@ async def run_null_importance(
     categorical_features = meta.get("categorical_features", [])
     target_column = meta.get("target_column") or body.get("target_column", "")
 
-    # 데이터셋 경로
-    session_obj = await validate_user_session(session_id, current_user.id, db)
-    dataset_repo = DatasetRepository(db)
-    dataset = await dataset_repo.get(session_obj.active_dataset_id)
-    dataset_path = dataset.file_path if dataset else None
+    # 데이터셋 경로: 모델이 학습된 데이터셋 우선 사용 (세션 전환으로 인한 불일치 방지)
+    dataset_path = meta.get("dataset_path")
+    if not dataset_path:
+        session_obj = await validate_user_session(session_id, current_user.id, db)
+        dataset_repo = DatasetRepository(db)
+        dataset = await dataset_repo.get(session_obj.active_dataset_id)
+        dataset_path = dataset.file_path if dataset else None
     if not dataset_path:
         raise HTTPException(status_code=400, detail=error_response("NO_DATASET", "데이터셋이 없습니다."))
 
@@ -255,10 +257,12 @@ async def run_inverse_optimization(
     categorical_features = meta.get("categorical_features", [])
     target_column = meta.get("target_column") or body.get("target_column", "")
 
-    session_obj = await validate_user_session(session_id, current_user.id, db)
-    dataset_repo = DatasetRepository(db)
-    dataset = await dataset_repo.get(session_obj.active_dataset_id)
-    dataset_path = dataset.file_path if dataset else None
+    dataset_path = meta.get("dataset_path")
+    if not dataset_path:
+        session_obj = await validate_user_session(session_id, current_user.id, db)
+        dataset_repo = DatasetRepository(db)
+        dataset = await dataset_repo.get(session_obj.active_dataset_id)
+        dataset_path = dataset.file_path if dataset else None
     if not dataset_path:
         raise HTTPException(status_code=400, detail=error_response("NO_DATASET", "데이터셋이 없습니다."))
 
@@ -343,6 +347,7 @@ async def run_constrained_inverse_optimization(
             "feature_names": artifact_metadata.get("feature_names", []),
             "categorical_features": artifact_metadata.get("categorical_features", []),
             "target_column": artifact_metadata.get("target_column") or champion_model.target_column or target_col or "",
+            "dataset_path": artifact_metadata.get("dataset_path"),
         }
 
     # 최적화 대상 모델
@@ -351,11 +356,13 @@ async def run_constrained_inverse_optimization(
     # 제약 모델 (이중 타겟)
     con_info = await _get_model_info(con_target) if con_target else None
 
-    # 데이터셋
-    session_obj = await validate_user_session(session_id, current_user.id, db)
-    dataset_repo = DatasetRepository(db)
-    dataset = await dataset_repo.get(session_obj.active_dataset_id)
-    dataset_path = dataset.file_path if dataset else None
+    # 데이터셋: 모델이 학습된 데이터셋 우선 사용
+    dataset_path = opt_info.get("dataset_path")
+    if not dataset_path:
+        session_obj = await validate_user_session(session_id, current_user.id, db)
+        dataset_repo = DatasetRepository(db)
+        dataset = await dataset_repo.get(session_obj.active_dataset_id)
+        dataset_path = dataset.file_path if dataset else None
     if not dataset_path:
         raise HTTPException(status_code=400, detail=error_response("NO_DATASET", "데이터셋이 없습니다."))
 

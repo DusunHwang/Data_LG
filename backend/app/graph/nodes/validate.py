@@ -108,29 +108,11 @@ def validate_preconditions(state: GraphState) -> GraphState:
                     logger.info("요청 파라미터에서 타겟 컬럼 설정", target_column=target_col)
 
             if not target_col:
-                # 타겟 후보가 있으면 경고만
-                target_candidates = dataset.get("target_candidates", [])
-                if target_candidates:
-                    logger.warning(
-                        "타겟 컬럼 미설정, 첫 번째 후보 사용 예정",
-                        target_candidates=target_candidates[:3],
-                    )
-                    # 자동으로 첫 번째 후보를 타겟으로 설정
-                    first_candidate = target_candidates[0]
-                    if isinstance(first_candidate, dict):
-                        first_candidate = first_candidate.get("column", "")
-                    # 브랜치 config에 타겟 설정
-                    branch_config["target_column"] = first_candidate
-                    _update_branch_config(conn, active_branch.get("id"), branch_config)
-                    # active_branch state 업데이트
-                    updated_branch = {**active_branch, "config": branch_config}
-                    state = {**state, "active_branch": updated_branch}
-                else:
-                    return {
-                        **state,
-                        "error_code": "TARGET_REQUIRED",
-                        "error_message": "모델링을 수행하려면 타겟 컬럼을 지정해야 합니다. ArtifactCard의 '타겟 설정' 버튼으로 타겟 컬럼을 선택해 주세요.",
-                    }
+                return {
+                    **state,
+                    "error_code": "TARGET_REQUIRED",
+                    "error_message": "모델링을 수행하려면 타겟 컬럼을 지정해야 합니다. ArtifactCard의 '타겟 설정' 버튼으로 타겟 컬럼을 선택해 주세요.",
+                }
 
         logger.info("사전 조건 검증 완료")
         return state

@@ -349,7 +349,7 @@ export default function Sidebar({ onQuestionSelect }: SidebarProps) {
               <div className="min-w-0 flex-1">
                 <p className="text-xs font-medium truncate">{d.name}</p>
                 <p className="text-xs text-gray-400">
-                  {d.rows?.toLocaleString()} rows × {d.columns} cols
+                  {d.rows?.toLocaleString()} 행, {d.columns} 열
                 </p>
               </div>
               <button

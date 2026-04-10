@@ -458,6 +458,9 @@ const MessageBubble = memo(({
   const cachedMap = useArtifactStore((state) => state.artifacts)
 
   const isAllCached = artifacts.length === artifactIds.length
+  
+  const lines = msg.content.split('\n').length
+  const shouldToggle = lines > 3 || hasArtifacts
 
   // B: 접힌 상태와 무관하게 백그라운드에서 아티팩트 프리페치
   // (렌더링은 isExpanded일 때만, fetch는 항상 수행해 확장 시 즉시 표시)
@@ -501,24 +504,28 @@ const MessageBubble = memo(({
     <div data-message-id={msg.id} className={`flex flex-col ${isUser ? 'items-end' : 'items-start'}`}>
       <div className={isUser ? 'chat-bubble-user' : 'chat-bubble-assistant'}>
 
-        {/* ── 접힌 상태: 한 줄 미리보기 ── */}
-        {!isExpanded ? (
+        {/* ── 접힌 상태 ── */}
+        {!isExpanded && shouldToggle ? (
           <button onClick={onToggle} className="flex items-center gap-1.5 text-left w-full">
             <span className="flex-1 text-sm opacity-80 truncate">{preview}</span>
             <ChevronRight className="h-3.5 w-3.5 shrink-0 opacity-50" />
           </button>
+        ) : !isExpanded && !shouldToggle ? (
+          <div className="text-sm whitespace-pre-wrap leading-relaxed">{msg.content}</div>
         ) : (
           <>
             {/* ── 상단 접기 버튼 ── */}
-            <div className="flex justify-end mb-1.5">
-              <button
-                onClick={onToggle}
-                className="flex items-center gap-0.5 text-xs opacity-50 hover:opacity-80"
-              >
-                <ChevronDown className="h-3 w-3" />
-                접기
-              </button>
-            </div>
+            {shouldToggle && (
+              <div className="flex justify-end mb-1.5">
+                <button
+                  onClick={onToggle}
+                  className="flex items-center gap-0.5 text-xs opacity-50 hover:opacity-80"
+                >
+                  <ChevronDown className="h-3 w-3" />
+                  접기
+                </button>
+              </div>
+            )}
 
             {/* ── 펼친 상태: 본문 ── */}
             <div className="text-sm whitespace-pre-wrap leading-relaxed">{msg.content}</div>
@@ -549,13 +556,15 @@ const MessageBubble = memo(({
               <span className="text-xs opacity-40">
                 {new Date(msg.timestamp).toLocaleTimeString('ko-KR')}
               </span>
-              <button
-                onClick={onToggle}
-                className="flex items-center gap-0.5 text-xs opacity-50 hover:opacity-80"
-              >
-                <ChevronDown className="h-3 w-3" />
-                접기
-              </button>
+              {shouldToggle && (
+                <button
+                  onClick={onToggle}
+                  className="flex items-center gap-0.5 text-xs opacity-50 hover:opacity-80"
+                >
+                  <ChevronDown className="h-3 w-3" />
+                  접기
+                </button>
+              )}
             </div>
           </>
         )}
@@ -563,3 +572,4 @@ const MessageBubble = memo(({
     </div>
   )
 })
+

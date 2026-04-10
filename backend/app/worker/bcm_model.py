@@ -28,6 +28,7 @@ class BCMModel:
         self.gpr_linear = None
         self._prior_var: float = 1.0
         self._feature_names: list | None = None
+        self._gpr_features: list | None = None
         self._fitted = False
 
     # ------------------------------------------------------------------
@@ -35,6 +36,7 @@ class BCMModel:
         self,
         X: pd.DataFrame,
         y: "pd.Series | np.ndarray",
+        gpr_features: Optional[list] = None,
         progress_cb: Optional[Callable[[int, str], None]] = None,
     ) -> "BCMModel":
         from sklearn.gaussian_process import GaussianProcessRegressor
@@ -50,16 +52,33 @@ class BCMModel:
         y = np.asarray(y, dtype=float)
         self._prior_var = float(np.var(y)) + 1e-6
         self._feature_names = list(X.columns)
+        
+        # GPR이 집중할 피처 결정 (미지정 시 전체 수치형)
+        if gpr_features:
+            self._gpr_features = [f for f in gpr_features if f in X.columns and f not in self.categorical_features]
+        else:
+            self._gpr_features = [c for c in X.columns if c not in self.categorical_features and pd.api.types.is_numeric_dtype(X[c])]
 
-        # Drop categoricals — GPR requires numeric only
-        num_cols = [c for c in X.columns if c not in self.categorical_features]
-        X_num = X[num_cols].copy().select_dtypes(include="number").fillna(0)
+        X_num = X[self._gpr_features].copy().fillna(0)
+        n_features = len(self._gpr_features)
 
-        # Subsample for GPR tractability
-        n = len(X_num)
-        _cb(5, f"GPR 학습 데이터 준비 중... (전체 {n}행 → 최대 {MAX_GPR_ROWS}행 샘플링)")
-        if n > MAX_GPR_ROWS:
-            idx = np.random.choice(n, MAX_GPR_ROWS, replace=False)
+        # ── 동적 샘플링 행 수 계산 ──
+        # 기준: 500행 × 5피처 수준의 연산량 (N^3 * D)
+        # N = (Reference_Capacity / D)^(1/3)
+        # 1.5배 가중치 적용 가능
+        ref_capacity = (500 ** 3) * 5 * 1.5
+        if n_features > 0:
+            dynamic_max_rows = int((ref_capacity / n_features) ** (1/3))
+            # 최소 200, 최대 1000행으로 제한
+            dynamic_max_rows = max(200, min(1000, dynamic_max_rows))
+        else:
+            dynamic_max_rows = 300
+
+        n_total = len(X_num)
+        _cb(5, f"GPR 데이터 준비: {dynamic_max_rows}행 × {n_features}피처 (전체 {n_total}행)")
+        
+        if n_total > dynamic_max_rows:
+            idx = np.random.choice(n_total, dynamic_max_rows, replace=False)
             X_gpr = X_num.iloc[idx].values
             y_gpr = y[idx]
         else:
@@ -70,7 +89,6 @@ class BCMModel:
         self._scaler = StandardScaler().fit(X_gpr)
         Xs = self._scaler.transform(X_gpr)
 
-        n_features = Xs.shape[1]
         length_scale = np.ones(n_features)
 
         # ── Expert 1: RBF kernel ───────────────────────────────────────
@@ -81,7 +99,7 @@ class BCMModel:
         )
         self.gpr_rbf = GaussianProcessRegressor(
             kernel=kernel_rbf,
-            n_restarts_optimizer=0,   # 빠른 수렴 우선
+            n_restarts_optimizer=0,
             normalize_y=True,
             alpha=1e-6,
         ).fit(Xs, y_gpr)
@@ -101,7 +119,6 @@ class BCMModel:
         ).fit(Xs, y_gpr)
         _cb(95, "GPR(Linear) 커널 학습 완료 — BCM 앙상블 준비")
 
-        self._num_cols = num_cols
         self._fitted = True
         _cb(100, "BCM 학습 완료 (GPR×2 + LGBM 챔피언)")
         return self
@@ -125,11 +142,7 @@ class BCMModel:
             mu_lgbm = np.asarray(self.lgbm_model.predict(X2), dtype=float)
 
         # ── GPR prediction (numeric features only) ─────────────────────
-        X_num = X[[c for c in self._num_cols if c in X.columns]].copy()
-        for c in self._num_cols:
-            if c not in X_num.columns:
-                X_num[c] = 0.0
-        X_num = X_num[self._num_cols].fillna(0)
+        X_num = X[self._gpr_features].fillna(0)
         Xs = self._scaler.transform(X_num.values)
 
         mu1, std1 = self.gpr_rbf.predict(Xs, return_std=True)
@@ -139,7 +152,6 @@ class BCMModel:
         var2 = std2 ** 2 + 1e-10
 
         # BCM formula (M=2 experts)
-        # σ²_bcm⁻¹ = σ₁⁻² + σ₂⁻² + (1-M)/σ²_prior
         M = 2
         inv_var_bcm = 1.0 / var1 + 1.0 / var2 + (1 - M) / self._prior_var
         inv_var_bcm = np.maximum(inv_var_bcm, 1e-10)

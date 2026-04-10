@@ -361,11 +361,13 @@ def _save_modeling_artifacts(
     created_artifact_ids = []
     model_run_ids = []
     step_id = None
-
+    # 아티팩트 저장 디렉토리
     model_dir = get_artifact_dir(session_id, "model")
     df_dir = get_artifact_dir(session_id, "dataframe")
     report_dir = get_artifact_dir(session_id, "report")
     plot_dir = get_artifact_dir(session_id, "plot")
+
+    dataset_path = state.get("dataset_path")
 
     conn = None
     try:
@@ -375,6 +377,12 @@ def _save_modeling_artifacts(
 
         # 스텝 생성
         if branch_id:
+            # 이전 챔피언 상태 초기화
+            cur.execute(
+                "UPDATE model_runs SET is_champion = false WHERE branch_id = ?",
+                (branch_id,)
+            )
+
             step_id = str(uuid_module.uuid4())
             cur.execute(
                 """
@@ -458,6 +466,7 @@ def _save_modeling_artifacts(
                     "feature_names": r["feature_names"],
                     "target_column": target_col,
                     "categorical_features": r.get("categorical_features", []),
+                    "dataset_path": dataset_path,
                 },
             )
             created_artifact_ids.append(model_artifact_id)

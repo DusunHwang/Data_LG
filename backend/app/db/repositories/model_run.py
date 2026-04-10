@@ -32,12 +32,12 @@ class ModelRunRepository(BaseRepository[ModelRun]):
         return list(result.scalars().all())
 
     async def get_champion(self, branch_id: UUID) -> ModelRun | None:
-        """브랜치의 챔피언 모델 조회"""
+        """브랜치의 챔피언 모델 조회 (최신 순)"""
         result = await self.session.execute(
             select(ModelRun).where(
                 ModelRun.branch_id == branch_id,
                 ModelRun.is_champion == True,  # noqa: E712
-            )
+            ).order_by(ModelRun.created_at.desc())
         )
         return result.scalars().first()
 

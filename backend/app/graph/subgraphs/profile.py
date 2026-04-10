@@ -42,9 +42,8 @@ def run_profile_subgraph(state: GraphState) -> GraphState:
     1. 파케이 로드
     2. 스키마 프로파일 (dtype, 행/열 수)
     3. 결측 프로파일 (컬럼별 결측률, 행별 통계)
-    4. 타겟 후보 추천 (최대 3개, 수치형, 비상수, 점수 공식)
-    5. 아티팩트 저장: schema_summary, missing_summary, target_candidates, profile_summary
-    6. DB에 스텝 생성
+    4. 아티팩트 저장: schema_summary, missing_summary, profile_summary
+    5. DB에 스텝 생성
     """
     check_cancellation(state)
     state = update_progress(state, 15, "프로파일", "데이터셋 프로파일 분석 중...")
@@ -80,15 +79,9 @@ def run_profile_subgraph(state: GraphState) -> GraphState:
         missing_profile = _compute_missing_profile(df)
 
         check_cancellation(state)
-        state = update_progress(state, 55, "프로파일", "타겟 후보 추천 중...")
+        state = update_progress(state, 55, "프로파일", "프로파일 요약 생성 중...")
 
-        # 4. 타겟 후보 추천
-        target_candidates = _recommend_target_candidates(df)
-
-        check_cancellation(state)
-        state = update_progress(state, 70, "프로파일", "프로파일 요약 생성 중...")
-
-        # 5. 전체 요약
+        # 4. 전체 요약
         profile_summary = {
             "n_rows": n_rows,
             "n_cols": n_cols,
@@ -98,7 +91,6 @@ def run_profile_subgraph(state: GraphState) -> GraphState:
             "datetime_cols": int(df.select_dtypes(include=["datetime", "datetimetz"]).shape[1]),
             "total_missing": int(df.isnull().sum().sum()),
             "overall_missing_ratio": float(df.isnull().sum().sum() / (n_rows * n_cols)),
-            "target_candidates": target_candidates,
             "schema": schema_profile[:20],  # 미리보기용 최대 20개
         }
 
@@ -132,7 +124,6 @@ def run_profile_subgraph(state: GraphState) -> GraphState:
                         json.dumps(_sanitize_json({
                             "n_rows": n_rows,
                             "n_cols": n_cols,
-                            "target_candidates": target_candidates,
                         })),
                         now,
                         now,
@@ -173,20 +164,7 @@ def run_profile_subgraph(state: GraphState) -> GraphState:
             )
             created_artifact_ids.append(missing_artifact_id)
 
-            # target_candidates 저장 (JSON)
-            tc_path = os.path.join(plot_dir, f"target_candidates_{step_id or 'default'}.json")
-            with open(tc_path, "w", encoding="utf-8") as f:
-                json.dump(_sanitize_json(target_candidates), f, ensure_ascii=False, indent=2)
-
-            tc_artifact_id = save_artifact_to_db(
-                conn, step_id, session_id,
-                "report", "타겟 후보",
-                tc_path, "application/json",
-                os.path.getsize(tc_path),
-                {"candidates": target_candidates},
-                {"type": "target_candidates"},
-            )
-            created_artifact_ids.append(tc_artifact_id)
+            # target_candidates 저장 제거 (사용자 요청)
 
             # profile_summary 저장 (JSON)
             summary_path = os.path.join(plot_dir, f"profile_summary_{step_id or 'default'}.json")
@@ -203,14 +181,13 @@ def run_profile_subgraph(state: GraphState) -> GraphState:
             )
             created_artifact_ids.append(summary_artifact_id)
 
-            # 데이터셋 테이블 업데이트 (target_candidates 등)
+            # 데이터셋 테이블 업데이트
             if dataset.get("id"):
                 cur.execute(
                     """
                     UPDATE datasets
                     SET schema_profile = ?,
                         missing_profile = ?,
-                        target_candidates = ?,
                         row_count = ?,
                         col_count = ?,
                         updated_at = ?
@@ -219,7 +196,6 @@ def run_profile_subgraph(state: GraphState) -> GraphState:
                     (
                         json.dumps(_sanitize_json({"columns": schema_profile})),
                         json.dumps(_sanitize_json(missing_profile)),
-                        json.dumps(_sanitize_json(target_candidates)),
                         n_rows,
                         n_cols,
                         datetime.now(timezone.utc),
@@ -247,7 +223,6 @@ def run_profile_subgraph(state: GraphState) -> GraphState:
                 "summary": profile_summary,
                 "n_rows": n_rows,
                 "n_cols": n_cols,
-                "target_candidates": target_candidates,
                 "artifact_count": len(created_artifact_ids),
             },
         }
@@ -344,75 +319,3 @@ def _compute_missing_profile(df: pd.DataFrame) -> dict:
         "total_cells": n_rows * n_cols,
         "overall_missing_ratio": round(float(col_missing.sum() / (n_rows * n_cols)), 4) if n_rows * n_cols > 0 else 0.0,
     }
-
-
-def _recommend_target_candidates(df: pd.DataFrame, max_candidates: int = 3) -> list[dict]:
-    """타겟 후보 추천 - 수치형, 비상수, 점수 기반"""
-    candidates = []
-
-    numeric_cols = df.select_dtypes(include="number").columns.tolist()
-
-    for col in numeric_cols:
-        series = df[col].dropna()
-        if len(series) == 0:
-            continue
-
-        n_unique = series.nunique()
-        n_total = len(series)
-
-        # 상수 컬럼 제외
-        if n_unique <= 1:
-            continue
-
-        # ID-like 컬럼 제외 (unique ratio > 0.95)
-        if n_unique / n_total > 0.95:
-            continue
-
-        # 결측률
-        missing_ratio = df[col].isnull().mean()
-
-        # 점수 계산
-        # - 결측률 낮을수록 좋음 (1 - missing_ratio)
-        # - 분산이 클수록 좋음 (정규화)
-        # - unique 값이 적당히 있을수록 좋음
-        coeff_of_var = float(series.std() / (series.mean() + 1e-8)) if series.mean() != 0 else 0.0
-        uniqueness_score = min(n_unique / n_total, 1.0)
-        completeness_score = 1.0 - missing_ratio
-
-        # 최종 점수 = 완성도 * 변동성 패널티 * 유니크 보너스
-        score = completeness_score * min(abs(coeff_of_var), 2.0) / 2.0 * (0.5 + 0.5 * uniqueness_score)
-        score = round(float(score), 4)
-
-        candidates.append({
-            "column": col,
-            "dtype": str(df[col].dtype),
-            "n_unique": int(n_unique),
-            "missing_ratio": round(float(missing_ratio), 4),
-            "mean": round(float(series.mean()), 4),
-            "std": round(float(series.std()), 4),
-            "score": score,
-            "recommendation": _get_recommendation(col, series),
-        })
-
-    # 점수 기준 정렬 후 상위 max_candidates개 반환
-    candidates.sort(key=lambda x: x["score"], reverse=True)
-    return candidates[:max_candidates]
-
-
-def _get_recommendation(col: str, series: pd.Series) -> str:
-    """컬럼에 대한 타겟 추천 이유"""
-    col_lower = col.lower()
-
-    hints = []
-    if any(w in col_lower for w in ["price", "cost", "value", "amount", "revenue", "profit",
-                                      "가격", "비용", "금액", "수익", "매출"]):
-        hints.append("가격/금액 관련 컬럼")
-    if any(w in col_lower for w in ["score", "rating", "grade", "점수", "등급", "평점"]):
-        hints.append("점수/등급 관련 컬럼")
-    if any(w in col_lower for w in ["count", "num", "qty", "수량", "개수"]):
-        hints.append("수량 관련 컬럼")
-
-    if not hints:
-        hints.append("수치형 타겟 후보")
-
-    return ", ".join(hints)
