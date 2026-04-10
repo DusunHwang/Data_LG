@@ -18,7 +18,8 @@ type Step = 'subset' | 'ni_setup' | 'ni_running' | 'feat_config' | 'target_confi
 
 const POLL_MS = 3_000
 
-function isSelectableOptimizationDataframe(a: Artifact) {
+function isSelectableOptimizationDataframe(a: Artifact | undefined) {
+  if (!a) return false
   if (a.type !== 'dataframe') return false
   const metaType = String(a.data?.type ?? '')
   if (metaType.startsWith('subset_') && metaType.endsWith('_df')) return true
