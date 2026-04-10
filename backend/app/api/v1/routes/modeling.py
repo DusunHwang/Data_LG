@@ -11,6 +11,7 @@ from app.db.models.job import JobStatus, JobType
 from app.db.models.user import User
 from app.db.repositories.dataset import DatasetRepository
 from app.db.repositories.model_run import ModelRunRepository
+from app.db.repositories.artifact import ArtifactRepository
 from app.schemas.common import ERROR_MESSAGES, ErrorCode, error_response, success_response
 from app.schemas.modeling import (
     BaselineModelingRequest,
@@ -46,17 +47,32 @@ async def run_baseline_modeling(
 
     await check_no_active_job(session_id, db)
 
-    # 데이터셋 조회
-    dataset_repo = DatasetRepository(db)
-    dataset = await dataset_repo.get(session.active_dataset_id)
-    if not dataset or not dataset.file_path:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=error_response(
-                ErrorCode.DATASET_NOT_FOUND,
-                ERROR_MESSAGES[ErrorCode.DATASET_NOT_FOUND],
-            ),
-        )
+    dataset_path = None
+    source_artifact_id = body.source_artifact_id
+    if source_artifact_id:
+        artifact_repo = ArtifactRepository(db)
+        source_artifact = await artifact_repo.get(UUID(source_artifact_id))
+        if not source_artifact or not source_artifact.file_path:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=error_response(
+                    ErrorCode.DATASET_NOT_FOUND,
+                    "선택한 데이터프레임 아티팩트를 찾을 수 없습니다.",
+                ),
+            )
+        dataset_path = source_artifact.file_path
+    else:
+        dataset_repo = DatasetRepository(db)
+        dataset = await dataset_repo.get(session.active_dataset_id)
+        if not dataset or not dataset.file_path:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=error_response(
+                    ErrorCode.DATASET_NOT_FOUND,
+                    ERROR_MESSAGES[ErrorCode.DATASET_NOT_FOUND],
+                ),
+            )
+        dataset_path = dataset.file_path
 
     # 작업 생성
     from app.db.models.job import JobRun
@@ -72,7 +88,8 @@ async def run_baseline_modeling(
             "cv_folds": body.cv_folds,
             "models": body.models,
             "branch_id": str(branch_id),
-            "dataset_path": dataset.file_path,
+            "dataset_path": dataset_path,
+            "source_artifact_id": source_artifact_id,
         },
     )
     db.add(job_run)
@@ -89,7 +106,7 @@ async def run_baseline_modeling(
             str(job_run.id),
             str(session_id),
             str(branch_id),
-            dataset.file_path,
+            dataset_path,
             body.target_column,
             body.feature_columns,
             body.test_size,

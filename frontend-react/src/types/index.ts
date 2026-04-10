@@ -7,9 +7,18 @@ export interface LoginRequest {
 
 export interface LoginResponse {
   access_token: string
+  refresh_token: string
   token_type: string
+  expires_in: number
   user_id: string
   username: string
+}
+
+export interface RefreshResponse {
+  access_token: string
+  refresh_token: string
+  token_type: string
+  expires_in: number
 }
 
 // ─── Sessions ────────────────────────────────────────────────────────────────
@@ -33,9 +42,12 @@ export interface Dataset {
   id: string
   session_id: string
   name: string
-  rows: number
-  columns: number
-  size_bytes: number
+  source?: string
+  original_filename?: string | null
+  builtin_key?: string | null
+  row_count?: number | null
+  col_count?: number | null
+  file_size_bytes?: number | null
   created_at: string
 }
 
@@ -43,8 +55,8 @@ export interface BuiltinDataset {
   key: string
   name: string
   description: string
-  rows: number
-  columns: number
+  row_count: number
+  col_count: number
 }
 
 export interface TargetCandidate {
@@ -52,6 +64,43 @@ export interface TargetCandidate {
   dtype: string
   unique_count: number
   null_count: number
+}
+
+export interface ModelRun {
+  id: string
+  branch_id: string
+  model_name: string
+  model_type: string
+  status: string
+  cv_rmse: number | null
+  cv_mae: number | null
+  cv_r2: number | null
+  test_rmse: number | null
+  test_mae: number | null
+  test_r2: number | null
+  n_train: number | null
+  n_test: number | null
+  n_features: number | null
+  target_column: string | null
+  is_champion: boolean
+  created_at: string
+}
+
+export interface BaselineModelingRequest {
+  session_id: string
+  branch_id: string
+  target_column: string
+  source_artifact_id?: string
+  feature_columns?: string[]
+  test_size?: number
+  cv_folds?: number
+  models?: string[]
+}
+
+export interface LeaderboardResponse {
+  branch_id: string
+  models: ModelRun[]
+  champion_id: string | null
 }
 
 // ─── Branches ────────────────────────────────────────────────────────────────
@@ -162,6 +211,7 @@ export interface JobResult {
   message?: string | null
   step_id?: string | null
   artifact_ids?: string[]
+  intent?: string | null
 }
 
 // ─── Chat ────────────────────────────────────────────────────────────────────
@@ -192,15 +242,58 @@ export interface NullImportanceRequest {
   session_id: string
   branch_id: string
   n_permutations?: number
+  target_columns?: string[]
+  source_artifact_id?: string
 }
 
-export interface NullImportanceResult {
+export interface ModelAvailabilityStatus {
+  target_column: string
+  ready: boolean
+  reason: 'ready' | 'missing_champion' | 'dataset_mismatch'
+  message: string
+  model_run_id?: string
+  model_dataset_path?: string | null
+}
+
+export interface ModelAvailabilityResponse {
+  branch_id: string
+  dataset_label: string
+  desired_dataset_path: string
+  statuses: ModelAvailabilityStatus[]
+}
+
+export interface NullImportancePerTargetResult {
+  target_column: string
   actual_importance: Record<string, number>
-  null_importance: Record<string, { p90: number; mean: number }>
+  null_importance: Record<string, { p5: number; p50: number; p90: number; p95: number }>
   recommended_features: string[]
   recommended_n: number
   feature_ranges: Record<string, [number, number]>
   feature_names: string[]
+  significant_features: string[]
+}
+
+export interface NullImportanceFeatureScore {
+  aggregate_score: number
+  coverage_count: number
+  coverage_ratio: number
+  significant_targets: string[]
+  target_scores: Record<string, number>
+  target_actual_importance: Record<string, number>
+  target_null_p90: Record<string, number>
+}
+
+export interface NullImportanceResult {
+  actual_importance: Record<string, number>
+  null_importance: Record<string, { p5: number; p50: number; p90: number; p95: number }>
+  recommended_features: string[]
+  recommended_n: number
+  feature_ranges: Record<string, [number, number]>
+  feature_names: string[]
+  target_columns?: string[]
+  target_results?: Record<string, NullImportancePerTargetResult>
+  feature_scores?: Record<string, NullImportanceFeatureScore>
+  aggregation_method?: string
 }
 
 export interface InverseRunRequest {
@@ -227,6 +320,7 @@ export interface ConstrainedInverseRunRequest {
   direction: 'maximize' | 'minimize'
   n_calls?: number
   model_type?: 'lgbm' | 'bcm'
+  source_artifact_id?: string
   // 제약 조건 (이중 타겟)
   constraint_target_column?: string
   constraint_type?: 'gte' | 'lte'

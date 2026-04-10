@@ -7,7 +7,7 @@ import json
 import os
 import uuid
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Callable, Optional
 
 import joblib
 import numpy as np
@@ -24,15 +24,14 @@ logger = get_logger(__name__)
 # Phase 1: Null Importance 분석
 # ─────────────────────────────────────────────────────────
 
-def run_null_importance_task(
-    job_run_id: str,
-    branch_id: str,
+def _compute_null_importance_for_target(
     model_path: str,
     feature_names: list,
     dataset_path: str,
     target_column: str,
     categorical_features: list,
     n_permutations: int = 30,
+    progress_cb: Optional[Callable[[int, str], None]] = None,
 ) -> dict:
     """
     Null Importance (순열 기반 피처 유의성) 분석.
@@ -46,163 +45,305 @@ def run_null_importance_task(
         "feature_ranges": {"feature": [min, max], ...},   # 데이터 범위
     }
     """
+    progress_cb = progress_cb or (lambda _pct, _msg: None)
+
+    import lightgbm as lgb
+    import shap
+
+    progress_cb(5, "모델 및 데이터 로드 중...")
+    model = joblib.load(model_path)
+    df = pd.read_parquet(dataset_path)
+
+    if len(df) == 0:
+        raise ValueError("데이터셋에 행이 없습니다.")
+
+    logger.info(
+        "피처 대조 시작",
+        target_column=target_column,
+        model_features=feature_names,
+        dataset_columns=df.columns.tolist(),
+        dataset_path=dataset_path,
+    )
+
+    available = [f for f in feature_names if f in df.columns]
+    if not available:
+        logger.error(
+            "피처 불일치 상세",
+            target_column=target_column,
+            model_features=feature_names,
+            dataset_columns=df.columns.tolist(),
+        )
+        raise ValueError(f"데이터셋에 모델 피처가 없습니다. (모델 피처: {feature_names[:5]}...)")
+
+    X = df[available].copy()
+
+    if target_column not in df.columns:
+        raise ValueError(f"데이터셋에 타겟 컬럼 '{target_column}'이 없습니다.")
+
+    y = df[target_column].copy()
+    if y.isnull().any():
+        logger.info("타겟 컬럼 결측치 처리 (중앙값)", column=target_column)
+        y = y.fillna(y.median())
+
+    for col in categorical_features:
+        if col in X.columns:
+            X[col] = X[col].astype("category")
+
+    X = X.fillna(X.median(numeric_only=True))
+
+    max_rows = 3000
+    if len(X) > max_rows:
+        idx = np.random.choice(len(X), max_rows, replace=False)
+        X_shap = X.iloc[idx].reset_index(drop=True)
+        y_shap = y.iloc[idx].reset_index(drop=True)
+    else:
+        X_shap = X
+        y_shap = y
+
+    progress_cb(15, "실제 SHAP 중요도 계산 중...")
+    explainer = shap.TreeExplainer(model)
+    shap_vals_raw = explainer.shap_values(X_shap)
+    shap_vals = shap_vals_raw[0] if isinstance(shap_vals_raw, list) else shap_vals_raw
+
+    actual_importance = {
+        feat: float(np.abs(shap_vals[:, i]).mean())
+        for i, feat in enumerate(available)
+    }
+    actual_sorted = sorted(actual_importance.items(), key=lambda x: -x[1])
+
+    progress_cb(25, f"Null Importance 순열 {n_permutations}회 시작...")
+
+    null_scores = {feat: [] for feat in available}
+    lgb_params = {
+        "objective": "regression",
+        "num_leaves": 31,
+        "learning_rate": 0.1,
+        "n_estimators": 50,
+        "verbosity": -1,
+        "random_state": 42,
+    }
+    cat_idx = [available.index(c) for c in categorical_features if c in available]
+
+    for perm_i in range(n_permutations):
+        pct = 25 + int(60 * perm_i / max(n_permutations, 1))
+        progress_cb(pct, f"순열 {perm_i + 1}/{n_permutations} 실행 중...")
+        y_perm = y_shap.sample(frac=1, random_state=perm_i).reset_index(drop=True)
+
+        try:
+            perm_model = lgb.LGBMRegressor(**lgb_params)
+            perm_model.fit(
+                X_shap,
+                y_perm,
+                categorical_feature=cat_idx if cat_idx else "auto",
+            )
+            perm_explainer = shap.TreeExplainer(perm_model)
+            perm_shap_raw = perm_explainer.shap_values(X_shap)
+            perm_shap = perm_shap_raw[0] if isinstance(perm_shap_raw, list) else perm_shap_raw
+
+            for i, feat in enumerate(available):
+                null_scores[feat].append(float(np.abs(perm_shap[:, i]).mean()))
+        except Exception as e:
+            logger.warning("순열 실패", target_column=target_column, permutation=perm_i, error=str(e))
+
+    progress_cb(88, "추천 피처 수 계산 중...")
+
+    null_importance = {}
+    significant = []
+    for feat in available:
+        nulls = null_scores[feat]
+        if nulls:
+            p5 = float(np.percentile(nulls, 5))
+            p50 = float(np.percentile(nulls, 50))
+            p90 = float(np.percentile(nulls, 90))
+            p95 = float(np.percentile(nulls, 95))
+            null_importance[feat] = {"p5": p5, "p50": p50, "p90": p90, "p95": p95}
+            if actual_importance[feat] > p90:
+                significant.append(feat)
+        else:
+            null_importance[feat] = {"p5": 0, "p50": 0, "p90": 0, "p95": 0}
+
+    recommended_features = [f for f, _ in actual_sorted if f in significant]
+    if len(recommended_features) < 3:
+        for f, _ in actual_sorted:
+            if f not in recommended_features:
+                recommended_features.append(f)
+            if len(recommended_features) >= 3:
+                break
+    recommended_features = recommended_features[:15]
+    recommended_n = min(len(recommended_features), max(3, len(significant)))
+
+    feature_ranges = {}
+    for feat in available:
+        col_data = X[feat].dropna()
+        if pd.api.types.is_numeric_dtype(col_data):
+            feature_ranges[feat] = [float(col_data.min()), float(col_data.max())]
+
+    return {
+        "target_column": target_column,
+        "actual_importance": dict(actual_sorted),
+        "null_importance": null_importance,
+        "recommended_features": recommended_features,
+        "recommended_n": recommended_n,
+        "feature_ranges": feature_ranges,
+        "feature_names": available,
+        "significant_features": significant,
+    }
+
+
+def _aggregate_multi_target_null_importance(target_results: dict[str, dict]) -> dict:
+    target_columns = list(target_results.keys())
+    target_count = len(target_columns)
+    if target_count == 0:
+        raise ValueError("타겟 결과가 없습니다.")
+
+    all_features: set[str] = set()
+    merged_ranges: dict[str, list[float]] = {}
+    max_actual_by_target: dict[str, float] = {}
+
+    for target_col, result in target_results.items():
+        actuals = result.get("actual_importance", {})
+        max_actual_by_target[target_col] = max(actuals.values(), default=0.0) or 1.0
+        all_features.update(result.get("feature_names", []))
+        for feat, rng in result.get("feature_ranges", {}).items():
+            if feat not in merged_ranges:
+                merged_ranges[feat] = [float(rng[0]), float(rng[1])]
+            else:
+                merged_ranges[feat][0] = min(merged_ranges[feat][0], float(rng[0]))
+                merged_ranges[feat][1] = max(merged_ranges[feat][1], float(rng[1]))
+
+    feature_scores: dict[str, dict] = {}
+    aggregate_actuals: dict[str, float] = {}
+    aggregate_nulls: dict[str, dict] = {}
+
+    for feat in all_features:
+        significant_targets: list[str] = []
+        target_scores: dict[str, float] = {}
+        target_actuals: dict[str, float] = {}
+        target_p90s: dict[str, float] = {}
+        normalized_values: list[float] = []
+        p90_values: list[float] = []
+
+        for target_col in target_columns:
+            result = target_results[target_col]
+            actual = float(result.get("actual_importance", {}).get(feat, 0.0))
+            p90 = float(result.get("null_importance", {}).get(feat, {}).get("p90", 0.0))
+            normalized = actual / max_actual_by_target[target_col] if max_actual_by_target[target_col] > 0 else 0.0
+            margin = max(actual - p90, 0.0)
+            relative_margin = margin / max(actual, p90, 1e-9) if (actual > 0 or p90 > 0) else 0.0
+            target_score = 0.65 * normalized + 0.35 * relative_margin
+
+            target_actuals[target_col] = actual
+            target_p90s[target_col] = p90
+            target_scores[target_col] = float(target_score)
+            normalized_values.append(normalized)
+            p90_values.append(p90)
+
+            if feat in result.get("significant_features", []):
+                significant_targets.append(target_col)
+
+        coverage_count = len(significant_targets)
+        coverage_ratio = coverage_count / target_count
+        mean_target_score = sum(target_scores.values()) / target_count
+        aggregate_score = 0.55 * coverage_ratio + 0.45 * mean_target_score
+
+        feature_scores[feat] = {
+            "aggregate_score": float(aggregate_score),
+            "coverage_count": coverage_count,
+            "coverage_ratio": float(coverage_ratio),
+            "significant_targets": significant_targets,
+            "target_scores": target_scores,
+            "target_actual_importance": target_actuals,
+            "target_null_p90": target_p90s,
+        }
+        aggregate_actuals[feat] = float(aggregate_score)
+        aggregate_nulls[feat] = {
+            "p5": float(min(p90_values) if p90_values else 0.0),
+            "p50": float(np.median(p90_values) if p90_values else 0.0),
+            "p90": float(sum(p90_values) / len(p90_values) if p90_values else 0.0),
+            "p95": float(max(p90_values) if p90_values else 0.0),
+        }
+
+    ranked_features = sorted(
+        all_features,
+        key=lambda feat: (
+            -feature_scores[feat]["coverage_count"],
+            -feature_scores[feat]["aggregate_score"],
+            feat,
+        ),
+    )
+
+    full_coverage = [feat for feat in ranked_features if feature_scores[feat]["coverage_count"] == target_count]
+    partial_coverage = [
+        feat for feat in ranked_features
+        if 0 < feature_scores[feat]["coverage_count"] < target_count
+    ]
+    no_coverage = [feat for feat in ranked_features if feature_scores[feat]["coverage_count"] == 0]
+
+    recommended_features = full_coverage + partial_coverage + no_coverage
+    if len(recommended_features) < 3:
+        recommended_features = ranked_features[:3]
+    recommended_features = recommended_features[:15]
+
+    recommended_n = min(
+        len(recommended_features),
+        max(3, min(15, len(full_coverage) + max(1, target_count))),
+    )
+
+    return {
+        "actual_importance": {feat: aggregate_actuals[feat] for feat in ranked_features},
+        "null_importance": {feat: aggregate_nulls[feat] for feat in ranked_features},
+        "recommended_features": recommended_features,
+        "recommended_n": recommended_n,
+        "feature_ranges": merged_ranges,
+        "feature_names": ranked_features,
+        "feature_scores": {feat: feature_scores[feat] for feat in ranked_features},
+        "target_columns": target_columns,
+        "target_results": target_results,
+        "aggregation_method": "coverage_weighted_union_v1",
+    }
+
+
+def run_null_importance_task(
+    job_run_id: str,
+    branch_id: str,
+    target_specs: list,
+    n_permutations: int = 30,
+) -> dict:
     reporter = ProgressReporter(job_run_id)
     update_job_status_sync(job_run_id, "running", 0, "Null Importance 분석 준비 중...")
 
     try:
-        import lightgbm as lgb
-        import shap
+        if not target_specs:
+            raise ValueError("분석할 타겟 정보가 없습니다.")
 
-        reporter.update(5, "모델 및 데이터 로드 중...")
-        model = joblib.load(model_path)
-        df = pd.read_parquet(dataset_path)
+        target_results: dict[str, dict] = {}
+        analysis_start = 5
+        analysis_end = 88
+        total_targets = len(target_specs)
 
-        if len(df) == 0:
-            raise ValueError("데이터셋에 행이 없습니다.")
+        for idx, spec in enumerate(target_specs):
+            target_column = spec["target_column"]
+            start_pct = analysis_start + int((analysis_end - analysis_start) * idx / total_targets)
+            end_pct = analysis_start + int((analysis_end - analysis_start) * (idx + 1) / total_targets)
+            span = max(1, end_pct - start_pct)
 
-        # 피처 준비
-        logger.info("피처 대조 시작", 
-                    model_features=feature_names, 
-                    dataset_columns=df.columns.tolist(),
-                    dataset_path=dataset_path)
-        
-        available = [f for f in feature_names if f in df.columns]
-        if not available:
-            logger.error("피처 불일치 상세", 
-                         model_features=feature_names, 
-                         dataset_columns=df.columns.tolist())
-            raise ValueError(f"데이터셋에 모델 피처가 없습니다. (모델 피처: {feature_names[:5]}...)")
+            def progress_cb(local_pct: int, message: str, *, _start=start_pct, _span=span, _target=target_column):
+                mapped = min(analysis_end, _start + int(_span * local_pct / 100))
+                reporter.update(mapped, f"[{_target}] {message}")
 
-        X = df[available].copy()
-        
-        # 타겟 준비 및 결측 처리 (LightGBM 타겟에 NaN 불가)
-        y = None
-        if target_column in df.columns:
-            y = df[target_column].copy()
-            if y.isnull().any():
-                logger.info("타겟 컬럼 결측치 처리 (중앙값)", column=target_column)
-                y = y.fillna(y.median())
-        
-        # 범주형 처리
-        for col in categorical_features:
-            if col in X.columns:
-                X[col] = X[col].astype("category")
+            target_results[target_column] = _compute_null_importance_for_target(
+                spec["model_path"],
+                spec["feature_names"],
+                spec["dataset_path"],
+                target_column,
+                spec.get("categorical_features", []),
+                n_permutations=n_permutations,
+                progress_cb=progress_cb,
+            )
 
-        X = X.fillna(X.median(numeric_only=True))
-
-        # 샘플링 (SHAP 계산 비용)
-        max_rows = 3000
-        if len(X) > max_rows:
-            idx = np.random.choice(len(X), max_rows, replace=False)
-            X_shap = X.iloc[idx].reset_index(drop=True)
-            y_shap = y.iloc[idx].reset_index(drop=True) if y is not None else None
-        else:
-            X_shap = X
-            y_shap = y
-
-        reporter.update(15, "실제 SHAP 중요도 계산 중...")
-        explainer = shap.TreeExplainer(model)
-        shap_vals_raw = explainer.shap_values(X_shap)
-        
-        # SHAP 결과가 [array] 형태인 경우 처리
-        if isinstance(shap_vals_raw, list):
-            shap_vals = shap_vals_raw[0]
-        else:
-            shap_vals = shap_vals_raw
-
-        actual_importance = {
-            feat: float(np.abs(shap_vals[:, i]).mean())
-            for i, feat in enumerate(available)
-        }
-        actual_sorted = sorted(actual_importance.items(), key=lambda x: -x[1])
-
-        reporter.update(25, f"Null Importance 순열 {n_permutations}회 시작...")
-
-        # Null 분포 계산
-        null_scores = {feat: [] for feat in available}
-
-        lgb_params = {
-            "objective": "regression",
-            "num_leaves": 31,
-            "learning_rate": 0.1,
-            "n_estimators": 50,
-            "verbosity": -1,
-            "random_state": 42,
-        }
-        cat_idx = [available.index(c) for c in categorical_features if c in available]
-
-        for perm_i in range(n_permutations):
-            pct = 25 + int(60 * perm_i / n_permutations)
-            reporter.update(pct, f"순열 {perm_i + 1}/{n_permutations} 실행 중...")
-
-            if y_shap is None:
-                continue
-                
-            y_perm = y_shap.sample(frac=1, random_state=perm_i).reset_index(drop=True)
-
-            try:
-                perm_model = lgb.LGBMRegressor(**lgb_params)
-                perm_model.fit(
-                    X_shap, y_perm,
-                    categorical_feature=cat_idx if cat_idx else "auto",
-                )
-                perm_explainer = shap.TreeExplainer(perm_model)
-                perm_shap_raw = perm_explainer.shap_values(X_shap)
-                
-                if isinstance(perm_shap_raw, list):
-                    perm_shap = perm_shap_raw[0]
-                else:
-                    perm_shap = perm_shap_raw
-                    
-                for i, feat in enumerate(available):
-                    null_scores[feat].append(float(np.abs(perm_shap[:, i]).mean()))
-            except Exception as e:
-                logger.warning(f"순열 {perm_i} 실패", error=str(e))
-
-        reporter.update(88, "추천 피처 수 계산 중...")
-
-        # 유의성 판단: 실제 중요도 > null 90th percentile
-        null_importance = {}
-        significant = []
-        for feat in available:
-            nulls = null_scores[feat]
-            if nulls:
-                p5 = float(np.percentile(nulls, 5))
-                p50 = float(np.percentile(nulls, 50))
-                p90 = float(np.percentile(nulls, 90))
-                p95 = float(np.percentile(nulls, 95))
-                null_importance[feat] = {"p5": p5, "p50": p50, "p90": p90, "p95": p95}
-                if actual_importance[feat] > p90:
-                    significant.append(feat)
-            else:
-                null_importance[feat] = {"p5": 0, "p50": 0, "p90": 0, "p95": 0}
-
-        # 추천: 유의미한 피처 중 상위 N (최소 3, 최대 15)
-        recommended_features = [f for f, _ in actual_sorted if f in significant]
-        if len(recommended_features) < 3:
-            for f, _ in actual_sorted:
-                if f not in recommended_features:
-                    recommended_features.append(f)
-                if len(recommended_features) >= 3:
-                    break
-        recommended_features = recommended_features[:15]
-        recommended_n = min(len(recommended_features), max(3, len(significant)))
-
-        # 피처 범위 (역최적화 탐색 공간용)
-        feature_ranges = {}
-        for feat in available:
-            col_data = X[feat].dropna()
-            if pd.api.types.is_numeric_dtype(col_data):
-                feature_ranges[feat] = [float(col_data.min()), float(col_data.max())]
-
-        result = {
-            "actual_importance": dict(actual_sorted),
-            "null_importance": null_importance,
-            "recommended_features": recommended_features,
-            "recommended_n": recommended_n,
-            "feature_ranges": feature_ranges,
-            "feature_names": available,
-        }
+        reporter.update(92, "타겟별 유의성 결과 통합 중...")
+        result = _aggregate_multi_target_null_importance(target_results)
+        result["branch_id"] = branch_id
 
         update_job_status_sync(job_run_id, "completed", 100, "Null Importance 분석 완료", result=result)
         return result

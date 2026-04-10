@@ -11,8 +11,8 @@ interface ArtifactCardProps {
 }
 
 export default function ArtifactCard({ artifact }: ArtifactCardProps) {
-  const { sessionId, branchId, datasetId, targetDataframeArtifactId, targetColumnsByBranch,
-    featureColumnsByBranch, setTargetDataframeArtifactId, setTargetColumns, setFeatureColumns } = useSessionStore()
+  const { sessionId, branchId, datasetId, targetDataframeArtifactId, dataframeConfigsByBranch,
+    setTargetDataframeArtifactId, setDataframeTargetColumns, setDataframeFeatureColumns } = useSessionStore()
 
   const [imgZoom, setImgZoom] = useState(false)
   const [collapsed, setCollapsed] = useState(
@@ -34,8 +34,9 @@ export default function ArtifactCard({ artifact }: ArtifactCardProps) {
   const isEffectiveTarget = isExplicitTarget || (!targetDataframeArtifactId && isBaseDataset)
 
   const currentBranchId = branchId ?? 'global'
-  const targetColumns = targetColumnsByBranch[currentBranchId] ?? []
-  const featureColumns = featureColumnsByBranch[currentBranchId] ?? []
+  const artifactConfig = dataframeConfigsByBranch[currentBranchId]?.[artifact.id]
+  const targetColumns = artifactConfig?.targetColumns ?? []
+  const featureColumns = artifactConfig?.featureColumns ?? []
 
   const isDataframe = ['dataframe', 'table', 'leaderboard', 'feature_importance'].includes(artifact.type)
   const availableColumns = artifact.data?.columns ?? []
@@ -83,12 +84,12 @@ export default function ArtifactCard({ artifact }: ArtifactCardProps) {
   }
 
   const commitTargetCols = () => {
-    setTargetColumns(currentBranchId, pendingTargetCols)
+    setDataframeTargetColumns(currentBranchId, artifact.id, pendingTargetCols)
     setShowTargetSelector(false)
   }
 
   const commitFeatureCols = () => {
-    setFeatureColumns(currentBranchId, pendingFeatureCols)
+    setDataframeFeatureColumns(currentBranchId, artifact.id, pendingFeatureCols)
     setShowFeatureSelector(false)
   }
 
@@ -190,7 +191,7 @@ export default function ArtifactCard({ artifact }: ArtifactCardProps) {
                   <button
                     onClick={() => {
                       setPendingTargetCols([])
-                      setTargetColumns(currentBranchId, [])
+                      setDataframeTargetColumns(currentBranchId, artifact.id, [])
                       setShowTargetSelector(false)
                     }}
                     className="flex items-center gap-1 rounded-md border border-gray-300 px-2.5 py-1 text-xs text-gray-600 hover:border-red-400 hover:text-red-600 hover:bg-red-50"

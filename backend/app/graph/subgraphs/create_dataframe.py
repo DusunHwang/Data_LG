@@ -65,6 +65,17 @@ ALWAYS save to parquet — never just print the dataframe.
 """
 
 
+def _is_selected_columns_rebuild_request(user_message: str) -> bool:
+    normalized = " ".join((user_message or "").lower().split())
+    keywords = [
+        "타겟과 설정된 변수들만으로 데이터 프레임 새로 구성해줘",
+        "타겟과 설정된 변수들만으로 데이터프레임 새로 구성해줘",
+        "타겟과 설정된 변수만으로 데이터 프레임 새로 구성해줘",
+        "타겟과 설정된 변수만으로 데이터프레임 새로 구성해줘",
+    ]
+    return any(keyword in normalized for keyword in keywords)
+
+
 def run_create_dataframe_subgraph(state: GraphState) -> GraphState:
     """
     create_dataframe 서브그래프:
@@ -82,6 +93,8 @@ def run_create_dataframe_subgraph(state: GraphState) -> GraphState:
     dataset = state.get("dataset", {})
     branch_id = active_branch.get("id")
     user_message = state.get("user_message", "")
+    feature_columns = state.get("feature_columns") or []
+    target_columns = state.get("target_columns") or ([state.get("target_column")] if state.get("target_column") else [])
 
     if not dataset_path:
         return {**state, "error_code": "NO_DATASET", "error_message": "데이터셋 경로를 찾을 수 없습니다."}
@@ -92,9 +105,63 @@ def run_create_dataframe_subgraph(state: GraphState) -> GraphState:
 
         check_cancellation(state)
 
+        if _is_selected_columns_rebuild_request(user_message):
+            selected_cols = []
+            for col in [*target_columns, *feature_columns]:
+                if col in df.columns and col not in selected_cols:
+                    selected_cols.append(col)
+
+            if not selected_cols:
+                return {
+                    **state,
+                    "error_code": "NO_SELECTED_COLUMNS",
+                    "error_message": "선택된 타겟/변수 컬럼이 데이터셋에 없습니다.",
+                }
+
+            state = update_progress(state, 55, "데이터프레임_생성", "선택된 타겟/변수로 단일 데이터프레임 구성 중...")
+            work_dir = get_artifact_dir(session_id, "tmp")
+            result_path = os.path.join(work_dir, f"selected_columns_{uuid_module.uuid4().hex}.parquet")
+            df[selected_cols].copy().to_parquet(result_path, index=False)
+
+            sandbox_result = {
+                "success": True,
+                "stdout": f"Selected columns dataframe created: {len(selected_cols)} columns",
+                "output_files": {"result_1.parquet": result_path},
+                "work_dir": work_dir,
+            }
+
+            branch_config = active_branch.get("config", {}) or {}
+            if isinstance(branch_config, str):
+                import json as _json
+                branch_config = _json.loads(branch_config)
+            target_col = state.get("target_column") or branch_config.get("target_column") or dataset.get("target_column")
+
+            state = update_progress(state, 75, "데이터프레임_생성", "아티팩트 저장 중...")
+            artifact_ids = _persist_artifacts(
+                sandbox_result=sandbox_result,
+                generated_code="# Deterministic preprocessing: rebuild dataframe with all selected target and feature columns\n",
+                session_id=session_id,
+                branch_id=branch_id,
+                dataset=dataset,
+                user_message=user_message,
+                target_col=target_col,
+            )
+
+            return {
+                **state,
+                "method_used": "direct_code",
+                "created_step_id": artifact_ids.get("step_id"),
+                "created_artifact_ids": artifact_ids.get("artifact_ids", []),
+                "execution_result": {
+                    "stdout": f"Selected columns dataframe created with targets={target_columns} and features={feature_columns}",
+                    "success": True,
+                    "used_fallback": False,
+                },
+            }
+
         # 코드 생성
         state = update_progress(state, 35, "데이터프레임_생성", "필터링 코드 생성 중...")
-        code = _run_async(_generate_code(df, user_message))
+        code = _run_async(_generate_code(df, user_message, target_columns=target_columns, feature_columns=feature_columns))
         code = _fix_data_loader(code)
         logger.info("create_dataframe 코드 생성 완료", code_preview=code[:200])
 
@@ -112,7 +179,15 @@ def run_create_dataframe_subgraph(state: GraphState) -> GraphState:
             err_msg = sandbox_result.get("stderr", "")[:500]
             logger.warning("create_dataframe 실행 실패, 재생성 시도", error=err_msg)
             state = update_progress(state, 65, "데이터프레임_생성", "코드 수정 후 재시도 중...")
-            code = _run_async(_generate_code(df, user_message, error_context=err_msg))
+            code = _run_async(
+                _generate_code(
+                    df,
+                    user_message,
+                    target_columns=target_columns,
+                    feature_columns=feature_columns,
+                    error_context=err_msg,
+                )
+            )
             code = _fix_data_loader(code)
             sandbox_result = execute_code_in_sandbox(
                 code=code,
@@ -187,9 +262,17 @@ def _run_async(coro):
             return future.result()
 
 
-async def _generate_code(df: pd.DataFrame, user_message: str, error_context: str = "") -> str:
+async def _generate_code(
+    df: pd.DataFrame,
+    user_message: str,
+    target_columns: list[str] | None = None,
+    feature_columns: list[str] | None = None,
+    error_context: str = "",
+) -> str:
     """vLLM으로 필터/변환 코드 생성"""
     client = VLLMClient()
+    target_columns = target_columns or []
+    feature_columns = feature_columns or []
 
     col_info = {
         "columns": list(df.columns),
@@ -205,6 +288,16 @@ async def _generate_code(df: pd.DataFrame, user_message: str, error_context: str
     if error_context:
         error_section = f"\nPrevious attempt failed with error:\n{error_context}\nFix the code accordingly.\n"
 
+    constraint_section = ""
+    if target_columns or feature_columns:
+        constraint_lines = []
+        if target_columns:
+            constraint_lines.append(f"- target columns to preserve/use: {', '.join(target_columns)}")
+        if feature_columns:
+            constraint_lines.append(f"- allowed feature columns: {', '.join(feature_columns)}")
+            constraint_lines.append("- do not introduce other feature columns unless they are newly derived from the allowed feature columns")
+        constraint_section = "\nColumn constraints:\n" + "\n".join(constraint_lines) + "\n"
+
     messages = [
         {"role": "system", "content": CREATE_DF_SYSTEM_PROMPT},
         {
@@ -212,6 +305,7 @@ async def _generate_code(df: pd.DataFrame, user_message: str, error_context: str
             "content": (
                 f"User request: {user_message}\n\n"
                 f"DataFrame info:\n{json.dumps(col_info, ensure_ascii=False, default=str)}"
+                f"{constraint_section}"
                 f"{error_section}"
             ),
         },

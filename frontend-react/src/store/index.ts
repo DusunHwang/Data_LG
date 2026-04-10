@@ -6,9 +6,17 @@ import type { ChatMessage, Artifact } from '@/types'
 
 interface AuthState {
   token: string | null
+  refreshToken: string | null
+  tokenExpiresAt: number | null
   userId: string | null
   username: string | null
-  setAuth: (token: string, userId: string, username: string) => void
+  setAuth: (
+    token: string,
+    refreshToken: string,
+    expiresIn: number,
+    userId: string,
+    username: string,
+  ) => void
   clearAuth: () => void
 }
 
@@ -16,21 +24,28 @@ export const useAuthStore = create<AuthState>()(
   persist(
     (set) => ({
       token: null,
+      refreshToken: null,
+      tokenExpiresAt: null,
       userId: null,
       username: null,
-      setAuth: (token, userId, username) => {
+      setAuth: (token, refreshToken, expiresIn, userId, username) => {
         localStorage.setItem('access_token', token)
-        set({ token, userId, username })
+        localStorage.setItem('refresh_token', refreshToken)
+        const tokenExpiresAt = Date.now() + expiresIn * 1000
+        set({ token, refreshToken, tokenExpiresAt, userId, username })
       },
       clearAuth: () => {
         localStorage.removeItem('access_token')
-        set({ token: null, userId: null, username: null })
+        localStorage.removeItem('refresh_token')
+        set({ token: null, refreshToken: null, tokenExpiresAt: null, userId: null, username: null })
       },
     }),
     {
       name: 'auth-storage',
       partialize: (state) => ({
         token: state.token,
+        refreshToken: state.refreshToken,
+        tokenExpiresAt: state.tokenExpiresAt,
         userId: state.userId,
         username: state.username,
       }),
@@ -45,16 +60,21 @@ interface SessionState {
   branchId: string | null
   datasetId: string | null
   targetColumn: string | null                        // 사이드바 단일 선택 (레거시)
-  targetColumnsByBranch: Record<string, string[]>   // 브랜치별 다중 타겟 컬럼
-  featureColumnsByBranch: Record<string, string[]>  // 브랜치별 변수(피처) 컬럼
+  dataframeConfigsByBranch: Record<string, Record<string, {
+    targetColumns: string[]
+    featureColumns: string[]
+  }>>
   targetDataframeArtifactId: string | null          // 명시적으로 설정된 타겟 데이터프레임
   setSessionId: (id: string | null) => void
   setBranchId: (id: string | null) => void
   setDatasetId: (id: string | null) => void
   setTargetColumn: (col: string | null) => void
-  setTargetColumns: (branchId: string, cols: string[]) => void
-  setFeatureColumns: (branchId: string, cols: string[]) => void
+  setDataframeTargetColumns: (branchId: string, artifactId: string, cols: string[]) => void
+  setDataframeFeatureColumns: (branchId: string, artifactId: string, cols: string[]) => void
+  setDataframeConfig: (branchId: string, artifactId: string, targetCols: string[], featureCols: string[]) => void
+  cloneDataframeConfig: (branchId: string, fromArtifactId: string, toArtifactId: string) => void
   setTargetDataframeArtifactId: (id: string | null) => void
+  resetSessionState: () => void
 }
 
 export const useSessionStore = create<SessionState>()(
@@ -64,10 +84,16 @@ export const useSessionStore = create<SessionState>()(
       branchId: null,
       datasetId: null,
       targetColumn: null,
-      targetColumnsByBranch: {},
-      featureColumnsByBranch: {},
+      dataframeConfigsByBranch: {},
       targetDataframeArtifactId: null,
-      setSessionId: (id) => set({ sessionId: id, branchId: null, targetDataframeArtifactId: null }),
+      setSessionId: (id) => set({
+        sessionId: id,
+        branchId: null,
+        datasetId: null,
+        targetColumn: null,
+        dataframeConfigsByBranch: {},
+        targetDataframeArtifactId: null,
+      }),
       setBranchId: (id) => set({ branchId: id }),
       setDatasetId: (id) =>
         set((state) => {
@@ -75,32 +101,88 @@ export const useSessionStore = create<SessionState>()(
           // 데이터셋이 바뀌면 모든 브랜치의 타겟/변수 설정 리셋
           return {
             datasetId: id,
-            targetColumnsByBranch: {},
-            featureColumnsByBranch: {},
+            dataframeConfigsByBranch: {},
             targetColumn: null,
             targetDataframeArtifactId: null,
           }
         }),
       setTargetColumn: (col) => set({ targetColumn: col }),
-      setTargetColumns: (branchId, cols) =>
+      setDataframeTargetColumns: (branchId, artifactId, cols) =>
         set((state) => ({
-          targetColumnsByBranch: { ...state.targetColumnsByBranch, [branchId]: cols },
+          dataframeConfigsByBranch: {
+            ...state.dataframeConfigsByBranch,
+            [branchId]: {
+              ...(state.dataframeConfigsByBranch[branchId] ?? {}),
+              [artifactId]: {
+                targetColumns: cols,
+                featureColumns: (
+                  (state.dataframeConfigsByBranch[branchId] ?? {})[artifactId]?.featureColumns ?? []
+                ).filter((col) => !cols.includes(col)),
+              },
+            },
+          },
         })),
-      setFeatureColumns: (branchId, cols) =>
+      setDataframeFeatureColumns: (branchId, artifactId, cols) =>
         set((state) => ({
-          featureColumnsByBranch: { ...state.featureColumnsByBranch, [branchId]: cols },
+          dataframeConfigsByBranch: {
+            ...state.dataframeConfigsByBranch,
+            [branchId]: {
+              ...(state.dataframeConfigsByBranch[branchId] ?? {}),
+              [artifactId]: {
+                targetColumns: (state.dataframeConfigsByBranch[branchId] ?? {})[artifactId]?.targetColumns ?? [],
+                featureColumns: cols.filter(
+                  (col) => !(((state.dataframeConfigsByBranch[branchId] ?? {})[artifactId]?.targetColumns ?? []).includes(col)),
+                ),
+              },
+            },
+          },
         })),
+      setDataframeConfig: (branchId, artifactId, targetCols, featureCols) =>
+        set((state) => ({
+          dataframeConfigsByBranch: {
+            ...state.dataframeConfigsByBranch,
+            [branchId]: {
+              ...(state.dataframeConfigsByBranch[branchId] ?? {}),
+              [artifactId]: {
+                targetColumns: [...targetCols],
+                featureColumns: featureCols.filter((col) => !targetCols.includes(col)),
+              },
+            },
+          },
+        })),
+      cloneDataframeConfig: (branchId, fromArtifactId, toArtifactId) =>
+        set((state) => {
+          const branchConfigs = state.dataframeConfigsByBranch[branchId] ?? {}
+          const sourceConfig = branchConfigs[fromArtifactId]
+          if (!sourceConfig) return {}
+          return {
+            dataframeConfigsByBranch: {
+              ...state.dataframeConfigsByBranch,
+              [branchId]: {
+                ...branchConfigs,
+                [toArtifactId]: {
+                  targetColumns: [...sourceConfig.targetColumns],
+                  featureColumns: [...sourceConfig.featureColumns],
+                },
+              },
+            },
+          }
+        }),
       setTargetDataframeArtifactId: (id) =>
         set((state) => {
           if (id === state.targetDataframeArtifactId) return { targetDataframeArtifactId: id }
-          // 분석 대상이 바뀌면 현재 브랜치의 타겟/변수 설정 리셋
-          const bid = state.branchId ?? 'global'
           return {
             targetDataframeArtifactId: id,
-            targetColumnsByBranch: { ...state.targetColumnsByBranch, [bid]: [] },
-            featureColumnsByBranch: { ...state.featureColumnsByBranch, [bid]: [] },
           }
         }),
+      resetSessionState: () => set({
+        sessionId: null,
+        branchId: null,
+        datasetId: null,
+        targetColumn: null,
+        dataframeConfigsByBranch: {},
+        targetDataframeArtifactId: null,
+      }),
     }),
     {
       name: 'session-storage',
@@ -142,12 +224,18 @@ export const useChatStore = create<ChatState>((set) => ({
   scrollToArtifactId: null,
 
   addMessage: (branchId, msg) =>
-    set((state) => ({
-      histories: {
-        ...state.histories,
-        [branchId]: [...(state.histories[branchId] ?? []), msg],
-      },
-    })),
+    set((state) => {
+      const current = state.histories[branchId] ?? []
+      if (current.some((existing) => existing.id === msg.id)) {
+        return state
+      }
+      return {
+        histories: {
+          ...state.histories,
+          [branchId]: [...current, msg],
+        },
+      }
+    }),
 
   updateMessage: (branchId, msgId, patch) =>
     set((state) => ({

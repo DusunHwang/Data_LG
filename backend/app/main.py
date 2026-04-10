@@ -1,6 +1,7 @@
 """FastAPI 애플리케이션 진입점"""
 
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 
 from fastapi import FastAPI, Request, status
 from fastapi.exceptions import HTTPException
@@ -18,6 +19,46 @@ setup_logging()
 logger = get_logger(__name__)
 
 
+async def _cleanup_stale_jobs_on_startup() -> None:
+    """프로세스 재시작으로 고아가 된 pending/running 작업 정리."""
+    from sqlalchemy import select
+
+    from app.db.base import AsyncSessionLocal
+    from app.db.models.job import JobRun, JobStatus
+    from app.worker.cancellation import clear_cancellation
+    from app.worker.progress import clear_progress
+
+    async with AsyncSessionLocal() as db:
+        result = await db.execute(
+            select(JobRun).where(JobRun.status.in_([JobStatus.pending, JobStatus.running]))
+        )
+        stale_jobs = list(result.scalars().all())
+
+        if not stale_jobs:
+            return
+
+        now = datetime.now(timezone.utc)
+        for job in stale_jobs:
+            previous_status = job.status.value
+            job.status = JobStatus.failed
+            job.finished_at = now
+            job.progress_message = "서버 재시작으로 이전 작업이 종료되었습니다."
+            job.error_message = (
+                f"서버 재시작으로 {previous_status} 상태 작업이 자동 종료되었습니다. "
+                "다시 실행해주세요."
+            )
+            clear_progress(job.id)
+            clear_cancellation(str(job.id))
+            db.add(job)
+
+        await db.commit()
+        logger.warning(
+            "고아 작업 자동 정리",
+            count=len(stale_jobs),
+            job_ids=[str(job.id) for job in stale_jobs],
+        )
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """앱 수명 주기 관리"""
@@ -33,8 +74,13 @@ async def lifespan(app: FastAPI):
     artifact_root.mkdir(parents=True, exist_ok=True)
     logger.info("아티팩트 저장소 초기화", path=str(artifact_root))
 
+    await _cleanup_stale_jobs_on_startup()
+
     yield
 
+    from app.worker.queue import shutdown
+
+    shutdown(wait=False)
     logger.info("애플리케이션 종료")
 
 

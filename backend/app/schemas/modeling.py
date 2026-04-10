@@ -11,6 +11,7 @@ class BaselineModelingRequest(BaseModel):
     session_id: str = Field(..., description="세션 ID")
     branch_id: str = Field(..., description="브랜치 ID")
     target_column: str = Field(..., description="타깃 컬럼명")
+    source_artifact_id: str | None = Field(None, description="기준 데이터프레임 아티팩트 ID")
     feature_columns: list[str] | None = Field(None, description="피처 컬럼 목록 (None이면 자동 선택)")
     test_size: float = Field(0.2, ge=0.05, le=0.5, description="테스트 분할 비율")
     cv_folds: int = Field(5, ge=2, le=10, description="교차 검증 폴드 수")

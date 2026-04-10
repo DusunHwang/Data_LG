@@ -7,7 +7,7 @@ import VllmMonitor from '@/components/monitor/VllmMonitor'
 import { useVllmMonitor } from '@/hooks/useVllmMonitor'
 
 export default function Header() {
-  const { username, clearAuth } = useAuthStore()
+  const { username, refreshToken, clearAuth } = useAuthStore()
   const [menuOpen, setMenuOpen] = useState(false)
   const [monitorOpen, setMonitorOpen] = useState(false)
   const { metrics, isOnline } = useVllmMonitor(true)
@@ -17,7 +17,9 @@ export default function Header() {
 
   const handleLogout = async () => {
     try {
-      await authApi.logout('')
+      if (refreshToken) {
+        await authApi.logout(refreshToken)
+      }
     } catch {
       // ignore
     }

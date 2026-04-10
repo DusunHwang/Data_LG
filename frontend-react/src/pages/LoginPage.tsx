@@ -27,7 +27,7 @@ export default function LoginPage() {
 
     try {
       const result = await authApi.login({ username, password })
-      setAuth(result.access_token, result.user_id, result.username)
+      setAuth(result.access_token, result.refresh_token, result.expires_in, result.user_id, result.username)
       navigate('/')
     } catch (err) {
       if (err instanceof Error) {

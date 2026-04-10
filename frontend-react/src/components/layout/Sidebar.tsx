@@ -13,14 +13,19 @@ import {
   User,
   Activity,
   Trash2,
+  FlaskConical,
 } from 'lucide-react'
 import { LineChart, Line, ResponsiveContainer } from 'recharts'
 import { sessionsApi, datasetsApi, branchesApi, authApi } from '@/api'
 import { useSessionStore, useAuthStore, useChatStore, useArtifactStore } from '@/store'
 import { useVllmMonitor } from '@/hooks/useVllmMonitor'
+import InverseOptimizationModal from '@/components/optimization/InverseOptimizationModal'
 
 interface SidebarProps {
   onQuestionSelect: (text: string, immediate?: boolean) => void
+  optimizationGuideOpen: boolean
+  onOpenOptimizationGuide: () => void
+  onCloseOptimizationGuide: () => void
 }
 
 // ─── QuestionList.md 파싱 ─────────────────────────────────────────────────────
@@ -124,12 +129,25 @@ function QuestionTree({
 
 // ─── Sidebar ──────────────────────────────────────────────────────────────────
 
-export default function Sidebar({ onQuestionSelect }: SidebarProps) {
+export default function Sidebar({
+  onQuestionSelect,
+  optimizationGuideOpen,
+  onOpenOptimizationGuide,
+  onCloseOptimizationGuide,
+}: SidebarProps) {
   const qc = useQueryClient()
-  const { sessionId, branchId, datasetId, setSessionId, setBranchId, setDatasetId } = useSessionStore()
+  const {
+    sessionId,
+    branchId,
+    datasetId,
+    setSessionId,
+    setBranchId,
+    setDatasetId,
+    resetSessionState,
+  } = useSessionStore()
   const { clearHistory } = useChatStore()
   const { clearArtifacts } = useArtifactStore()
-  const { username, clearAuth } = useAuthStore()
+  const { username, refreshToken, clearAuth } = useAuthStore()
 
   const [showBuiltin, setShowBuiltin] = useState(false)
   const [uploadProgress, setUploadProgress] = useState<number | null>(null)
@@ -185,6 +203,34 @@ export default function Sidebar({ onQuestionSelect }: SidebarProps) {
       }
     }
   }, [sessionId, sessionsQuery.data, sessionsQuery.isLoading, createSessionMutation.isPending])
+
+  useEffect(() => {
+    if (!sessionsQuery.data || sessionsQuery.isLoading) return
+    if (!sessionId) return
+
+    const exists = sessionsQuery.data.some((session) => session.id === sessionId)
+    if (exists) return
+
+    clearArtifacts()
+    if (branchId) clearHistory(branchId)
+
+    if (sessionsQuery.data.length > 0) {
+      setSessionId(sessionsQuery.data[0].id)
+    } else if (!createSessionMutation.isPending) {
+      resetSessionState()
+      createSessionMutation.mutate()
+    }
+  }, [
+    sessionId,
+    branchId,
+    sessionsQuery.data,
+    sessionsQuery.isLoading,
+    createSessionMutation.isPending,
+    setSessionId,
+    resetSessionState,
+    clearArtifacts,
+    clearHistory,
+  ])
 
   // ─── 자동 브랜치 관리 ──────────────────────────────────────────────────────
 
@@ -264,13 +310,20 @@ export default function Sidebar({ onQuestionSelect }: SidebarProps) {
   })
 
   const handleLogout = async () => {
-    try { await authApi.logout('') } catch { /* ignore */ }
+    try {
+      if (refreshToken) {
+        await authApi.logout(refreshToken)
+      }
+    } catch { /* ignore */ }
+    resetSessionState()
+    clearArtifacts()
+    if (branchId) clearHistory(branchId)
     clearAuth()
     window.location.href = '/login'
   }
 
   return (
-    <aside className="flex h-full flex-col bg-white border-r border-gray-200 overflow-hidden">
+    <aside className="relative flex h-full flex-col bg-white border-r border-gray-200 overflow-hidden">
 
       {/* ─── Datasets ──────────────────────────────────────────────────── */}
       <section className="p-3 border-b border-gray-100 shrink-0">
@@ -329,7 +382,7 @@ export default function Sidebar({ onQuestionSelect }: SidebarProps) {
                     className="w-full text-left rounded px-2 py-1 text-xs hover:bg-white hover:shadow-sm transition-all"
                   >
                     <p className="font-medium text-gray-700">{b.name}</p>
-                    <p className="text-gray-400">{b.rows?.toLocaleString()} rows</p>
+                    <p className="text-gray-400">{b.row_count?.toLocaleString()}행 x {b.col_count?.toLocaleString()}열</p>
                   </button>
                 ))}
               </div>
@@ -349,7 +402,7 @@ export default function Sidebar({ onQuestionSelect }: SidebarProps) {
               <div className="min-w-0 flex-1">
                 <p className="text-xs font-medium truncate">{d.name}</p>
                 <p className="text-xs text-gray-400">
-                  {d.rows?.toLocaleString()} 행, {d.columns} 열
+                  {d.row_count?.toLocaleString() ?? '-'}행 x {d.col_count?.toLocaleString() ?? '-'}열
                 </p>
               </div>
               <button
@@ -368,15 +421,29 @@ export default function Sidebar({ onQuestionSelect }: SidebarProps) {
       </section>
 
       {/* ─── Question Templates ─────────────────────────────────────────── */}
-      <section className="flex-1 overflow-y-auto scrollbar-thin p-3 min-h-0">
-        <div className="flex items-center gap-1.5 mb-2">
-          <BookOpen className="h-3.5 w-3.5 text-gray-400" />
-          <span className="text-xs font-semibold uppercase tracking-wider text-gray-500">질문 템플릿</span>
+      <section className="relative flex-1 overflow-y-auto scrollbar-thin p-3 min-h-0">
+        <div className="flex items-center justify-between gap-2 mb-2">
+          <div className="flex items-center gap-1.5">
+            <BookOpen className="h-3.5 w-3.5 text-gray-400" />
+            <span className="text-xs font-semibold uppercase tracking-wider text-gray-500">질문 템플릿</span>
+          </div>
+          <button
+            onClick={onOpenOptimizationGuide}
+            className="flex items-center gap-1 rounded-full border border-purple-200 px-2 py-0.5 text-[11px] font-medium text-purple-700 hover:bg-purple-50 transition-colors"
+          >
+            <FlaskConical className="h-3 w-3" />
+            최적화
+          </button>
         </div>
         {questionNodes.length === 0 ? (
           <p className="text-xs text-gray-400 px-1 py-1">QuestionList.md 없음</p>
         ) : (
           <QuestionTree nodes={questionNodes} onSelect={onQuestionSelect} />
+        )}
+        {optimizationGuideOpen && (
+        <div className="absolute inset-x-0 top-8 bottom-0 z-20 bg-white/96 backdrop-blur-sm">
+          <InverseOptimizationModal onClose={onCloseOptimizationGuide} variant="sidebar" />
+        </div>
         )}
       </section>
 

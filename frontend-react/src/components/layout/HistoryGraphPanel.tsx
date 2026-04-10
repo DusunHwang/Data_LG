@@ -11,6 +11,7 @@ import {
   Database,
   Folder,
   FolderOpen,
+  ArrowDown,
 } from 'lucide-react'
 import { useChatStore, useSessionStore, useArtifactStore } from '@/store'
 import { artifactsApi } from '@/api'
@@ -71,6 +72,16 @@ function ArtifactIconEl({ type }: { type: ArtifactType }) {
 // ─── 아티팩트 노드 ────────────────────────────────────────────────────────────
 
 const DF_TYPES = new Set(['dataframe', 'table', 'leaderboard', 'feature_importance'])
+
+function shouldDisplayArtifactInHistory(artifact: Artifact | undefined) {
+  if (!artifact) return true
+  const metaType = String(artifact.data?.type ?? '')
+  return ![
+    'column_classification',
+    'subset_registry',
+    'subset_score_table',
+  ].includes(metaType)
+}
 
 interface ArtifactNodeProps {
   artifactId: string
@@ -181,6 +192,7 @@ function ResultGroupNode({
   turnId,
   artifactCount,
   isExpanded,
+  hasTargetArtifact,
   onToggle,
   isSelected,
   onSelect,
@@ -188,6 +200,7 @@ function ResultGroupNode({
   turnId: string
   artifactCount: number
   isExpanded: boolean
+  hasTargetArtifact: boolean
   onToggle: (turnId: string) => void
   isSelected: boolean
   onSelect: (nodeId: string) => void
@@ -199,19 +212,35 @@ function ResultGroupNode({
       <button
         onClick={() => { onSelect(`node-group-${turnId}`); onToggle(turnId) }}
         className={`flex items-center gap-2 rounded-xl border px-3 py-2 shadow-sm transition-all ${
-          isExpanded
+          hasTargetArtifact
+            ? 'border-amber-400 bg-amber-50 aura-target hover:border-amber-500'
+            : isExpanded
             ? 'border-amber-300 bg-amber-50 hover:border-amber-400'
             : 'border-gray-200 bg-white hover:border-gray-400'
         } ${isSelected ? 'ring-2 ring-slate-300 ring-offset-1' : ''}`}
         title={isExpanded ? '결과 접기' : '결과 펼치기'}
       >
-        <Icon className={`h-4 w-4 ${isExpanded ? 'text-amber-600' : 'text-gray-500'}`} />
-        <span className={`text-xs font-medium ${isExpanded ? 'text-amber-700' : 'text-gray-600'}`}>
+        <Icon className={`h-4 w-4 ${hasTargetArtifact || isExpanded ? 'text-amber-600' : 'text-gray-500'}`} />
+        <span className={`text-xs font-medium ${hasTargetArtifact || isExpanded ? 'text-amber-700' : 'text-gray-600'}`}>
           결과 {artifactCount}개
         </span>
       </button>
-      <span className="text-[7px] text-gray-400 bg-gray-50 px-1 py-0.5 rounded">
-        {isExpanded ? '클릭하여 접기' : '클릭하여 펼치기'}
+      {hasTargetArtifact && !isExpanded && (
+        <div className="flex flex-col items-center -mt-0.5">
+          <div className="h-3 w-px bg-amber-300" />
+          <ArrowDown className="h-3.5 w-3.5 text-amber-600 drop-shadow-sm" />
+        </div>
+      )}
+      <span className={`text-[7px] px-1 py-0.5 rounded ${
+        hasTargetArtifact
+          ? 'text-amber-700 bg-amber-50 border border-amber-200'
+          : 'text-gray-400 bg-gray-50'
+      }`}>
+        {hasTargetArtifact && !isExpanded
+          ? '분석 데이터 포함'
+          : isExpanded
+          ? '클릭하여 접기'
+          : '클릭하여 펼치기'}
       </span>
     </div>
   )
@@ -277,7 +306,8 @@ export default function HistoryGraphPanel() {
   const { branchId, datasetId, targetDataframeArtifactId, setTargetDataframeArtifactId } = useSessionStore()
   const { histories, requestScrollTo, requestScrollToArtifact } = useChatStore()
   const { artifacts: cached } = useArtifactStore()
-  const [expandedTurnId, setExpandedTurnId] = useState<string | null>(null)
+  const [expandedTurnIds, setExpandedTurnIds] = useState<Set<string>>(new Set())
+  const [manuallyCollapsedTurnIds, setManuallyCollapsedTurnIds] = useState<Set<string>>(new Set())
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null)
 
   const currentBranchId = branchId ?? 'global'
@@ -292,11 +322,16 @@ export default function HistoryGraphPanel() {
 
   const items = useMemo(() => {
     const result: GraphItem[] = []
+    const seenDatasetArtifacts = new Set<string>()
     let i = 0
     while (i < messages.length) {
       const msg = messages[i]
       if (msg.role === 'system') {
-        result.push({ type: 'dataset', sysMsg: msg })
+        const artifactId = msg.artifact_ids?.[0]
+        if (!artifactId || !seenDatasetArtifacts.has(artifactId)) {
+          if (artifactId) seenDatasetArtifacts.add(artifactId)
+          result.push({ type: 'dataset', sysMsg: msg })
+        }
         i++
       } else if (msg.role === 'user') {
         const next = messages[i + 1]
@@ -314,19 +349,41 @@ export default function HistoryGraphPanel() {
     return result
   }, [messages])
 
+  const targetTurnId = useMemo(() => {
+    if (!targetDataframeArtifactId) return null
+    const turn = items.find(
+      (item) =>
+        item.type === 'turn' &&
+        (item.assistantMsg?.artifact_ids ?? []).includes(targetDataframeArtifactId),
+    )
+    return turn?.type === 'turn' ? turn.userMsg?.id ?? null : null
+  }, [items, targetDataframeArtifactId])
+
   useEffect(() => {
     const lastTurn = [...items].reverse().find((item) => item.type === 'turn' && (item.assistantMsg?.artifact_ids?.length ?? 0) > 0)
-    if (!lastTurn || lastTurn.type !== 'turn') {
-      setExpandedTurnId(null)
-      return
-    }
-    setExpandedTurnId((current) => {
-      if (current && items.some((item) => item.type === 'turn' && item.userMsg?.id === current && (item.assistantMsg?.artifact_ids?.length ?? 0) > 0)) {
-        return current
+    const validTurnIds = new Set(
+      items
+        .filter((item) => item.type === 'turn' && (item.assistantMsg?.artifact_ids?.length ?? 0) > 0)
+        .map((item) => item.userMsg?.id)
+        .filter((id): id is string => Boolean(id)),
+    )
+
+    setExpandedTurnIds((current) => {
+      const next = new Set([...current].filter((id) => validTurnIds.has(id)))
+
+      if (lastTurn?.type === 'turn' && lastTurn.userMsg?.id) {
+        next.add(lastTurn.userMsg.id)
       }
-      return lastTurn.userMsg?.id ?? null
+
+      if (targetTurnId && validTurnIds.has(targetTurnId) && !manuallyCollapsedTurnIds.has(targetTurnId)) {
+        next.add(targetTurnId)
+      }
+
+      return next
     })
-  }, [items])
+
+    setManuallyCollapsedTurnIds((current) => new Set([...current].filter((id) => validTurnIds.has(id))))
+  }, [items, targetTurnId, manuallyCollapsedTurnIds])
 
   const handleSetAsTarget = useCallback((artifactId: string, _messageId: string) => {
     setTargetDataframeArtifactId(artifactId)
@@ -347,8 +404,25 @@ export default function HistoryGraphPanel() {
   }, [cached])
 
   const handleToggleGroup = useCallback((turnId: string) => {
-    setExpandedTurnId((current) => current === turnId ? null : turnId)
-  }, [])
+    setExpandedTurnIds((current) => {
+      const next = new Set(current)
+      if (next.has(turnId)) {
+        next.delete(turnId)
+      } else {
+        next.add(turnId)
+      }
+      return next
+    })
+    setManuallyCollapsedTurnIds((current) => {
+      const next = new Set(current)
+      if (expandedTurnIds.has(turnId)) {
+        next.add(turnId)
+      } else {
+        next.delete(turnId)
+      }
+      return next
+    })
+  }, [expandedTurnIds])
 
   // --- SVG Paths calculation ---
   const contentRef = useRef<HTMLDivElement>(null)
@@ -431,8 +505,10 @@ export default function HistoryGraphPanel() {
          // From Question to its results
          const endElId = `node-msg-${item.userMsg!.id}`
          const qBottom = getCenterBottom(endElId)
-         const artIds = item.assistantMsg?.artifact_ids ?? []
-         const isExpanded = expandedTurnId === item.userMsg!.id
+         const artIds = (item.assistantMsg?.artifact_ids ?? []).filter((id) =>
+           shouldDisplayArtifactInHistory(cached[id] as Artifact | undefined),
+         )
+         const isExpanded = expandedTurnIds.has(item.userMsg!.id)
 
          if (artIds.length > 0) {
             const groupId = `node-group-${item.userMsg!.id}`
@@ -483,7 +559,7 @@ export default function HistoryGraphPanel() {
     })
     
     setPaths(newPaths)
-  }, [items, datasetId, cached, expandedTurnId])
+  }, [items, datasetId, cached, expandedTurnIds])
 
   useEffect(() => {
     const observer = new ResizeObserver(() => updatePaths())
@@ -566,7 +642,7 @@ export default function HistoryGraphPanel() {
             <p className="text-xs text-gray-400">대화를 시작하면 흐름이 표시됩니다</p>
           </div>
         ) : (
-          <div className="relative flex flex-col items-center w-full gap-14 pb-12 pt-6" ref={contentRef}>
+          <div className="relative flex flex-col items-center w-full gap-10 pb-8 pt-4" ref={contentRef}>
             <svg className="absolute top-0 left-0 w-full h-full pointer-events-none" style={{ zIndex: 0, overflow: 'visible' }}>
               <defs>
                 <marker id="arrowhead-background-blue" markerWidth="6" markerHeight="4" refX="5" refY="2" orient="auto">
@@ -599,7 +675,7 @@ export default function HistoryGraphPanel() {
                 const artifactIds = item.sysMsg!.artifact_ids ?? []
                 return (
                   <div key={item.sysMsg!.id} className="flex flex-col items-center w-full z-10 relative">
-                    <div className="flex flex-row flex-wrap gap-12 justify-center w-full">
+                    <div className="flex flex-row flex-wrap gap-8 justify-center w-full">
                       {artifactIds.map((id) => {
                         const isEffective = id === targetDataframeArtifactId ||
                           (!targetDataframeArtifactId && id === `dataset-${datasetId}`)
@@ -624,12 +700,17 @@ export default function HistoryGraphPanel() {
 
               // 질문 + 결과 아티팩트 턴
               const { userMsg, assistantMsg } = item
-              const artifactIds = assistantMsg?.artifact_ids ?? []
+              const artifactIds = (assistantMsg?.artifact_ids ?? []).filter((id) =>
+                shouldDisplayArtifactInHistory(cached[id] as Artifact | undefined),
+              )
               const sourceLabel = getSourceLabel(userMsg?.targetDataframeId)
-              const isExpanded = expandedTurnId === userMsg!.id
+              const isExpanded = expandedTurnIds.has(userMsg!.id)
+              const hasTargetArtifact = targetDataframeArtifactId
+                ? artifactIds.includes(targetDataframeArtifactId)
+                : false
 
               return (
-                <div key={userMsg!.id} className="flex flex-col items-center w-full gap-10 z-10 relative">
+                <div key={userMsg!.id} className="flex flex-col items-center w-full gap-7 z-10 relative">
                   {/* 질문 노드 */}
                   <QuestionNode
                     msg={userMsg!}
@@ -644,6 +725,7 @@ export default function HistoryGraphPanel() {
                       turnId={userMsg!.id}
                       artifactCount={artifactIds.length}
                       isExpanded={isExpanded}
+                      hasTargetArtifact={hasTargetArtifact}
                       onToggle={handleToggleGroup}
                       isSelected={selectedNodeId === `node-group-${userMsg!.id}`}
                       onSelect={setSelectedNodeId}
@@ -652,7 +734,7 @@ export default function HistoryGraphPanel() {
 
                   {/* 아티팩트 행 */}
                   {artifactIds.length > 0 && isExpanded && (
-                    <div className="flex flex-row flex-wrap gap-12 justify-center w-full">
+                    <div className="flex flex-row flex-wrap gap-8 justify-center w-full">
                       {artifactIds.map((id) => {
                         const isEffective = id === targetDataframeArtifactId ||
                           (!targetDataframeArtifactId && id === `dataset-${datasetId}`)

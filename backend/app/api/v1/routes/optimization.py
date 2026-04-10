@@ -10,6 +10,7 @@ from app.core.logging import get_logger
 from app.db.models.job import JobRun, JobStatus, JobType
 from app.db.models.optimization import OptimizationRun
 from app.db.models.user import User
+from app.db.repositories.artifact import ArtifactRepository
 from app.db.repositories.dataset import DatasetRepository
 from app.db.repositories.model_run import ModelRunRepository
 from app.db.repositories.optimization import OptimizationRunRepository
@@ -18,6 +19,81 @@ from app.schemas.optimization import OptimizationRequest, OptimizationResult
 
 logger = get_logger(__name__)
 router = APIRouter(prefix="/optimization", tags=["최적화"])
+
+
+@router.post("/model-availability", response_model=dict)
+async def get_model_availability(
+    body: dict,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """선택된 데이터셋/서브셋 기준 타겟별 챔피언 모델 준비 상태 조회"""
+    session_id = UUID(body["session_id"])
+    branch_id = UUID(body["branch_id"])
+    target_columns = [str(t).strip() for t in body.get("target_columns", []) if str(t).strip()]
+    source_artifact_id = body.get("source_artifact_id")
+
+    session = await validate_user_session(session_id, current_user.id, db)
+
+    artifact_repo = ArtifactRepository(db)
+    dataset_repo = DatasetRepository(db)
+    model_repo = ModelRunRepository(db)
+
+    dataset_label = "전체 데이터셋"
+    desired_dataset_path = None
+    if source_artifact_id:
+        source_artifact = await artifact_repo.get(UUID(source_artifact_id))
+        if not source_artifact or not source_artifact.file_path:
+            raise HTTPException(status_code=400, detail=error_response("NO_SOURCE_ARTIFACT", "선택한 서브셋 아티팩트를 찾을 수 없습니다."))
+        desired_dataset_path = source_artifact.file_path
+        dataset_label = source_artifact.name
+    elif session.active_dataset_id:
+        dataset = await dataset_repo.get(session.active_dataset_id)
+        desired_dataset_path = dataset.file_path if dataset else None
+        dataset_label = dataset.name if dataset else dataset_label
+
+    if not desired_dataset_path:
+        raise HTTPException(status_code=400, detail=error_response("NO_DATASET", "기준 데이터셋이 없습니다."))
+
+    statuses = []
+    for target_column in target_columns:
+        champion = await model_repo.get_champion_by_target(branch_id, target_column)
+        if not champion:
+            statuses.append({
+                "target_column": target_column,
+                "ready": False,
+                "reason": "missing_champion",
+                "message": f"'{target_column}' 타겟의 챔피언 모델이 없습니다.",
+            })
+            continue
+
+        model_artifact = await artifact_repo.get(champion.model_artifact_id) if champion.model_artifact_id else None
+        meta = model_artifact.meta if model_artifact else {}
+        if isinstance(meta, str):
+            import json as _json
+            meta = _json.loads(meta)
+        model_dataset_path = meta.get("dataset_path") if isinstance(meta, dict) else None
+
+        dataset_matches = bool(model_dataset_path and model_dataset_path == desired_dataset_path)
+        statuses.append({
+            "target_column": target_column,
+            "ready": dataset_matches,
+            "reason": "ready" if dataset_matches else "dataset_mismatch",
+            "message": (
+                f"'{target_column}' 타겟 챔피언 모델 준비 완료"
+                if dataset_matches else
+                f"'{target_column}' 타겟 챔피언 모델은 현재 선택 데이터 기준이 아닙니다."
+            ),
+            "model_run_id": str(champion.id),
+            "model_dataset_path": model_dataset_path,
+        })
+
+    return success_response({
+        "branch_id": str(branch_id),
+        "dataset_label": dataset_label,
+        "desired_dataset_path": desired_dataset_path,
+        "statuses": statuses,
+    })
 
 
 @router.post("/run", response_model=dict)
@@ -157,8 +233,8 @@ async def run_null_importance(
     """Null Importance 분석 실행 (Phase 1)"""
     session_id = UUID(body["session_id"])
     branch_id = UUID(body["branch_id"])
+    session_obj = await validate_user_session(session_id, current_user.id, db)
 
-    # 챔피언 모델 조회
     model_repo = ModelRunRepository(db)
     champion = await model_repo.get_champion(branch_id)
     if not champion:
@@ -167,27 +243,63 @@ async def run_null_importance(
             detail=error_response("NO_CHAMPION_MODEL", "챔피언 모델이 없습니다. 먼저 모델링을 실행하세요."),
         )
 
-    # 모델 artifact 조회
+    raw_targets = body.get("target_columns")
+    if isinstance(raw_targets, list):
+        target_columns = [str(t).strip() for t in raw_targets if str(t).strip()]
+    else:
+        target_columns = []
+
+    fallback_target = body.get("target_column") or champion.target_column
+    if fallback_target and fallback_target not in target_columns:
+        target_columns.append(fallback_target)
+    if not target_columns:
+        raise HTTPException(status_code=400, detail=error_response("NO_TARGET", "타겟 컬럼이 없습니다."))
+
     from app.db.repositories.artifact import ArtifactRepository
     artifact_repo = ArtifactRepository(db)
-    model_artifact = await artifact_repo.get(champion.model_artifact_id)
-    if not model_artifact or not model_artifact.file_path:
-        raise HTTPException(status_code=400, detail=error_response("NO_MODEL_FILE", "모델 파일을 찾을 수 없습니다."))
+    dataset_repo = DatasetRepository(db)
+    active_dataset = await dataset_repo.get(session_obj.active_dataset_id) if session_obj.active_dataset_id else None
+    source_artifact_id = body.get("source_artifact_id")
+    source_artifact = await artifact_repo.get(UUID(source_artifact_id)) if source_artifact_id else None
+    source_dataset_path = source_artifact.file_path if source_artifact and source_artifact.file_path else None
 
-    meta = model_artifact.meta or {}
-    feature_names = meta.get("feature_names", [])
-    categorical_features = meta.get("categorical_features", [])
-    target_column = meta.get("target_column") or body.get("target_column", "")
+    target_specs: list[dict] = []
+    missing_targets: list[str] = []
 
-    # 데이터셋 경로: 모델이 학습된 데이터셋 우선 사용 (세션 전환으로 인한 불일치 방지)
-    dataset_path = meta.get("dataset_path")
-    if not dataset_path:
-        session_obj = await validate_user_session(session_id, current_user.id, db)
-        dataset_repo = DatasetRepository(db)
-        dataset = await dataset_repo.get(session_obj.active_dataset_id)
-        dataset_path = dataset.file_path if dataset else None
-    if not dataset_path:
-        raise HTTPException(status_code=400, detail=error_response("NO_DATASET", "데이터셋이 없습니다."))
+    for target_column in target_columns:
+        target_champion = await model_repo.get_champion_by_target(branch_id, target_column)
+        if not target_champion:
+            missing_targets.append(target_column)
+            continue
+
+        model_artifact = await artifact_repo.get(target_champion.model_artifact_id)
+        if not model_artifact or not model_artifact.file_path:
+            raise HTTPException(status_code=400, detail=error_response("NO_MODEL_FILE", f"모델 파일을 찾을 수 없습니다. ({target_column})"))
+
+        meta = model_artifact.meta or {}
+        if isinstance(meta, str):
+            import json as _json
+            meta = _json.loads(meta)
+        dataset_path = source_dataset_path or meta.get("dataset_path") or (active_dataset.file_path if active_dataset else None)
+        if not dataset_path:
+            raise HTTPException(status_code=400, detail=error_response("NO_DATASET", f"데이터셋이 없습니다. ({target_column})"))
+
+        target_specs.append({
+            "target_column": meta.get("target_column") or target_champion.target_column or target_column,
+            "model_path": model_artifact.file_path,
+            "feature_names": meta.get("feature_names", []),
+            "categorical_features": meta.get("categorical_features", []),
+            "dataset_path": dataset_path,
+        })
+
+    if missing_targets:
+        raise HTTPException(
+            status_code=400,
+            detail=error_response(
+                "NO_CHAMPION_MODEL",
+                f"다음 타겟의 챔피언 모델이 없습니다: {', '.join(missing_targets)}",
+            ),
+        )
 
     # JobRun 생성
     job_run = JobRun(
@@ -198,11 +310,13 @@ async def run_null_importance(
         params={
             "subtype": "null_importance",
             "branch_id": str(branch_id),
-            "model_path": model_artifact.file_path,
-            "feature_names": feature_names,
-            "categorical_features": categorical_features,
-            "dataset_path": dataset_path,
-            "target_column": target_column,
+            "target_columns": [spec["target_column"] for spec in target_specs],
+            "source_artifact_id": source_artifact_id,
+            "target_specs": [{
+                "target_column": spec["target_column"],
+                "dataset_path": spec["dataset_path"],
+                "feature_count": len(spec["feature_names"]),
+            } for spec in target_specs],
             "n_permutations": body.get("n_permutations", 30),
         },
     )
@@ -216,11 +330,7 @@ async def run_null_importance(
         run_null_importance_task,
         str(job_run.id),
         str(branch_id),
-        model_artifact.file_path,
-        feature_names,
-        dataset_path,
-        target_column,
-        categorical_features,
+        target_specs,
         body.get("n_permutations", 30),
         job_id=str(job_run.id),
     )
@@ -319,6 +429,7 @@ async def run_constrained_inverse_optimization(
     branch_id = UUID(body["branch_id"])
     opt_target = body.get("target_column")        # 최적화 대상 타겟
     con_target = body.get("constraint_target_column")  # 제약 타겟 (선택)
+    source_artifact_id = body.get("source_artifact_id")
 
     from app.db.repositories.artifact import ArtifactRepository
     model_repo = ModelRunRepository(db)
@@ -357,7 +468,8 @@ async def run_constrained_inverse_optimization(
     con_info = await _get_model_info(con_target) if con_target else None
 
     # 데이터셋: 모델이 학습된 데이터셋 우선 사용
-    dataset_path = opt_info.get("dataset_path")
+    source_artifact = await artifact_repo.get(UUID(source_artifact_id)) if source_artifact_id else None
+    dataset_path = source_artifact.file_path if source_artifact and source_artifact.file_path else opt_info.get("dataset_path")
     if not dataset_path:
         session_obj = await validate_user_session(session_id, current_user.id, db)
         dataset_repo = DatasetRepository(db)

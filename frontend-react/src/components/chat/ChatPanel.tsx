@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useCallback, memo } from 'react'
+import { useState, useRef, useEffect, useCallback, useMemo, memo } from 'react'
 import { Send, ChevronDown, ChevronRight, Zap, BarChart2, BrainCircuit, Target, ChevronsUpDown, FlaskConical, X } from 'lucide-react'
 import { analysisApi, artifactsApi } from '@/api'
 import { useChatStore, useSessionStore, useArtifactStore, genId } from '@/store'
@@ -6,12 +6,27 @@ import type { ChatMessage } from '@/types'
 import Button from '@/components/ui/Button'
 import JobProgress from './JobProgress'
 import ArtifactCard from '@/components/artifacts/ArtifactCard'
-import InverseOptimizationModal from '@/components/optimization/InverseOptimizationModal'
+
+function isConfigInheritableDataframe(artifact: import('@/types').Artifact) {
+  if (artifact.type !== 'dataframe') return false
+  const metaType = String(artifact.data?.type ?? '')
+  if (metaType.startsWith('subset_') && metaType.endsWith('_df')) return true
+  if (metaType === 'create_dataframe_result') return true
+  if (artifact.name.includes('서브셋') && artifact.name.includes('데이터')) return true
+  return ![
+    'column_classification',
+    'subset_registry',
+    'subset_score_table',
+    'missing_structure',
+    'subset_summary',
+  ].includes(metaType)
+}
 
 interface ChatPanelProps {
   externalInput?: string
   immediateExecute?: boolean
   onExternalInputConsumed?: () => void
+  onOpenOptimizationGuide: () => void
 }
 
 const ANALYSIS_MODES = [
@@ -30,10 +45,27 @@ const QUICK_ACTIONS = [
   { icon: BrainCircuit, label: '인자 최소화', message: '인자를 최소화해줘' },
 ]
 
-export default function ChatPanel({ externalInput, immediateExecute, onExternalInputConsumed }: ChatPanelProps) {
-  const { sessionId, branchId, datasetId, targetColumn, targetColumnsByBranch, targetDataframeArtifactId, featureColumnsByBranch } = useSessionStore()
-  const targetColumns = targetColumnsByBranch[branchId ?? ''] ?? (targetColumn ? [targetColumn] : [])
-  const featureColumns = featureColumnsByBranch[branchId ?? ''] ?? []
+export default function ChatPanel({
+  externalInput,
+  immediateExecute,
+  onExternalInputConsumed,
+  onOpenOptimizationGuide,
+}: ChatPanelProps) {
+  const {
+    sessionId,
+    branchId,
+    datasetId,
+    targetColumn,
+    targetDataframeArtifactId,
+    dataframeConfigsByBranch,
+    setTargetDataframeArtifactId,
+    setDataframeConfig,
+  } = useSessionStore()
+  const currentBranchId = branchId ?? 'global'
+  const activeArtifactId = targetDataframeArtifactId ?? (datasetId ? `dataset-${datasetId}` : null)
+  const activeConfig = activeArtifactId ? dataframeConfigsByBranch[currentBranchId]?.[activeArtifactId] : undefined
+  const targetColumns = activeConfig?.targetColumns ?? (targetColumn ? [targetColumn] : [])
+  const featureColumns = activeConfig?.featureColumns ?? []
   const {
     histories,
     activeJobIds,
@@ -49,7 +81,6 @@ export default function ChatPanel({ externalInput, immediateExecute, onExternalI
   const [input, setInput] = useState('')
   const [mode, setMode] = useState('auto')
   const [sending, setSending] = useState(false)
-  const [invOptOpen, setInvOptOpen] = useState(false)
   // D: sessionStorage에서 펼침 상태 복원 (페이지 새로고침 후에도 유지)
   const [expandedMsgs, setExpandedMsgs] = useState<Set<string>>(() => {
     const key = `expanded-msgs-${branchId ?? 'global'}`
@@ -64,20 +95,30 @@ export default function ChatPanel({ externalInput, immediateExecute, onExternalI
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const scrollContainerRef = useRef<HTMLDivElement>(null)
 
-  const currentBranchId = branchId ?? 'global'
   const messages = histories[currentBranchId] ?? []
+  const renderedMessages = useMemo(() => {
+    const seenDatasetArtifacts = new Set<string>()
+    return messages.filter((msg) => {
+      if (msg.role !== 'system') return true
+      const artifactId = msg.artifact_ids?.[0]
+      if (!artifactId?.startsWith('dataset-')) return true
+      if (seenDatasetArtifacts.has(artifactId)) return false
+      seenDatasetArtifacts.add(artifactId)
+      return true
+    })
+  }, [messages])
   const activeJobId = activeJobIds[currentBranchId] ?? null
 
-  const { artifacts: cachedMap } = useArtifactStore()
+  const { artifacts: cachedMap, cacheArtifact } = useArtifactStore()
   const activeDf = targetDataframeArtifactId ? cachedMap[targetDataframeArtifactId] : null
 
   // 모두 접힌 상태인지 판단 (메시지가 있고 expandedMsgs가 비어있을 때)
-  const allCollapsed = messages.length > 0 && expandedMsgs.size === 0
+  const allCollapsed = renderedMessages.length > 0 && expandedMsgs.size === 0
 
   // Auto-scroll to bottom
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [messages.length, activeJobId])
+  }, [renderedMessages.length, activeJobId])
 
   const handleSend = useCallback(
     async (text: string) => {
@@ -156,7 +197,7 @@ export default function ChatPanel({ externalInput, immediateExecute, onExternalI
   useEffect(() => {
     if (!scrollToArtifactId) return
     // 해당 아티팩트를 포함한 메시지를 찾아 펼침
-    const msg = messages.find((m) => m.artifact_ids?.includes(scrollToArtifactId))
+    const msg = renderedMessages.find((m) => m.artifact_ids?.includes(scrollToArtifactId))
     if (msg) {
       setExpandedMsgs((prev) => new Set(prev).add(msg.id))
     }
@@ -169,7 +210,7 @@ export default function ChatPanel({ externalInput, immediateExecute, onExternalI
       clearScrollToArtifact()
     }, 150)
     return () => clearTimeout(timer)
-  }, [scrollToArtifactId])
+  }, [scrollToArtifactId, renderedMessages, clearScrollToArtifact])
 
   // D: expandedMsgs → sessionStorage 동기화
   useEffect(() => {
@@ -190,16 +231,16 @@ export default function ChatPanel({ externalInput, immediateExecute, onExternalI
 
   // A: 새 어시스턴트 메시지 자동 펼침
   useEffect(() => {
-    const last = messages[messages.length - 1]
+    const last = renderedMessages[renderedMessages.length - 1]
     if (last && last.role === 'assistant') {
       setExpandedMsgs((prev) => new Set(prev).add(last.id))
     }
-  }, [messages])
+  }, [renderedMessages])
 
   const handleCollapseAll = () => {
     if (allCollapsed) {
       // 모두 펼치기
-      setExpandedMsgs(new Set(messages.map((m) => m.id)))
+      setExpandedMsgs(new Set(renderedMessages.map((m) => m.id)))
     } else {
       // 모두 접기
       setExpandedMsgs(new Set())
@@ -207,7 +248,7 @@ export default function ChatPanel({ externalInput, immediateExecute, onExternalI
   }
 
   const handleJobDone = useCallback(
-    (job: import('@/types').Job) => {
+    async (job: import('@/types').Job) => {
       setActiveJob(currentBranchId, null)
 
       if (job.status === 'completed' && job.result) {
@@ -224,6 +265,62 @@ export default function ChatPanel({ externalInput, immediateExecute, onExternalI
           timestamp: new Date().toISOString(),
         }
         addMessage(currentBranchId, assistantMsg)
+
+        const shouldAutoAdoptDataframe = job.result.intent === 'create_dataframe'
+        const shouldInheritSubsetConfigs = job.result.intent === 'subset_discovery'
+        const sourceArtifactId = activeArtifactId
+        const sourceConfig = sourceArtifactId ? dataframeConfigsByBranch[currentBranchId]?.[sourceArtifactId] : undefined
+
+        if ((shouldAutoAdoptDataframe || shouldInheritSubsetConfigs) && sessionId && job.result.artifact_ids?.length) {
+          for (const artifactId of job.result.artifact_ids) {
+            try {
+              const artifact = cachedMap[artifactId] ?? await artifactsApi.preview(sessionId, artifactId)
+              if (!cachedMap[artifactId]) cacheArtifact(artifact)
+              if (!isConfigInheritableDataframe(artifact)) continue
+
+              const nextColumns = (artifact.data?.columns as string[] | undefined) ?? []
+              const inheritedTargets = sourceConfig?.targetColumns ?? targetColumns
+              const inheritedFeatures = sourceConfig?.featureColumns ?? featureColumns
+              const keptTargets = inheritedTargets.filter((col) => nextColumns.includes(col))
+              const keptFeatures = inheritedFeatures.filter((col) => nextColumns.includes(col))
+              const removedFeatures = inheritedFeatures.filter((col) => !nextColumns.includes(col))
+
+              setDataframeConfig(currentBranchId, artifact.id, keptTargets, keptFeatures)
+
+              if (shouldAutoAdoptDataframe) {
+                setTargetDataframeArtifactId(artifact.id)
+
+                if (removedFeatures.length > 0) {
+                  addMessage(currentBranchId, {
+                    id: genId(),
+                    role: 'assistant',
+                    content: `새 분석 데이터프레임으로 자동 전환했습니다. 데이터 핸들링 과정에서 제거된 설정 변수는 자동으로 제외했습니다: ${removedFeatures.join(', ')}`,
+                    timestamp: new Date().toISOString(),
+                  })
+                } else {
+                  addMessage(currentBranchId, {
+                    id: genId(),
+                    role: 'assistant',
+                    content: '새로 생성된 데이터프레임을 자동으로 분석 대상으로 설정했습니다.',
+                    timestamp: new Date().toISOString(),
+                  })
+                }
+                break
+              }
+
+              if (shouldInheritSubsetConfigs && removedFeatures.length > 0) {
+                addMessage(currentBranchId, {
+                  id: genId(),
+                  role: 'assistant',
+                  content: `${artifact.name}에 설정을 상속하는 과정에서 제거된 변수는 자동 제외했습니다: ${removedFeatures.join(', ')}`,
+                  timestamp: new Date().toISOString(),
+                })
+              }
+            } catch {
+              // noop
+            }
+          }
+        }
       } else if (job.status === 'failed') {
         addMessage(currentBranchId, {
           id: genId(),
@@ -240,7 +337,20 @@ export default function ChatPanel({ externalInput, immediateExecute, onExternalI
         })
       }
     },
-    [currentBranchId, setActiveJob, addMessage],
+    [
+      activeArtifactId,
+      addMessage,
+      cacheArtifact,
+      cachedMap,
+      currentBranchId,
+      dataframeConfigsByBranch,
+      featureColumns,
+      sessionId,
+      setActiveJob,
+      setDataframeConfig,
+      setTargetDataframeArtifactId,
+      targetColumns,
+    ],
   )
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -281,7 +391,6 @@ export default function ChatPanel({ externalInput, immediateExecute, onExternalI
 
   return (
     <div className="flex flex-1 flex-col min-h-0">
-      {invOptOpen && <InverseOptimizationModal onClose={() => setInvOptOpen(false)} />}
       {/* Context bar */}
       <div className="flex items-center justify-between border-b border-gray-200 bg-gray-50 px-4 py-2 shrink-0">
         <div className="flex items-center gap-3 text-xs text-gray-500">
@@ -309,7 +418,7 @@ export default function ChatPanel({ externalInput, immediateExecute, onExternalI
         </div>
 
         {/* 모두 접기/펼치기 버튼 */}
-        {messages.length > 0 && (
+        {renderedMessages.length > 0 && (
           <button
             onClick={handleCollapseAll}
             className="flex items-center gap-1 text-xs text-gray-400 hover:text-brand-red transition-colors"
@@ -322,7 +431,7 @@ export default function ChatPanel({ externalInput, immediateExecute, onExternalI
 
       {/* Messages */}
       <div ref={scrollContainerRef} className="flex-1 overflow-y-auto scrollbar-thin px-4 py-4 space-y-3 min-h-0">
-        {messages.length === 0 && !activeJobId && (
+        {renderedMessages.length === 0 && !activeJobId && (
           <div className="flex flex-col items-center justify-center h-full gap-4 text-center">
             <div className="h-14 w-14 rounded-full bg-brand-red/10 flex items-center justify-center">
               <BrainCircuit className="h-7 w-7 text-brand-red" />
@@ -343,7 +452,7 @@ export default function ChatPanel({ externalInput, immediateExecute, onExternalI
                 </button>
               ))}
               <button
-                onClick={() => setInvOptOpen(true)}
+                onClick={onOpenOptimizationGuide}
                 className="flex items-center gap-2 rounded-lg border border-purple-200 bg-white px-3 py-2.5 text-sm text-purple-700 hover:border-purple-400 hover:bg-purple-50 transition-colors text-left"
               >
                 <FlaskConical className="h-4 w-4 shrink-0" />
@@ -353,7 +462,7 @@ export default function ChatPanel({ externalInput, immediateExecute, onExternalI
           </div>
         )}
 
-        {messages.map((msg) => {
+        {renderedMessages.map((msg) => {
           const isExpanded = expandedMsgs.has(msg.id)
           return (
             <MessageBubble
@@ -417,7 +526,7 @@ export default function ChatPanel({ externalInput, immediateExecute, onExternalI
             </button>
           ))}
           <button
-            onClick={() => setInvOptOpen(true)}
+            onClick={onOpenOptimizationGuide}
             disabled={sending || !!activeJobId}
             className="flex shrink-0 items-center gap-1.5 rounded-full border border-purple-200 px-3 py-1 text-xs text-purple-700 hover:border-purple-400 hover:bg-purple-50 transition-colors disabled:opacity-50"
           >

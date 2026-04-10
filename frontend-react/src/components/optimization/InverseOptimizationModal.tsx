@@ -1,34 +1,43 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import {
   X, Play, RotateCcw, TrendingUp, TrendingDown,
-  AlertCircle, CheckCircle2, Loader2, ChevronDown, ChevronUp, Pencil,
+  AlertCircle, CheckCircle2, Loader2, ChevronDown, ChevronUp, Pencil, Sparkles, MessageSquare,
 } from 'lucide-react'
-import { optimizationApi, jobsApi } from '@/api'
-import { useSessionStore, useArtifactStore } from '@/store'
+import { modelingApi, optimizationApi, jobsApi } from '@/api'
+import { useSessionStore, useArtifactStore, useChatStore, genId } from '@/store'
 import type {
-  NullImportanceResult, InverseRunResult, Job, Artifact,
+  NullImportanceResult, InverseRunResult, Job, Artifact, ModelAvailabilityResponse,
 } from '@/types'
 
 interface Props {
   onClose: () => void
+  variant?: 'modal' | 'sidebar'
 }
 
 type Step = 'subset' | 'ni_setup' | 'ni_running' | 'feat_config' | 'target_config' | 'running' | 'done'
 
 const POLL_MS = 3_000
 
-export default function InverseOptimizationModal({ onClose }: Props) {
-  const { sessionId, branchId, targetColumnsByBranch } = useSessionStore()
+export default function InverseOptimizationModal({ onClose, variant = 'modal' }: Props) {
+  const { sessionId, branchId, datasetId, targetDataframeArtifactId, dataframeConfigsByBranch } = useSessionStore()
   const { artifacts: cached } = useArtifactStore()
+  const { addMessage, setActiveJob } = useChatStore()
+  const currentBranchId = branchId ?? 'global'
+  const activeArtifactId = targetDataframeArtifactId ?? (datasetId ? `dataset-${datasetId}` : null)
 
-  const targetColumns: string[] = targetColumnsByBranch[branchId ?? ''] ?? []
+  const isSubsetDataframeArtifact = useCallback((a: Artifact) => {
+    if (a.type !== 'dataframe') return false
+    const metaType = String(a.data?.type ?? '')
+    if (metaType.startsWith('subset_') && metaType.endsWith('_df')) return true
+    return a.name.includes('서브셋') && a.name.includes('데이터')
+  }, [])
 
   // ── 서브셋 아티팩트 목록 ──────────────────────────────────────────────────
-  const subsetArtifacts: Artifact[] = Object.values(cached).filter(
-    (a) => a.type === 'dataframe' && (
-      a.name.includes('서브셋') || a.name.includes('subset')
-    )
-  )
+  const subsetArtifacts: Artifact[] = Object.values(cached).filter((a) => {
+    if (!isSubsetDataframeArtifact(a)) return false
+    const config = dataframeConfigsByBranch[currentBranchId]?.[a.id]
+    return (config?.targetColumns.length ?? 0) > 0 && (config?.featureColumns.length ?? 0) > 0
+  })
 
   // ── Wizard state ─────────────────────────────────────────────────────────
   const [step, setStep] = useState<Step>('subset')
@@ -48,9 +57,20 @@ export default function InverseOptimizationModal({ onClose }: Props) {
     if (art?.data?.columns) setSubsetFeatures(art.data.columns as string[])
   }, [selectedSubsetId, cached])
 
+  const effectiveArtifactId = selectedSubsetId || activeArtifactId
+  const effectiveConfig = effectiveArtifactId ? dataframeConfigsByBranch[currentBranchId]?.[effectiveArtifactId] : undefined
+  const targetColumns: string[] = effectiveConfig?.targetColumns ?? []
+  const featureColumns: string[] = effectiveConfig?.featureColumns ?? []
+  const hasCompletedTargetAndFeatureSelection = targetColumns.length > 0 && featureColumns.length > 0
+  const sourceArtifactId = effectiveArtifactId && !effectiveArtifactId.startsWith('dataset-')
+    ? effectiveArtifactId
+    : undefined
+
   // ── Step 2: Null Importance ───────────────────────────────────────────────
   const [nPermutations, setNPermutations] = useState(30)
-  const [niOptTarget, setNiOptTarget] = useState<string>(targetColumns[0] ?? '')
+  const [availability, setAvailability] = useState<ModelAvailabilityResponse | null>(null)
+  const [availabilityLoading, setAvailabilityLoading] = useState(false)
+  const [prepJobTarget, setPrepJobTarget] = useState<string | null>(null)
 
   // ── Step 3: 피처 설정 ────────────────────────────────────────────────────
   const [nFeat, setNFeat] = useState(8)
@@ -61,12 +81,12 @@ export default function InverseOptimizationModal({ onClose }: Props) {
 
   // ── Step 4: 타겟 설정 ────────────────────────────────────────────────────
   const [modelType, setModelType] = useState<'lgbm' | 'bcm'>('lgbm')
-  const [optTarget, setOptTarget] = useState<string>(targetColumns[0] ?? '')
+  const [optTarget, setOptTarget] = useState<string>('')
   const [direction, setDirection] = useState<'maximize' | 'minimize'>('maximize')
   const [nCalls, setNCalls] = useState(300)
   // 제약 (이중 타겟)
-  const [useConstraint, setUseConstraint] = useState(targetColumns.length >= 2)
-  const [conTarget, setConTarget] = useState<string>(targetColumns[1] ?? '')
+  const [useConstraint, setUseConstraint] = useState(false)
+  const [conTarget, setConTarget] = useState<string>('')
   const [conType, setConType] = useState<'gte' | 'lte'>('gte')
   const [conThreshold, setConThreshold] = useState<number>(0)
 
@@ -79,7 +99,16 @@ export default function InverseOptimizationModal({ onClose }: Props) {
 
   useEffect(() => stopPolling, [stopPolling])
 
-  const startPolling = useCallback((jobId: string, onDone: (j: Job) => void) => {
+  useEffect(() => {
+    setOptTarget((prev) => (targetColumns.includes(prev) ? prev : (targetColumns[0] ?? '')))
+    setUseConstraint(targetColumns.length >= 2)
+    setConTarget((prev) => {
+      if (prev && prev !== optTarget && targetColumns.includes(prev)) return prev
+      return targetColumns.find((t) => t !== (targetColumns[0] ?? '')) ?? ''
+    })
+  }, [targetColumns])
+
+  const startPolling = useCallback((jobId: string, onDone: (j: Job) => void, onFail?: (j: Job) => void) => {
     stopPolling()
     const tick = async () => {
       try {
@@ -89,8 +118,11 @@ export default function InverseOptimizationModal({ onClose }: Props) {
         if (job.status === 'completed') { stopPolling(); onDone(job) }
         else if (job.status === 'failed' || job.status === 'cancelled') {
           stopPolling()
-          setJobError(job.error_message ?? '작업 실패')
-          setStep('ni_setup')
+          if (onFail) onFail(job)
+          else {
+            setJobError(job.error_message ?? '작업 실패')
+            setStep('ni_setup')
+          }
         }
       } catch { /* keep polling */ }
     }
@@ -98,23 +130,118 @@ export default function InverseOptimizationModal({ onClose }: Props) {
     pollRef.current = setInterval(tick, POLL_MS)
   }, [stopPolling])
 
+  const refreshAvailability = useCallback(async () => {
+    if (!sessionId || !branchId || targetColumns.length === 0) {
+      setAvailability(null)
+      return
+    }
+    setAvailabilityLoading(true)
+    try {
+      const res = await optimizationApi.modelAvailability({
+        session_id: sessionId,
+        branch_id: branchId,
+        target_columns: targetColumns,
+        ...(sourceArtifactId ? { source_artifact_id: sourceArtifactId } : {}),
+      })
+      setAvailability(res)
+    } catch {
+      setAvailability(null)
+    } finally {
+      setAvailabilityLoading(false)
+    }
+  }, [branchId, sessionId, sourceArtifactId, targetColumns])
+
+  useEffect(() => {
+    void refreshAvailability()
+  }, [refreshAvailability])
+
+  const missingTargets = (availability?.statuses ?? []).filter((s) => !s.ready)
+  const allTargetsReady = targetColumns.length > 0 && missingTargets.length === 0
+
+  const runPrepModeling = async (target: string) => {
+    if (!sessionId || !branchId) return
+    setJobError(null)
+    setPrepJobTarget(target)
+    setJobProgress(0)
+    setJobMsg('')
+    try {
+      addMessage(currentBranchId, {
+        id: genId(),
+        role: 'user',
+        content: `[최적화 가이드] '${target}' 타겟에 대한 모델 생성을 시작합니다.${sourceArtifactId ? ' 선택한 데이터프레임 기준으로 진행합니다.' : ''}`,
+        timestamp: new Date().toISOString(),
+      })
+      const res = await modelingApi.baseline({
+        session_id: sessionId,
+        branch_id: branchId,
+        target_column: target,
+        ...(sourceArtifactId ? { source_artifact_id: sourceArtifactId } : {}),
+        ...(featureColumns.length > 0 ? { feature_columns: featureColumns } : {}),
+      })
+      setActiveJob(currentBranchId, res.job_id)
+      startPolling(
+        res.job_id,
+        async () => {
+          setPrepJobTarget(null)
+          setJobProgress(0)
+          setJobMsg('')
+          addMessage(currentBranchId, {
+            id: genId(),
+            role: 'assistant',
+            content: `[최적화 가이드] '${target}' 타겟 모델 준비가 완료되었습니다. 이제 다음 단계로 진행할 수 있습니다.`,
+            timestamp: new Date().toISOString(),
+          })
+          await refreshAvailability()
+        },
+        async (job) => {
+          setPrepJobTarget(null)
+          setJobError(job.error_message ?? '모델 생성 실패')
+          addMessage(currentBranchId, {
+            id: genId(),
+            role: 'assistant',
+            content: `[최적화 가이드] '${target}' 타겟 모델 생성에 실패했습니다. ${job.error_message ?? ''}`.trim(),
+            timestamp: new Date().toISOString(),
+          })
+          await refreshAvailability()
+        },
+      )
+    } catch (e: unknown) {
+      setPrepJobTarget(null)
+      setJobError(e instanceof Error ? e.message : '모델 생성 요청 실패')
+    }
+  }
+
   // ── Actions ──────────────────────────────────────────────────────────────
   const runNI = async () => {
     if (!sessionId || !branchId) return
     setJobError(null); setJobProgress(0); setJobMsg('')
     try {
+      addMessage(currentBranchId, {
+        id: genId(),
+        role: 'user',
+        content: `[최적화 가이드] 피처 유의성 분석을 시작합니다. 타겟: ${targetColumns.join(', ')}${sourceArtifactId ? ` / 데이터프레임: ${cached[sourceArtifactId]?.name ?? sourceArtifactId}` : ''}`,
+        timestamp: new Date().toISOString(),
+      })
       const res = await optimizationApi.nullImportance({
         session_id: sessionId,
         branch_id: branchId,
         n_permutations: nPermutations,
+        target_columns: targetColumns,
+        ...(sourceArtifactId ? { source_artifact_id: sourceArtifactId } : {}),
       })
+      setActiveJob(currentBranchId, res.job_id)
       setStep('ni_running')
       startPolling(res.job_id, (job) => {
         const r = (job.result ?? {}) as NullImportanceResult & { null_importance_result?: NullImportanceResult }
         const ni = r.null_importance_result ?? r
         setNiResult(ni)
         setNFeat(ni.recommended_n ?? Math.min(8, ni.feature_names?.length ?? 8))
-        setOptTarget(niOptTarget)
+        addMessage(currentBranchId, {
+          id: genId(),
+          role: 'assistant',
+          content: `[최적화 가이드] 피처 유의성 분석이 완료되었습니다. 추천 피처 ${ni.recommended_features.slice(0, 8).join(', ')}${ni.recommended_features.length > 8 ? ' ...' : ''}`,
+          timestamp: new Date().toISOString(),
+        })
         setStep('feat_config')
       })
     } catch (e: unknown) { setJobError(e instanceof Error ? e.message : '요청 실패') }
@@ -125,7 +252,10 @@ export default function InverseOptimizationModal({ onClose }: Props) {
     setJobError(null); setJobProgress(0); setJobMsg('')
 
     // 서브셋 피처와 교집합 (서브셋 선택 시)
-    const candidateFeatures = niResult.recommended_features.slice(0, nFeat)
+    const allowedFeatures = featureColumns.length > 0
+      ? niResult.recommended_features.filter((f) => featureColumns.includes(f))
+      : niResult.recommended_features
+    const candidateFeatures = allowedFeatures.slice(0, nFeat)
     const finalFeatures = subsetFeatures.length > 0
       ? candidateFeatures.filter((f) => subsetFeatures.includes(f))
       : candidateFeatures
@@ -140,6 +270,12 @@ export default function InverseOptimizationModal({ onClose }: Props) {
     )
 
     try {
+      addMessage(currentBranchId, {
+        id: genId(),
+        role: 'user',
+        content: `[최적화 가이드] 모델기반 최적화를 시작합니다. 목표: ${optTarget} ${direction === 'maximize' ? '최대화' : '최소화'} / 피처 ${finalFeatures.join(', ')}`,
+        timestamp: new Date().toISOString(),
+      })
       const res = await optimizationApi.constrainedInverseRun({
         session_id: sessionId,
         branch_id: branchId,
@@ -151,15 +287,24 @@ export default function InverseOptimizationModal({ onClose }: Props) {
         direction,
         n_calls: nCalls,
         model_type: modelType,
+        ...(sourceArtifactId ? { source_artifact_id: sourceArtifactId } : {}),
         ...(useConstraint && conTarget && conTarget !== optTarget ? {
           constraint_target_column: conTarget,
           constraint_type: conType,
           constraint_threshold: conThreshold,
         } : {}),
       })
+      setActiveJob(currentBranchId, res.job_id)
       setStep('running')
       startPolling(res.job_id, (job) => {
-        setInvResult((job.result ?? {}) as InverseRunResult)
+        const result = (job.result ?? {}) as InverseRunResult
+        setInvResult(result)
+        addMessage(currentBranchId, {
+          id: genId(),
+          role: 'assistant',
+          content: `[최적화 가이드] 최적화가 완료되었습니다. ${result.target_column} 예측값 ${result.optimal_prediction?.toFixed(4) ?? '-'} / 탐색 ${result.n_evaluations}회`,
+          timestamp: new Date().toISOString(),
+        })
         setStep('done')
       })
     } catch (e: unknown) { setJobError(e instanceof Error ? e.message : '요청 실패') }
@@ -167,7 +312,8 @@ export default function InverseOptimizationModal({ onClose }: Props) {
 
   const reset = () => {
     stopPolling()
-    setStep('subset'); setNiResult(null); setInvResult(null)
+      setSelectedSubsetId('')
+      setStep('subset'); setNiResult(null); setInvResult(null)
     setJobError(null); setJobProgress(0); setJobMsg('')
     setFixedValues({}); setFixedEnabled({})
   }
@@ -175,6 +321,7 @@ export default function InverseOptimizationModal({ onClose }: Props) {
   // ── 단계별 돌아가기 ──────────────────────────────────────────────────────
   const goToStep1 = () => {
     stopPolling()
+    setSelectedSubsetId('')
     setStep('subset'); setNiResult(null); setInvResult(null)
     setJobError(null); setJobProgress(0); setJobMsg('')
     setFixedValues({}); setFixedEnabled({})
@@ -196,40 +343,72 @@ export default function InverseOptimizationModal({ onClose }: Props) {
   }
 
   // ── Derived ──────────────────────────────────────────────────────────────
-  const selectedFeatures = niResult ? niResult.recommended_features.slice(0, nFeat) : []
+  const selectedFeatures = niResult
+    ? (featureColumns.length > 0
+      ? niResult.recommended_features.filter((f) => featureColumns.includes(f))
+      : niResult.recommended_features
+    ).slice(0, nFeat)
+    : []
   const filteredFeatures = subsetFeatures.length > 0
     ? selectedFeatures.filter((f) => subsetFeatures.includes(f))
     : selectedFeatures
+  const availableRecommendedFeatures = niResult
+    ? (featureColumns.length > 0
+      ? niResult.recommended_features.filter((f) => featureColumns.includes(f))
+      : niResult.recommended_features)
+    : []
 
   const importanceRows = niResult
-    ? Object.entries(niResult.actual_importance).slice(0, 20).map(([feat, actual]) => ({
-        feat, actual,
-        p90: niResult.null_importance[feat]?.p90 ?? 0,
-        significant: actual > (niResult.null_importance[feat]?.p90 ?? 0),
-        inSubset: subsetFeatures.length === 0 || subsetFeatures.includes(feat),
-      }))
+    ? niResult.feature_names.slice(0, 20).map((feat) => {
+        const aggregateScore = niResult.feature_scores?.[feat]?.aggregate_score ?? niResult.actual_importance[feat] ?? 0
+        const coverageCount = niResult.feature_scores?.[feat]?.coverage_count
+          ?? ((niResult.actual_importance[feat] ?? 0) > (niResult.null_importance[feat]?.p90 ?? 0) ? 1 : 0)
+        const significantTargets = niResult.feature_scores?.[feat]?.significant_targets ?? []
+        return {
+          feat,
+          aggregateScore,
+          coverageCount,
+          targetCount: niResult.target_columns?.length ?? 1,
+          significantTargets,
+          inSubset: subsetFeatures.length === 0 || subsetFeatures.includes(feat),
+        }
+      })
     : []
 
   const otherTargets = targetColumns.filter((t) => t !== optTarget)
 
+  const isSidebar = variant === 'sidebar'
+
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={onClose}>
+    <div className={isSidebar ? 'flex h-full flex-col' : 'fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4'} onClick={isSidebar ? undefined : onClose}>
       <div
-        className="relative w-full max-w-2xl max-h-[92vh] overflow-y-auto rounded-xl bg-white shadow-2xl scrollbar-thin"
+        className={isSidebar
+          ? 'relative flex h-full w-full flex-col overflow-y-auto bg-white scrollbar-thin'
+          : 'relative w-full max-w-2xl max-h-[92vh] overflow-y-auto rounded-xl bg-white shadow-2xl scrollbar-thin'}
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
-        <div className="sticky top-0 z-10 flex items-center justify-between bg-white border-b border-gray-200 px-5 py-4">
+        <div className={`sticky top-0 z-10 flex items-center justify-between bg-white border-b border-gray-200 ${isSidebar ? 'px-4 py-3' : 'px-5 py-4'}`}>
           <div>
             <h2 className="text-sm font-semibold text-gray-800">모델기반 최적화 위저드</h2>
-            <p className="text-xs text-gray-500 mt-0.5">유의 피처 기반 예측값 최적화 탐색</p>
+            <p className="text-xs text-gray-500 mt-0.5">
+              좌측에서 조건을 가이드하고, 실제 작업 진행과 결과는 중앙 채팅 영역에서 이어집니다.
+            </p>
           </div>
           <button onClick={onClose} className="text-gray-400 hover:text-gray-600 transition-colors">
             <X className="h-5 w-5" />
           </button>
         </div>
 
-        <div className="p-5 space-y-4">
+        <div className={`${isSidebar ? 'p-4' : 'p-5'} space-y-4`}>
+          <div className="rounded-lg border border-sky-200 bg-sky-50 px-3 py-2.5">
+            <div className="flex items-start gap-2">
+              <MessageSquare className="mt-0.5 h-4 w-4 shrink-0 text-sky-600" />
+              <p className="text-xs leading-relaxed text-sky-700">
+                이 가이드는 설정을 도와주는 패널입니다. 각 단계의 실행 시작과 완료 요약은 채팅 영역에 메시지로 남고, 진행률도 중앙 패널에서 계속 확인할 수 있습니다.
+              </p>
+            </div>
+          </div>
           {/* Error */}
           {jobError && (
             <div className="flex items-start gap-2 rounded-lg bg-red-50 border border-red-200 px-3 py-2.5">
@@ -247,12 +426,27 @@ export default function InverseOptimizationModal({ onClose }: Props) {
             {step === 'subset' ? (
               <div className="space-y-3">
                 <p className="text-xs text-gray-500">
-                  서브셋을 선택하면 해당 서브셋의 컬럼에 포함된 피처만 최적화에 사용됩니다.
-                  선택하지 않으면 모든 유의 피처를 사용합니다.
+                  타겟과 변수 선택이 완료된 데이터프레임만 서브셋 후보로 표시됩니다.
+                  이후 분석과 최적화는 현재 확정된 타겟/변수 집합을 기준으로만 진행됩니다.
                 </p>
+                {!hasCompletedTargetAndFeatureSelection && (
+                  <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2">
+                    <p className="text-xs text-amber-700">
+                      먼저 분석 대상 데이터프레임에서 타겟과 변수 선택을 완료해야 서브셋을 고를 수 있습니다.
+                    </p>
+                  </div>
+                )}
+                {hasCompletedTargetAndFeatureSelection && subsetArtifacts.length === 0 && (
+                  <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
+                    <p className="text-xs text-slate-600">
+                      현재 타겟/변수 조합을 모두 포함하는 서브셋 데이터프레임이 없습니다.
+                    </p>
+                  </div>
+                )}
                 <select
                   value={selectedSubsetId}
                   onChange={(e) => setSelectedSubsetId(e.target.value)}
+                  disabled={!hasCompletedTargetAndFeatureSelection}
                   className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-red/30"
                 >
                   <option value="">서브셋 선택 안 함 (전체 피처 사용)</option>
@@ -299,25 +493,60 @@ export default function InverseOptimizationModal({ onClose }: Props) {
                         className="w-full rounded border border-gray-300 px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-brand-red/30"
                       />
                     </div>
-                    {targetColumns.length > 1 && (
-                      <div className="flex-1">
-                        <label className="text-xs text-gray-500 block mb-1">분석 기준 타겟</label>
-                        <select
-                          value={niOptTarget}
-                          onChange={(e) => setNiOptTarget(e.target.value)}
-                          className="w-full rounded border border-gray-300 px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-brand-red/30"
-                        >
-                          {targetColumns.map((t) => <option key={t} value={t}>{t}</option>)}
-                        </select>
-                      </div>
-                    )}
                     <button
                       onClick={runNI}
-                      disabled={!branchId}
+                      disabled={!branchId || availabilityLoading || !allTargetsReady || !!prepJobTarget}
                       className="flex items-center gap-1.5 rounded-lg bg-brand-red px-4 py-1.5 text-sm text-white font-medium hover:bg-red-700 disabled:opacity-50 transition-colors whitespace-nowrap"
                     >
                       <Play className="h-3.5 w-3.5" /> 분석 시작
                     </button>
+                  </div>
+                  {targetColumns.length > 1 && (
+                    <p className="text-xs text-indigo-600">
+                      다중 타겟 모드: {targetColumns.join(', ')} 각각에 대해 Null Importance를 수행한 뒤,
+                      여러 타겟을 함께 설명하는 커버리지 기반 합집합 피처 랭킹을 생성합니다.
+                    </p>
+                  )}
+                  <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 space-y-2">
+                    <div className="flex items-center gap-2">
+                      <Sparkles className="h-3.5 w-3.5 text-slate-500" />
+                      <p className="text-xs font-medium text-slate-700">
+                        챔피언 모델 준비 상태
+                        {availability?.dataset_label ? ` · ${availability.dataset_label}` : ''}
+                      </p>
+                    </div>
+                    {availabilityLoading ? (
+                      <p className="text-xs text-slate-500">준비 상태 확인 중...</p>
+                    ) : (
+                      <div className="space-y-1.5">
+                        {(availability?.statuses ?? targetColumns.map((target) => ({
+                          target_column: target,
+                          ready: false,
+                          reason: 'missing_champion' as const,
+                          message: '준비 상태를 확인할 수 없습니다.',
+                        }))).map((status) => (
+                          <div key={status.target_column} className="flex items-center gap-2 text-xs">
+                            <span className={`inline-block h-2.5 w-2.5 rounded-full ${status.ready ? 'bg-green-500' : 'bg-amber-500'}`} />
+                            <span className="font-medium text-slate-700">{status.target_column}</span>
+                            <span className="text-slate-500 flex-1">{status.message}</span>
+                            {!status.ready && (
+                              <button
+                                onClick={() => runPrepModeling(status.target_column)}
+                                disabled={!!prepJobTarget}
+                                className="rounded-md border border-slate-300 bg-white px-2 py-1 text-[11px] font-medium text-slate-700 hover:bg-slate-100 disabled:opacity-50"
+                              >
+                                {prepJobTarget === status.target_column ? '생성 중...' : '모델 생성 먼저 실행'}
+                              </button>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                    {missingTargets.length > 0 && (
+                      <p className="text-xs text-amber-700">
+                        선택한 {selectedSubsetId ? '서브셋' : '데이터셋'} 기준 챔피언 모델이 모두 준비되어야 피처 유의성 분석과 최적화를 진행할 수 있습니다.
+                      </p>
+                    )}
                   </div>
                 </div>
               )}
@@ -345,10 +574,10 @@ export default function InverseOptimizationModal({ onClose }: Props) {
                           <span className="ml-2 text-indigo-500">→ 서브셋 교집합 {filteredFeatures.length}개 사용</span>
                         )}
                       </label>
-                      <span className="text-xs text-gray-400">{nFeat} / {niResult.feature_names.length}</span>
+                      <span className="text-xs text-gray-400">{nFeat} / {availableRecommendedFeatures.length}</span>
                     </div>
                     <input
-                      type="range" min={2} max={Math.min(15, niResult.feature_names.length)} value={nFeat}
+                      type="range" min={2} max={Math.max(2, Math.min(15, availableRecommendedFeatures.length))} value={nFeat}
                       onChange={(e) => setNFeat(Number(e.target.value))}
                       className="w-full accent-brand-red"
                     />
@@ -623,16 +852,27 @@ function ProgressBar({ progress, message }: { progress: number; message: string 
   )
 }
 
-function ImportanceTable({ rows }: { rows: { feat: string; actual: number; p90: number; significant: boolean; inSubset: boolean }[] }) {
+function ImportanceTable({
+  rows,
+}: {
+  rows: {
+    feat: string
+    aggregateScore: number
+    coverageCount: number
+    targetCount: number
+    significantTargets: string[]
+    inSubset: boolean
+  }[]
+}) {
   return (
     <div className="overflow-x-auto">
       <table className="w-full text-xs">
         <thead>
           <tr className="border-b border-gray-200">
             <th className="text-left py-1.5 pr-3 text-gray-500 font-medium">피처</th>
-            <th className="text-right py-1.5 px-2 text-gray-500 font-medium">중요도</th>
-            <th className="text-right py-1.5 px-2 text-gray-500 font-medium">Null p90</th>
-            <th className="text-center py-1.5 pl-2 text-gray-500 font-medium">유의</th>
+            <th className="text-right py-1.5 px-2 text-gray-500 font-medium">종합 점수</th>
+            <th className="text-center py-1.5 px-2 text-gray-500 font-medium">커버리지</th>
+            <th className="text-left py-1.5 pl-2 text-gray-500 font-medium">유의 타겟</th>
           </tr>
         </thead>
         <tbody>
@@ -642,10 +882,16 @@ function ImportanceTable({ rows }: { rows: { feat: string; actual: number; p90: 
                 {r.feat}
                 {!r.inSubset && <span className="ml-1 text-gray-400 text-xs">(서브셋 외)</span>}
               </td>
-              <td className="py-1 px-2 text-right tabular-nums text-gray-600">{r.actual.toFixed(4)}</td>
-              <td className="py-1 px-2 text-right tabular-nums text-gray-400">{r.p90.toFixed(4)}</td>
-              <td className="py-1 pl-2 text-center">
-                {r.significant ? <span className="text-green-600 font-medium">✓</span> : <span className="text-gray-300">—</span>}
+              <td className="py-1 px-2 text-right tabular-nums text-gray-600">{r.aggregateScore.toFixed(4)}</td>
+              <td className="py-1 px-2 text-center text-gray-600">
+                <span className={`inline-flex rounded-full px-2 py-0.5 font-medium ${
+                  r.coverageCount === r.targetCount ? 'bg-green-50 text-green-700' : 'bg-amber-50 text-amber-700'
+                }`}>
+                  {r.coverageCount}/{r.targetCount}
+                </span>
+              </td>
+              <td className="py-1 pl-2 text-gray-500">
+                {r.significantTargets.length > 0 ? r.significantTargets.join(', ') : '없음'}
               </td>
             </tr>
           ))}

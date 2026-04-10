@@ -140,7 +140,22 @@ def run_eda_subgraph(state: GraphState) -> GraphState:
         if method == "pandasai":
             # --- PandasAI 경로 ---
             state = update_progress(state, 35, "EDA", "PandasAI 분석 중...")
-            sandbox_result = run_pandasai(df, user_message)
+            feature_columns = state.get("feature_columns") or []
+            target_column = state.get("target_column")
+            constraint_lines = []
+            if target_column:
+                constraint_lines.append(f"- target column: {target_column}")
+            if feature_columns:
+                constraint_lines.append(f"- allowed feature columns: {', '.join(feature_columns)}")
+                constraint_lines.append("- do not use other columns as variables/features")
+            constrained_message = user_message
+            if constraint_lines:
+                constrained_message = (
+                    f"{user_message}\n\n"
+                    "[Column constraints for analysis]\n"
+                    + "\n".join(constraint_lines)
+                )
+            sandbox_result = run_pandasai(df, constrained_message)
 
             pai_failed = not sandbox_result["success"]
             # 성공했더라도 출력 파일이 없으면 의미 있는 결과가 아님 → 폴백
@@ -157,7 +172,7 @@ def run_eda_subgraph(state: GraphState) -> GraphState:
                 state = update_progress(state, 40, "EDA", "PandasAI 실패 — 코드 생성으로 재시도 중...")
             else:
                 eda_code = sandbox_result.get("generated_code", "")
-                eda_plan = {"analyses": [{"name": "PandasAI", "type": "auto", "description": user_message}]}
+                eda_plan = {"analyses": [{"name": "PandasAI", "type": "auto", "description": constrained_message}]}
 
         if method == "direct_code":
             # --- 직접 코드 생성 경로 ---

@@ -50,11 +50,19 @@ def run_subset_subgraph(state: GraphState) -> GraphState:
     dataset = state.get("dataset", {})
     branch_id = active_branch.get("id")
     branch_config = active_branch.get("config", {}) or {}
-    target_col = (
-        branch_config.get("target_column")
-        or state.get("target_column")
-        or dataset.get("target_column")
-    )
+    target_columns = state.get("target_columns") or []
+    if not target_columns:
+        target_columns = [
+            c for c in [
+                branch_config.get("target_column"),
+                state.get("target_column"),
+                dataset.get("target_column"),
+            ]
+            if c
+        ]
+    target_columns = list(dict.fromkeys([c for c in target_columns if c]))
+    target_col = target_columns[0] if target_columns else None
+    feature_columns = state.get("feature_columns") or []
 
     if not dataset_path:
         return {**state, "error_code": "NO_DATASET", "error_message": "데이터셋 경로를 찾을 수 없습니다."}
@@ -62,6 +70,13 @@ def run_subset_subgraph(state: GraphState) -> GraphState:
     try:
         # 1. 데이터셋 로드
         df = load_dataframe(dataset_path)
+        if feature_columns:
+            constrained_cols = [c for c in feature_columns if c in df.columns]
+            for target in target_columns:
+                if target in df.columns and target not in constrained_cols:
+                    constrained_cols.append(target)
+            if constrained_cols:
+                df = df[constrained_cols].copy()
         n_rows, n_cols = df.shape
         logger.info("서브셋 탐색 시작", n_rows=n_rows, n_cols=n_cols, target=target_col)
 
@@ -69,7 +84,7 @@ def run_subset_subgraph(state: GraphState) -> GraphState:
         state = update_progress(state, 25, "서브셋_탐색", "컬럼 분류 중...")
 
         # 2. 컬럼 분류
-        col_classification = classify_columns(df, target_col)
+        col_classification = classify_columns(df, target_columns)
 
         check_cancellation(state)
         state = update_progress(state, 40, "서브셋_탐색", "결측 구조 분석 중...")
@@ -81,13 +96,13 @@ def run_subset_subgraph(state: GraphState) -> GraphState:
         state = update_progress(state, 55, "서브셋_탐색", "서브셋 후보 생성 중...")
 
         # 4. 서브셋 후보 생성
-        candidates = generate_subset_candidates(df, col_classification, missing_structure, target_col)
+        candidates = generate_subset_candidates(df, col_classification, missing_structure, target_columns)
 
         check_cancellation(state)
         state = update_progress(state, 70, "서브셋_탐색", "서브셋 점수 계산 중...")
 
         # 5. 점수 계산
-        scored_candidates = score_subset_candidates(df, candidates, target_col)
+        scored_candidates = score_subset_candidates(df, candidates, target_columns)
 
         # 6. 전체 데이터와 유의미한 차이가 없는 후보 제거
         #    row_coverage >= 0.95 AND feature_coverage >= 0.95 → 사실상 전체와 동일
@@ -138,6 +153,7 @@ def run_subset_subgraph(state: GraphState) -> GraphState:
                 "top_subset_scores": [s["score"] for s in top_subsets],
                 "artifact_count": len(artifact_ids.get("artifact_ids", [])),
                 "target_column": target_col,
+                "target_columns": target_columns,
                 "col_classification_summary": {
                     k: len(v) for k, v in col_classification.items()
                 },
@@ -151,7 +167,7 @@ def run_subset_subgraph(state: GraphState) -> GraphState:
         return {**state, "error_code": "SUBSET_ERROR", "error_message": f"서브셋 탐색 중 오류: {str(e)}"}
 
 
-def classify_columns(df: pd.DataFrame, target_col: Optional[str] = None) -> dict:
+def classify_columns(df: pd.DataFrame, target_columns: Optional[list[str]] = None) -> dict:
     """컬럼 분류: 상수/준상수/ID형/높은결측/낮은카디널리티/타겟/일반"""
     n_rows = len(df)
     classification = {
@@ -165,13 +181,15 @@ def classify_columns(df: pd.DataFrame, target_col: Optional[str] = None) -> dict
         "categorical": [],    # 일반 카테고리형
     }
 
+    target_set = set(target_columns or [])
+
     for col in df.columns:
         series = df[col]
         n_unique = series.nunique(dropna=True)
         missing_ratio = series.isnull().mean()
 
         # 타겟 컬럼
-        if col == target_col:
+        if col in target_set:
             classification["target"].append(col)
             continue
 
@@ -291,11 +309,15 @@ def generate_subset_candidates(
     df: pd.DataFrame,
     col_classification: dict,
     missing_structure: dict,
-    target_col: Optional[str],
+    target_columns: Optional[list[str]],
 ) -> list:
     """서브셋 후보 생성"""
     n_rows = len(df)
     candidates = []
+
+    target_columns = target_columns or []
+    target_set = set(target_columns)
+    primary_target = target_columns[0] if target_columns else None
 
     # 사용 가능한 컬럼 (상수/준상수/ID형/높은결측 제외)
     exclude_cols = set(
@@ -304,7 +326,7 @@ def generate_subset_candidates(
         col_classification["id_like"] +
         col_classification["high_missing"]
     )
-    usable_cols = [c for c in df.columns if c not in exclude_cols and c != target_col]
+    usable_cols = [c for c in df.columns if c not in exclude_cols and c not in target_set]
 
     if not usable_cols:
         usable_cols = list(df.columns)
@@ -330,10 +352,7 @@ def generate_subset_candidates(
 
         # 이 서명에서 결측이 아닌 컬럼 선택
         subset_cols = [c for c in usable_cols if c not in missing_cols_in_sig]
-        if target_col:
-            subset_cols_with_target = subset_cols + [target_col]
-        else:
-            subset_cols_with_target = subset_cols
+        subset_cols_with_target = subset_cols + [t for t in target_columns if t in df.columns]
 
         if subset_cols:
             candidates.append({
@@ -359,10 +378,7 @@ def generate_subset_candidates(
             # 이 서브셋에서 결측률 낮은 컬럼 선택
             subset_df = df.loc[row_indices, usable_cols]
             good_cols = [c for c in usable_cols if subset_df[c].isnull().mean() < 0.5]
-            if target_col:
-                good_cols_with_target = good_cols + [target_col]
-            else:
-                good_cols_with_target = good_cols
+            good_cols_with_target = good_cols + [t for t in target_columns if t in df.columns]
 
             if len(good_cols) >= 3:
                 candidates.append({
@@ -392,10 +408,7 @@ def generate_subset_candidates(
             if len(good_cols) < 3:
                 continue
 
-            if target_col:
-                good_cols_with_target = good_cols + [target_col]
-            else:
-                good_cols_with_target = good_cols
+            good_cols_with_target = good_cols + [t for t in target_columns if t in df.columns]
 
             candidates.append({
                 "name": f"밀집 서브셋 (행결측≤{row_thresh:.0%}, 열결측≤{col_thresh:.0%})",
@@ -411,10 +424,7 @@ def generate_subset_candidates(
     # === 전략 4: 완전한 행 서브셋 (결측값 없는 행) ===
     complete_rows = df.index[df[usable_cols].notnull().all(axis=1)].tolist()
     if len(complete_rows) >= 20:
-        if target_col:
-            all_cols_with_target = usable_cols + [target_col]
-        else:
-            all_cols_with_target = usable_cols
+        all_cols_with_target = usable_cols + [t for t in target_columns if t in df.columns]
 
         candidates.append({
             "name": f"완전 행 서브셋 ({len(complete_rows)}행)",
@@ -454,7 +464,7 @@ def _deduplicate_candidates(candidates: list) -> list:
     return unique
 
 
-def score_subset(df: pd.DataFrame, subset_rows: list, subset_cols: list, target_col: Optional[str]) -> float:
+def score_subset(df: pd.DataFrame, subset_rows: list, subset_cols: list, target_columns: Optional[list[str]]) -> float:
     """
     서브셋 점수 계산:
     dense score = row_coverage * feature_coverage * (1 - mean_missingness) * target_completeness
@@ -462,19 +472,21 @@ def score_subset(df: pd.DataFrame, subset_rows: list, subset_cols: list, target_
     if not subset_rows or not subset_cols:
         return 0.0
 
+    target_set = set(target_columns or [])
     row_coverage = len(subset_rows) / len(df)
     feature_coverage = len(subset_cols) / len(df.columns)
 
     # 타겟 컬럼 제외한 피처 컬럼
-    feature_cols = [c for c in subset_cols if c != target_col]
+    feature_cols = [c for c in subset_cols if c not in target_set]
     if not feature_cols:
         feature_cols = subset_cols
 
     subset_df = df.loc[subset_rows, feature_cols]
     mean_missingness = float(subset_df.isnull().mean().mean())
 
-    if target_col and target_col in df.columns:
-        target_completeness = float(df.loc[subset_rows, target_col].notna().mean())
+    valid_targets = [c for c in (target_columns or []) if c in df.columns]
+    if valid_targets:
+        target_completeness = float(df.loc[subset_rows, valid_targets].notna().mean().mean())
     else:
         target_completeness = 1.0
 
@@ -482,8 +494,11 @@ def score_subset(df: pd.DataFrame, subset_rows: list, subset_cols: list, target_
     return float(score)
 
 
-def score_subset_candidates(df: pd.DataFrame, candidates: list, target_col: Optional[str]) -> list:
+def score_subset_candidates(df: pd.DataFrame, candidates: list, target_columns: Optional[list[str]]) -> list:
     """모든 후보에 점수 계산"""
+    target_columns = target_columns or []
+    target_set = set(target_columns)
+    valid_targets = [c for c in target_columns if c in df.columns]
     scored = []
     for cand in candidates:
         row_indices = cand.get("row_indices", [])
@@ -496,14 +511,14 @@ def score_subset_candidates(df: pd.DataFrame, candidates: list, target_col: Opti
         if not valid_rows or not valid_cols:
             continue
 
-        sc = score_subset(df, valid_rows, valid_cols, target_col)
+        sc = score_subset(df, valid_rows, valid_cols, target_columns)
         n_rows_subset = len(valid_rows)
         n_cols_subset = len(valid_cols)
-        feature_cols = [c for c in valid_cols if c != target_col]
+        feature_cols = [c for c in valid_cols if c not in target_set]
 
         subset_df = df.loc[valid_rows, feature_cols] if feature_cols else pd.DataFrame()
         mean_miss = float(subset_df.isnull().mean().mean()) if not subset_df.empty else 0.0
-        target_comp = float(df.loc[valid_rows, target_col].notna().mean()) if (target_col and target_col in df.columns) else 1.0
+        target_comp = float(df.loc[valid_rows, valid_targets].notna().mean().mean()) if valid_targets else 1.0
 
         cand_scored = {
             **cand,

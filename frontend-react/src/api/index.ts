@@ -2,6 +2,7 @@ import axios, { AxiosError } from 'axios'
 import type {
   LoginRequest,
   LoginResponse,
+  RefreshResponse,
   Session,
   CreateSessionRequest,
   Dataset,
@@ -9,6 +10,9 @@ import type {
   TargetCandidate,
   Branch,
   CreateBranchRequest,
+  BaselineModelingRequest,
+  LeaderboardResponse,
+  ModelAvailabilityResponse,
   Step,
   Artifact,
   ArtifactData,
@@ -21,6 +25,7 @@ import type {
   InverseRunRequest,
   ApiSuccess,
 } from '@/types'
+import { useAuthStore, useSessionStore } from '@/store'
 
 const BASE_URL = '/api/v1'
 
@@ -28,6 +33,51 @@ export const http = axios.create({
   baseURL: BASE_URL,
   timeout: 60_000,
 })
+
+let refreshPromise: Promise<string | null> | null = null
+
+function clearClientAuth() {
+  useSessionStore.getState().resetSessionState()
+  useAuthStore.getState().clearAuth()
+}
+
+export async function refreshAccessToken(): Promise<string | null> {
+  const refreshToken = localStorage.getItem('refresh_token')
+  if (!refreshToken) return null
+
+  if (!refreshPromise) {
+    refreshPromise = (async () => {
+      try {
+        const res = await axios.post<ApiSuccess<RefreshResponse>>(`${BASE_URL}/auth/refresh`, {
+          refresh_token: refreshToken,
+        })
+        const data = unwrap(res)
+        const { userId, username } = useAuthStore.getState()
+        if (!userId || !username) {
+          clearClientAuth()
+          window.location.href = '/login'
+          return null
+        }
+        useAuthStore.getState().setAuth(
+          data.access_token,
+          data.refresh_token,
+          data.expires_in,
+          userId,
+          username,
+        )
+        return data.access_token
+      } catch {
+        clearClientAuth()
+        window.location.href = '/login'
+        return null
+      } finally {
+        refreshPromise = null
+      }
+    })()
+  }
+
+  return refreshPromise
+}
 
 // ─── Request interceptor: attach token ──────────────────────────────────────
 
@@ -43,11 +93,25 @@ http.interceptors.request.use((config) => {
 
 http.interceptors.response.use(
   (response) => response,
-  (error: AxiosError) => {
-    if (error.response?.status === 401) {
-      localStorage.removeItem('access_token')
-      window.location.href = '/login'
+  async (error: AxiosError) => {
+    const originalRequest = error.config as (typeof error.config & { _retry?: boolean }) | undefined
+
+    if (
+      error.response?.status === 401 &&
+      originalRequest &&
+      !originalRequest._retry &&
+      !originalRequest.url?.includes('/auth/login') &&
+      !originalRequest.url?.includes('/auth/refresh')
+    ) {
+      originalRequest._retry = true
+      const newAccessToken = await refreshAccessToken()
+      if (newAccessToken) {
+        originalRequest.headers = originalRequest.headers ?? {}
+        originalRequest.headers.Authorization = `Bearer ${newAccessToken}`
+        return http(originalRequest)
+      }
     }
+
     return Promise.reject(error)
   },
 )
@@ -64,6 +128,10 @@ function unwrap<T>(response: { data: ApiSuccess<T> }): T {
 export const authApi = {
   login: async (req: LoginRequest): Promise<LoginResponse> => {
     const res = await http.post<ApiSuccess<LoginResponse>>('/auth/login', req)
+    return unwrap(res)
+  },
+  refresh: async (refreshToken: string): Promise<RefreshResponse> => {
+    const res = await http.post<ApiSuccess<RefreshResponse>>('/auth/refresh', { refresh_token: refreshToken })
     return unwrap(res)
   },
   logout: async (refreshToken: string): Promise<void> => {
@@ -297,6 +365,15 @@ export const jobsApi = {
 // ─── Optimization ─────────────────────────────────────────────────────────────
 
 export const optimizationApi = {
+  modelAvailability: async (req: {
+    session_id: string
+    branch_id: string
+    target_columns: string[]
+    source_artifact_id?: string
+  }): Promise<ModelAvailabilityResponse> => {
+    const res = await http.post<ApiSuccess<ModelAvailabilityResponse>>('/optimization/model-availability', req)
+    return unwrap(res)
+  },
   nullImportance: async (req: NullImportanceRequest): Promise<AnalyzeResponse> => {
     const res = await http.post<ApiSuccess<AnalyzeResponse>>('/optimization/null-importance', req)
     return unwrap(res)
@@ -307,6 +384,17 @@ export const optimizationApi = {
   },
   constrainedInverseRun: async (req: import('@/types').ConstrainedInverseRunRequest): Promise<AnalyzeResponse> => {
     const res = await http.post<ApiSuccess<AnalyzeResponse>>('/optimization/constrained-inverse-run', req)
+    return unwrap(res)
+  },
+}
+
+export const modelingApi = {
+  leaderboard: async (branchId: string): Promise<LeaderboardResponse> => {
+    const res = await http.get<ApiSuccess<LeaderboardResponse>>(`/modeling/leaderboard/${branchId}`)
+    return unwrap(res)
+  },
+  baseline: async (req: BaselineModelingRequest): Promise<AnalyzeResponse> => {
+    const res = await http.post<ApiSuccess<AnalyzeResponse>>('/modeling/baseline', req)
     return unwrap(res)
   },
 }

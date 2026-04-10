@@ -52,8 +52,9 @@ export default function WorkspacePage() {
     text: '',
     immediate: false,
   })
-  const [leftWidth, setLeftWidth] = useState(240)
-  const [rightWidth, setRightWidth] = useState(260)
+  const [leftWidth, setLeftWidth] = useState(288)
+  const [rightWidth, setRightWidth] = useState(312)
+  const [optimizationGuideOpen, setOptimizationGuideOpen] = useState(false)
 
   // ─── 데이터셋 → 채팅 자동 표시 ─────────────────────────────────────────────
 
@@ -88,16 +89,16 @@ export default function WorkspacePage() {
     if (!targetDataframeArtifactId) {
       setTargetDataframeArtifactId(null)
     }
-  }, [datasetId, branchId, sessionId])
+  }, [datasetId, branchId, sessionId, histories, cachedArtifacts, targetDataframeArtifactId, addMessage, cacheArtifact, setTargetDataframeArtifactId])
 
   // ─── 패널 리사이즈 ─────────────────────────────────────────────────────────
 
   const handleLeftDrag = useCallback((delta: number) => {
-    setLeftWidth((w) => Math.max(160, Math.min(400, w + delta)))
+    setLeftWidth((w) => Math.max(192, Math.min(480, w + delta)))
   }, [])
 
   const handleRightDrag = useCallback((delta: number) => {
-    setRightWidth((w) => Math.max(180, Math.min(480, w - delta)))
+    setRightWidth((w) => Math.max(216, Math.min(576, w - delta)))
   }, [])
 
   const handleQuestionSelect = useCallback((text: string, immediate = false) => {
@@ -112,7 +113,12 @@ export default function WorkspacePage() {
     <div className="flex h-screen overflow-hidden bg-gray-50">
       {/* 좌측 패널 */}
       <div style={{ width: leftWidth }} className="shrink-0 overflow-hidden">
-        <Sidebar onQuestionSelect={handleQuestionSelect} />
+        <Sidebar
+          onQuestionSelect={handleQuestionSelect}
+          optimizationGuideOpen={optimizationGuideOpen}
+          onOpenOptimizationGuide={() => setOptimizationGuideOpen(true)}
+          onCloseOptimizationGuide={() => setOptimizationGuideOpen(false)}
+        />
       </div>
 
       <DragDivider onDrag={handleLeftDrag} />
@@ -123,6 +129,7 @@ export default function WorkspacePage() {
           externalInput={externalInput.text}
           immediateExecute={externalInput.immediate}
           onExternalInputConsumed={handleInputConsumed}
+          onOpenOptimizationGuide={() => setOptimizationGuideOpen(true)}
         />
       </div>
 

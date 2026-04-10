@@ -41,6 +41,32 @@ def _infer_requested_intent(mode: str, message: str) -> str:
     return _keyword_classify(message)
 
 
+def _augment_message_with_selection_context(
+    message: str,
+    target_columns: list[str],
+    feature_columns: list[str],
+    selected_artifact_id: str | None = None,
+) -> str:
+    """선택된 타겟/변수 제약을 자연어 요청에 명시적으로 주입한다."""
+    lines: list[str] = []
+    if selected_artifact_id:
+        lines.append(f"- 분석 대상 데이터프레임 ID: {selected_artifact_id}")
+    if target_columns:
+        lines.append(f"- 반드시 사용할 타겟 컬럼: {', '.join(target_columns)}")
+    if feature_columns:
+        lines.append(f"- 반드시 사용할 변수(피처) 컬럼: {', '.join(feature_columns)}")
+        lines.append("- 위 변수 목록에 없는 컬럼은 변수/피처 후보에서 제외")
+
+    if not lines:
+        return message
+
+    return (
+        f"{message}\n\n"
+        "[분석 대상/컬럼 제약]\n"
+        + "\n".join(lines)
+    )
+
+
 def run_analysis_task(
     job_run_id: str,
     session_id: str,
@@ -99,17 +125,25 @@ def run_analysis_task(
         def _run_once(tc, skip_finalize=False):
             # context에서 UI 선택 아티팩트 ID 추출 (target_dataframe_id 우선)
             sel_art_id = (context or {}).get("target_dataframe_id") or (context or {}).get("selected_artifact_id")
+            effective_targets = [tc] if tc else target_columns
+            effective_message = _augment_message_with_selection_context(
+                message,
+                effective_targets,
+                feature_columns,
+                sel_art_id,
+            )
             
             return run_analysis_graph(
                 job_run_id=job_run_id,
                 session_id=session_id,
                 user_id=user_id or "",
-                user_message=message,
+                user_message=effective_message,
                 branch_id=branch_id,
                 mode=mode,
                 selected_step_id=context.get("selected_step_id") if context else None,
                 selected_artifact_id=sel_art_id,
                 target_column=tc,
+                target_columns=target_columns,
                 feature_columns=feature_columns or None,
                 skip_job_finalize=skip_finalize,
             )
