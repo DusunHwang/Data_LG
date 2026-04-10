@@ -335,6 +335,7 @@ async def run_null_importance(
             "feature_names": meta.get("feature_names", []),
             "categorical_features": meta.get("categorical_features", []),
             "categorical_encoders": meta.get("categorical_encoders", {}),
+            "model_kind": meta.get("type", "baseline_model"),
             "dataset_path": dataset_path,
         })
 
@@ -375,6 +376,7 @@ async def run_null_importance(
     rq_job = enqueue_job(
         run_null_importance_task,
         str(job_run.id),
+        str(session_id),
         str(branch_id),
         target_specs,
         body.get("n_permutations", 30),
@@ -491,6 +493,7 @@ async def run_constrained_inverse_optimization(
     from app.db.repositories.artifact import ArtifactRepository
     model_repo = ModelRunRepository(db)
     artifact_repo = ArtifactRepository(db)
+    source_artifact = await artifact_repo.get(UUID(source_artifact_id)) if source_artifact_id else None
 
     async def _get_model_info(target_col: str | None):
         """타겟별 챔피언 모델 정보 반환"""
@@ -539,6 +542,7 @@ async def run_constrained_inverse_optimization(
             "feature_names": artifact_metadata.get("feature_names", []),
             "categorical_features": artifact_metadata.get("categorical_features", []),
             "categorical_encoders": artifact_metadata.get("categorical_encoders", {}),
+            "model_kind": artifact_metadata.get("type", "baseline_model"),
             "target_column": artifact_metadata.get("target_column") or champion_model.target_column or target_col or "",
             "dataset_path": artifact_metadata.get("dataset_path") or champion_model.dataset_path,
         }
@@ -557,10 +561,12 @@ async def run_constrained_inverse_optimization(
             "model_path": info["model_path"],
             "feature_names": info["feature_names"],
             "target_column": info["target_column"],
+            "categorical_features": info["categorical_features"],
+            "categorical_encoders": info["categorical_encoders"],
+            "model_kind": info.get("model_kind", "baseline_model"),
         })
 
     # 데이터셋: 모델이 학습된 데이터셋 우선 사용
-    source_artifact = await artifact_repo.get(UUID(source_artifact_id)) if source_artifact_id else None
     dataset_path = source_artifact.file_path if source_artifact and source_artifact.file_path else opt_info.get("dataset_path")
     if not dataset_path:
         session_obj = await validate_user_session(session_id, current_user.id, db)
@@ -598,6 +604,7 @@ async def run_constrained_inverse_optimization(
         body.get("direction", "maximize"),
         opt_info["categorical_features"],
         opt_info["categorical_encoders"],
+        opt_info.get("model_kind", "baseline_model"),
         dataset_path,
         body.get("n_calls", 300),
         body.get("model_type", "lgbm"),

@@ -250,19 +250,29 @@ export default function InverseOptimizationModal({ onClose, variant = 'modal' }:
       })
       setActiveJob(currentBranchId, res.job_id)
       setStep('ni_running')
-      startPolling(res.job_id, (job) => {
-        const r = (job.result ?? {}) as NullImportanceResult & { null_importance_result?: NullImportanceResult }
-        const ni = r.null_importance_result ?? r
-        setNiResult(ni)
-        setNFeat(ni.recommended_n ?? Math.min(8, ni.feature_names?.length ?? 8))
-        addMessage(currentBranchId, {
-          id: genId(),
-          role: 'assistant',
-          content: `[최적화 가이드] 피처 유의성 분석이 완료되었습니다. 추천 피처 ${ni.recommended_features.slice(0, 8).join(', ')}${ni.recommended_features.length > 8 ? ' ...' : ''}`,
-          timestamp: new Date().toISOString(),
-        })
-        setStep('feat_config')
-      })
+      startPolling(
+        res.job_id,
+        (job) => {
+          const r = (job.result ?? {}) as NullImportanceResult & { null_importance_result?: NullImportanceResult }
+          const ni = r.null_importance_result ?? r
+          setNiResult(ni)
+          setNFeat(ni.recommended_n ?? Math.min(8, ni.feature_names?.length ?? 8))
+          addMessage(currentBranchId, {
+            id: genId(),
+            role: 'assistant',
+            content: `[최적화 가이드] 피처 유의성 분석이 완료되었습니다. 추천 피처 ${ni.recommended_features.slice(0, 8).join(', ')}${ni.recommended_features.length > 8 ? ' ...' : ''}`,
+            artifact_ids: Array.isArray((job.result as { artifact_ids?: string[] } | undefined)?.artifact_ids)
+              ? (job.result as { artifact_ids?: string[] }).artifact_ids
+              : [],
+            timestamp: new Date().toISOString(),
+          })
+          setStep('feat_config')
+        },
+        (job) => {
+          setJobError(job.error_message ?? '피처 유의성 분석 실패')
+          setStep('ni_setup')
+        },
+      )
     } catch (e: unknown) { setJobError(e instanceof Error ? e.message : '요청 실패') }
   }
 
@@ -326,17 +336,30 @@ export default function InverseOptimizationModal({ onClose, variant = 'modal' }:
       })
       setActiveJob(currentBranchId, res.job_id)
       setStep('running')
-      startPolling(res.job_id, (job) => {
-        const result = (job.result ?? {}) as InverseRunResult
-        setInvResult(result)
-        addMessage(currentBranchId, {
-          id: genId(),
-          role: 'assistant',
-          content: `[최적화 가이드] 최적화가 완료되었습니다. ${result.target_column} 예측값 ${result.optimal_prediction?.toFixed(4) ?? '-'} / 탐색 ${result.n_evaluations}회`,
-          timestamp: new Date().toISOString(),
-        })
-        setStep('done')
-      })
+      startPolling(
+        res.job_id,
+        (job) => {
+          const result = (job.result ?? {}) as InverseRunResult
+          setInvResult(result)
+          const constraintSummary = (result.constraints ?? [])
+            .map((c) => `${c.target_column} 예측값 ${c.prediction?.toFixed(4) ?? '-'}`)
+            .join(' / ')
+          addMessage(currentBranchId, {
+            id: genId(),
+            role: 'assistant',
+            content: `[최적화 가이드] 최적화가 완료되었습니다. ${result.target_column} 예측값 ${result.optimal_prediction?.toFixed(4) ?? '-'}${constraintSummary ? ` / ${constraintSummary}` : ''} / 탐색 ${result.n_evaluations}회`,
+            artifact_ids: Array.isArray((job.result as { artifact_ids?: string[] } | undefined)?.artifact_ids)
+              ? (job.result as { artifact_ids?: string[] }).artifact_ids
+              : [],
+            timestamp: new Date().toISOString(),
+          })
+          setStep('done')
+        },
+        (job) => {
+          setJobError(job.error_message ?? '최적화 실패')
+          setStep('target_config')
+        },
+      )
     } catch (e: unknown) { setJobError(e instanceof Error ? e.message : '요청 실패') }
   }
 
@@ -1015,7 +1038,7 @@ function InverseResult({ result }: { result: InverseRunResult }) {
 
       <div className={`grid gap-3 ${hasConstraint ? 'grid-cols-2' : 'grid-cols-2'}`}>
         <MetricCard label={`최적 예측 (${result.target_column})`} value={result.optimal_prediction?.toFixed(4) ?? '-'} highlight />
-        {result.baseline_prediction !== undefined && (
+        {result.baseline_prediction != null && (
           <MetricCard label="베이스라인" value={result.baseline_prediction.toFixed(4)} delta={result.improvement} />
         )}
       </div>
@@ -1093,7 +1116,7 @@ function MetricCard({ label, value, delta, highlight }: { label: string; value: 
     <div className={`rounded-lg p-3 border ${highlight ? 'border-brand-red/30 bg-brand-red/5' : 'border-gray-200 bg-gray-50'}`}>
       <p className="text-xs text-gray-500 mb-1 truncate">{label}</p>
       <p className={`text-lg font-bold tabular-nums ${highlight ? 'text-brand-red' : 'text-gray-800'}`}>{value}</p>
-      {delta != null && (
+      {typeof delta === 'number' && Number.isFinite(delta) && (
         <p className={`text-xs font-medium mt-0.5 ${delta >= 0 ? 'text-green-600' : 'text-red-500'}`}>
           {delta >= 0 ? '+' : ''}{delta.toFixed(4)}
         </p>

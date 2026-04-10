@@ -24,6 +24,7 @@ def _apply_saved_preprocessing(
     frame: pd.DataFrame,
     categorical_features: list[str],
     categorical_encoders: dict[str, dict[str, int]] | None = None,
+    categorical_mode: str = "encoded",
 ) -> pd.DataFrame:
     """모델 학습 시 저장한 범주형 인코딩 규칙을 동일하게 적용한다."""
     categorical_encoders = categorical_encoders or {}
@@ -33,10 +34,13 @@ def _apply_saved_preprocessing(
         if col in categorical_features:
             raw = processed[col].fillna("__missing__").astype(str)
             mapping = categorical_encoders.get(col) or {}
-            if not mapping:
-                labels = sorted(set(raw.tolist()))
-                mapping = {label: idx for idx, label in enumerate(labels)}
-            processed[col] = raw.map(lambda value: mapping.get(value, -1)).astype(float)
+            if categorical_mode == "category" and not mapping:
+                processed[col] = raw.astype("category")
+            else:
+                if not mapping:
+                    labels = sorted(set(raw.tolist()))
+                    mapping = {label: idx for idx, label in enumerate(labels)}
+                processed[col] = raw.map(lambda value: mapping.get(value, -1)).astype(float)
         else:
             processed[col] = processed[col].fillna(processed[col].median() if pd.api.types.is_numeric_dtype(processed[col]) else 0.0)
 
@@ -54,6 +58,7 @@ def _compute_null_importance_for_target(
     target_column: str,
     categorical_features: list,
     categorical_encoders: dict | None,
+    model_kind: str = "baseline_model",
     n_permutations: int = 30,
     progress_cb: Optional[Callable[[int, str], None]] = None,
 ) -> dict:
@@ -103,6 +108,7 @@ def _compute_null_importance_for_target(
         df[available].copy(),
         list(categorical_features or []),
         categorical_encoders or {},
+        categorical_mode="category" if model_kind == "lgbm_model" else "encoded",
     )
 
     if target_column not in df.columns:
@@ -144,7 +150,13 @@ def _compute_null_importance_for_target(
         "verbosity": -1,
         "random_state": 42,
     }
-    cat_idx = [available.index(c) for c in categorical_features if c in available]
+    # 저장된 인코더를 적용한 경우 범주형 열도 수치형으로 변환되므로,
+    # 실제 category dtype 인 열만 LightGBM의 categorical_feature로 넘긴다.
+    cat_idx = [
+        available.index(c)
+        for c in categorical_features
+        if c in available and str(X_shap[c].dtype) == "category"
+    ]
 
     for perm_i in range(n_permutations):
         pct = 25 + int(60 * perm_i / max(n_permutations, 1))
@@ -153,11 +165,10 @@ def _compute_null_importance_for_target(
 
         try:
             perm_model = lgb.LGBMRegressor(**lgb_params)
-            perm_model.fit(
-                X_shap,
-                y_perm,
-                categorical_feature=cat_idx if cat_idx else "auto",
-            )
+            fit_kwargs = {}
+            if cat_idx:
+                fit_kwargs["categorical_feature"] = cat_idx
+            perm_model.fit(X_shap, y_perm, **fit_kwargs)
             perm_explainer = shap.TreeExplainer(perm_model)
             perm_shap_raw = perm_explainer.shap_values(X_shap)
             perm_shap = perm_shap_raw[0] if isinstance(perm_shap_raw, list) else perm_shap_raw
@@ -327,6 +338,7 @@ def _aggregate_multi_target_null_importance(target_results: dict[str, dict]) -> 
 
 def run_null_importance_task(
     job_run_id: str,
+    session_id: str,
     branch_id: str,
     target_specs: list,
     n_permutations: int = 30,
@@ -360,6 +372,7 @@ def run_null_importance_task(
                 target_column,
                 spec.get("categorical_features", []),
                 spec.get("categorical_encoders", {}),
+                spec.get("model_kind", "baseline_model"),
                 n_permutations=n_permutations,
                 progress_cb=progress_cb,
             )
@@ -368,6 +381,8 @@ def run_null_importance_task(
         result = _aggregate_multi_target_null_importance(target_results)
         result["branch_id"] = branch_id
 
+        artifact_ids = _save_null_importance_artifact(result, session_id, branch_id)
+        result["artifact_ids"] = artifact_ids
         update_job_status_sync(job_run_id, "completed", 100, "Null Importance 분석 완료", result=result)
         return result
 
@@ -595,7 +610,8 @@ def run_inverse_optimize_task(
         }
 
         # DB에 아티팩트로도 저장
-        _save_inverse_optimize_artifact(result, session_id, branch_id, job_run_id)
+        artifact_ids = _save_inverse_optimize_artifact(result, session_id, branch_id, job_run_id)
+        result["artifact_ids"] = artifact_ids
 
         update_job_status_sync(job_run_id, "completed", 100, "역최적화 완료", result=result)
         return result
@@ -622,6 +638,7 @@ def run_constrained_inverse_optimize_task(
     direction: str,                 # "maximize" | "minimize"
     categorical_features: list,
     categorical_encoders: dict | None,
+    primary_model_kind: str,
     dataset_path: str,
     n_calls: int = 300,
     model_type: str = "lgbm",          # "lgbm" | "bcm"
@@ -670,6 +687,9 @@ def run_constrained_inverse_optimize_task(
             y_col = df[target_column] if target_column in df.columns else None
             if y_col is None:
                 raise ValueError(f"데이터셋에 타겟 컬럼 '{target_column}'이 없습니다.")
+            if y_col.isnull().any():
+                logger.info("BCM 타겟 컬럼 결측치 처리 (중앙값)", column=target_column)
+                y_col = y_col.fillna(y_col.median())
             
             # BCM용 X (feature_names 전체 보장)
             X_bcm = df.copy()
@@ -740,14 +760,15 @@ def run_constrained_inverse_optimize_task(
         call_count = [0]
         reporter.update(15, f"역최적화 실행 중 (방향: {direction}, 피처: {len(opt_features)}개)...")
 
-        def build_input(row, feat_list, cat_feats):
+        def build_input(row, feat_list, cat_feats, cat_encoders=None, model_kind: str = "baseline_model"):
             # feat_list에 있는 모든 피처가 row에 있음을 보장
             data = {f: [row.get(f, 0.0)] for f in feat_list}
             input_df = pd.DataFrame(data)[feat_list]
             return _apply_saved_preprocessing(
                 input_df,
                 list(cat_feats or []),
-                categorical_encoders or {},
+                cat_encoders or {},
+                categorical_mode="category" if model_kind == "lgbm_model" else "encoded",
             )
 
         def objective(x):
@@ -762,7 +783,7 @@ def run_constrained_inverse_optimize_task(
 
             try:
                 pred_primary = float(model.predict(
-                    build_input(row, feature_names, categorical_features)
+                    build_input(row, feature_names, categorical_features, categorical_encoders, primary_model_kind)
                 )[0])
             except Exception:
                 return 1e9
@@ -774,7 +795,13 @@ def run_constrained_inverse_optimize_task(
                 constraint_threshold = constraint.get("threshold")
                 try:
                     pred_c = float(constraint["model"].predict(
-                        build_input(row, constraint.get("feature_names", []), categorical_features)
+                        build_input(
+                            row,
+                            constraint.get("feature_names", []),
+                            constraint.get("categorical_features", []),
+                            constraint.get("categorical_encoders", {}),
+                            constraint.get("model_kind", "baseline_model"),
+                        )
                     )[0])
                     if constraint_type == "gte":
                         violation = max(0.0, float(constraint_threshold) - pred_c)
@@ -803,14 +830,14 @@ def run_constrained_inverse_optimize_task(
         for feat, val in zip(opt_features, result_opt.x):
             optimal_row[feat] = val
 
-        def safe_predict(m, row, feat_list, cat_feats):
+        def safe_predict(m, row, feat_list, cat_feats, cat_encoders=None, model_kind: str = "baseline_model"):
             try:
-                return float(m.predict(build_input(row, feat_list, cat_feats))[0])
+                return float(m.predict(build_input(row, feat_list, cat_feats, cat_encoders, model_kind))[0])
             except Exception:
                 return None
 
-        optimal_prediction = safe_predict(model, optimal_row, feature_names, categorical_features)
-        baseline_prediction = safe_predict(model, base_row, feature_names, categorical_features)
+        optimal_prediction = safe_predict(model, optimal_row, feature_names, categorical_features, categorical_encoders, primary_model_kind)
+        baseline_prediction = safe_predict(model, base_row, feature_names, categorical_features, categorical_encoders, primary_model_kind)
 
         constraint_results = []
         for constraint in constraint_specs:
@@ -822,7 +849,9 @@ def run_constrained_inverse_optimize_task(
                     constraint["model"],
                     optimal_row,
                     constraint.get("feature_names", []),
-                    categorical_features,
+                    constraint.get("categorical_features", []),
+                    constraint.get("categorical_encoders", {}),
+                    constraint.get("model_kind", "baseline_model"),
                 ),
             })
 
@@ -866,7 +895,8 @@ def run_constrained_inverse_optimize_task(
             "constraint_prediction": constraint_results[0]["prediction"] if constraint_results else None,
         }
 
-        _save_inverse_optimize_artifact(result, session_id, branch_id, job_run_id)
+        artifact_ids = _save_inverse_optimize_artifact(result, session_id, branch_id, job_run_id)
+        result["artifact_ids"] = artifact_ids
         update_job_status_sync(job_run_id, "completed", 100, "역최적화 완료", result=result)
         return result
 
@@ -876,7 +906,69 @@ def run_constrained_inverse_optimize_task(
         raise
 
 
-def _save_inverse_optimize_artifact(result: dict, session_id: str, branch_id: str, job_run_id: str):
+def _save_null_importance_artifact(result: dict, session_id: str, branch_id: str) -> list[str]:
+    """Null Importance 결과를 리포트 아티팩트로 저장"""
+    from app.graph.helpers import get_artifact_dir, save_artifact_to_db
+
+    conn = None
+    try:
+        conn = get_sync_db_connection()
+        step_id = str(uuid.uuid4())
+        now = datetime.now(timezone.utc)
+        targets = result.get("target_columns") or []
+        title_suffix = ", ".join(targets[:2]) + (" 외" if len(targets) > 2 else "")
+
+        cur = conn.cursor()
+        cur.execute(
+            """
+            INSERT INTO steps (id, branch_id, step_type, status, sequence_no, title,
+                               input_data, output_data, created_at, updated_at)
+            VALUES (?, ?, 'optimization', 'completed', 0, ?, ?, ?, ?, ?)
+            """,
+            (
+                step_id,
+                branch_id,
+                f"피처 유의성 분석 ({title_suffix or 'Null Importance'})",
+                json.dumps({"target_columns": targets}),
+                json.dumps({
+                    "recommended_features": result.get("recommended_features", []),
+                    "recommended_n": result.get("recommended_n"),
+                }),
+                now,
+                now,
+            ),
+        )
+
+        report_dir = get_artifact_dir(session_id, "report")
+        result_path = os.path.join(report_dir, f"null_importance_{step_id}.json")
+        with open(result_path, "w", encoding="utf-8") as f:
+            json.dump(result, f, ensure_ascii=False, indent=2)
+
+        artifact_id = save_artifact_to_db(
+            conn,
+            step_id,
+            session_id,
+            "report",
+            "피처 유의성 분석 결과",
+            result_path,
+            "application/json",
+            os.path.getsize(result_path),
+            result,
+            {"type": "null_importance", "target_columns": targets},
+        )
+        conn.commit()
+        return [artifact_id]
+    except Exception as e:
+        logger.warning("Null Importance 아티팩트 저장 실패", error=str(e))
+        if conn:
+            conn.rollback()
+        return []
+    finally:
+        if conn:
+            conn.close()
+
+
+def _save_inverse_optimize_artifact(result: dict, session_id: str, branch_id: str, job_run_id: str) -> list[str]:
     """역최적화 결과를 아티팩트로 저장"""
     from app.graph.helpers import get_artifact_dir, save_artifact_to_db
 
@@ -889,7 +981,8 @@ def _save_inverse_optimize_artifact(result: dict, session_id: str, branch_id: st
         step_id = str(uuid.uuid4())
         now = datetime.now(timezone.utc)
         direction = result.get("direction", "maximize")
-        pred = result.get("optimal_prediction", 0)
+        pred = result.get("optimal_prediction")
+        pred_text = f"{float(pred):.4f}" if pred is not None else "-"
         cur.execute(
             """
             INSERT INTO steps (id, branch_id, step_type, status, sequence_no, title,
@@ -898,7 +991,7 @@ def _save_inverse_optimize_artifact(result: dict, session_id: str, branch_id: st
             """,
             (
                 step_id, branch_id,
-                f"역최적화 ({direction}): 예측값 {pred:.4f}",
+                f"역최적화 ({direction}): 예측값 {pred_text}",
                 json.dumps({"direction": direction, "selected_features": result.get("selected_features", [])}),
                 json.dumps({"optimal_prediction": pred, "convergence": result.get("convergence")}),
                 now, now,
@@ -911,7 +1004,7 @@ def _save_inverse_optimize_artifact(result: dict, session_id: str, branch_id: st
         with open(result_path, "w", encoding="utf-8") as f:
             json.dump(result, f, ensure_ascii=False, indent=2)
 
-        save_artifact_to_db(
+        artifact_id = save_artifact_to_db(
             conn, step_id, session_id,
             "report", f"역최적화 결과 ({direction})",
             result_path, "application/json",
@@ -921,10 +1014,12 @@ def _save_inverse_optimize_artifact(result: dict, session_id: str, branch_id: st
         )
 
         conn.commit()
+        return [artifact_id]
     except Exception as e:
         logger.warning("역최적화 아티팩트 저장 실패", error=str(e))
         if conn:
             conn.rollback()
+        return []
     finally:
         if conn:
             conn.close()

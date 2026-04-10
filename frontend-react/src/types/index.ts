@@ -333,9 +333,9 @@ export interface ConstrainedInverseRunRequest {
 }
 
 export interface InverseRunResult {
-  optimal_prediction: number
-  baseline_prediction?: number
-  improvement?: number
+  optimal_prediction: number | null
+  baseline_prediction?: number | null
+  improvement?: number | null
   optimal_features: Record<string, number | string>
   baseline_features?: Record<string, number | string>
   fixed_features?: Record<string, number | string>
@@ -353,7 +353,7 @@ export interface InverseRunResult {
   constraint_target_column?: string
   constraint_type?: string
   constraint_threshold?: number
-  constraint_prediction?: number
+  constraint_prediction?: number | null
 }
 
 // ─── API Response wrapper ─────────────────────────────────────────────────────
