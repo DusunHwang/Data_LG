@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Download, ZoomIn, Target, X, Columns, Check, MousePointerClick } from 'lucide-react'
+import { CheckCircle2, Download, ZoomIn, Target, X, Columns, Check, MousePointerClick } from 'lucide-react'
 import { artifactsApi } from '@/api'
 import { useSessionStore } from '@/store'
 import type { Artifact } from '@/types'
@@ -511,6 +511,13 @@ function MetricRenderer({ artifact }: { artifact: Artifact }) {
 
 function ReportRenderer({ artifact }: { artifact: Artifact }) {
   const data = artifact.data ?? {}
+  if (data.feature_scores && data.recommended_features && data.target_columns) {
+    return <NullImportanceReport data={data} />
+  }
+  if (data.optimal_features && data.selected_features && data.target_column) {
+    return <InverseOptimizationReport data={data} />
+  }
+
   const message: string = data.message ?? ''
   const metricsObj: Record<string, number | string> = (data.metrics as Record<string, number | string> | undefined) ?? {}
   const numericFields = Object.entries(metricsObj).filter(
@@ -592,6 +599,247 @@ function ReportRenderer({ artifact }: { artifact: Artifact }) {
         <pre className="overflow-auto max-h-48 scrollbar-thin text-xs text-gray-600 whitespace-pre-wrap">
           {String(data.text)}
         </pre>
+      )}
+    </div>
+  )
+}
+
+function NullImportanceReport({ data }: { data: Record<string, unknown> }) {
+  const featureNames = (data.feature_names as string[] | undefined) ?? []
+  const actualImportance = (data.actual_importance as Record<string, number> | undefined) ?? {}
+  const nullImportance = (data.null_importance as Record<string, { p90?: number }> | undefined) ?? {}
+  const featureScores = (data.feature_scores as Record<string, {
+    aggregate_score?: number
+    coverage_count?: number
+    significant_targets?: string[]
+  }> | undefined) ?? {}
+  const targetColumns = (data.target_columns as string[] | undefined) ?? []
+  const recommendedFeatures = (data.recommended_features as string[] | undefined) ?? []
+  const targetCount = targetColumns.length || 1
+  const rows = featureNames.slice(0, 20).map((feat) => {
+    const score = featureScores[feat]
+    const aggregateScore = score?.aggregate_score ?? actualImportance[feat] ?? 0
+    const coverageCount = score?.coverage_count
+      ?? ((actualImportance[feat] ?? 0) > (nullImportance[feat]?.p90 ?? 0) ? 1 : 0)
+    return {
+      feat,
+      aggregateScore,
+      coverageCount,
+      significantTargets: score?.significant_targets ?? [],
+    }
+  })
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center gap-2 text-green-700">
+        <CheckCircle2 className="h-4 w-4" />
+        <span className="text-sm font-semibold">피처 유의성 분석 완료</span>
+        <span className="ml-auto rounded-full bg-green-50 px-2 py-0.5 text-xs font-medium text-green-700">
+          {targetColumns.length > 0 ? `${targetColumns.length}개 타겟` : '단일 타겟'}
+        </span>
+      </div>
+
+      {recommendedFeatures.length > 0 && (
+        <div>
+          <p className="text-xs font-semibold text-gray-600 mb-1.5">추천 피처</p>
+          <div className="flex flex-wrap gap-1">
+            {recommendedFeatures.slice(0, 15).map((feature) => (
+              <span key={feature} className="rounded-full bg-blue-50 border border-blue-100 px-2 py-0.5 text-xs text-blue-700">
+                {feature}
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+
+      <div className="overflow-x-auto">
+        <table className="w-full text-xs">
+          <thead>
+            <tr className="border-b border-gray-200">
+              <th className="text-left py-1.5 pr-3 text-gray-500 font-medium">피처</th>
+              <th className="text-right py-1.5 px-2 text-gray-500 font-medium">종합 점수</th>
+              <th className="text-center py-1.5 px-2 text-gray-500 font-medium">커버리지</th>
+              <th className="text-left py-1.5 pl-2 text-gray-500 font-medium">유의 타겟</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((row) => (
+              <tr key={row.feat} className="border-b border-gray-100">
+                <td className="py-1 pr-3 text-gray-700 font-medium">{row.feat}</td>
+                <td className="py-1 px-2 text-right tabular-nums text-gray-600">{row.aggregateScore.toFixed(4)}</td>
+                <td className="py-1 px-2 text-center text-gray-600">
+                  <span className={`inline-flex rounded-full px-2 py-0.5 font-medium ${
+                    row.coverageCount === targetCount ? 'bg-green-50 text-green-700' : 'bg-amber-50 text-amber-700'
+                  }`}>
+                    {row.coverageCount}/{targetCount}
+                  </span>
+                </td>
+                <td className="py-1 pl-2 text-gray-500 min-w-[220px] max-w-[420px] whitespace-normal break-words">
+                  {row.significantTargets.length > 0 ? row.significantTargets.join(', ') : '없음'}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  )
+}
+
+function InverseOptimizationReport({ data }: { data: Record<string, unknown> }) {
+  const optFeats = (data.optimal_features as Record<string, number | string> | undefined) ?? {}
+  const baseFeats = (data.baseline_features as Record<string, number | string> | undefined) ?? {}
+  const fixedFeats = (data.fixed_features as Record<string, number | string> | undefined) ?? {}
+  const optimalAllFeats = (data.optimal_all_features as Record<string, number | string | null> | undefined) ?? optFeats
+  const baselineAllFeats = (data.baseline_all_features as Record<string, number | string | null> | undefined) ?? baseFeats
+  const featureRoles = (data.feature_roles as Record<string, string> | undefined) ?? {}
+  const allFeatureNames = (data.all_feature_names as string[] | undefined) ?? []
+  const constraints = (data.constraints as Array<{
+    target_column?: string
+    type?: string
+    threshold?: number
+    prediction?: number | null
+  }> | undefined) ?? []
+  const compositionConstraints = (data.composition_constraints as Array<{
+    columns?: string[]
+    total?: number
+    balance_feature?: string
+    actual_sum?: number
+    valid?: boolean
+  }> | undefined) ?? []
+  const allFeatureKeys = allFeatureNames.length > 0
+    ? allFeatureNames
+    : Array.from(new Set([
+        ...Object.keys(optFeats),
+        ...Object.keys(fixedFeats),
+      ]))
+  const targetColumn = String(data.target_column ?? '')
+  const optimalPrediction = typeof data.optimal_prediction === 'number' ? data.optimal_prediction : null
+  const baselinePrediction = typeof data.baseline_prediction === 'number' ? data.baseline_prediction : null
+  const improvement = typeof data.improvement === 'number' ? data.improvement : null
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center gap-2 text-green-700">
+        <CheckCircle2 className="h-4 w-4" />
+        <span className="text-sm font-semibold">모델기반 최적화 완료</span>
+        <span className="text-xs text-gray-500 ml-auto">
+          {data.convergence ? '✓ 수렴' : '⚠ 미수렴'} · 탐색 {String(data.n_evaluations ?? '-')}회
+        </span>
+      </div>
+
+      <div className="grid gap-3 grid-cols-2">
+        <OptimizationMetricCard label={`최적 예측 (${targetColumn})`} value={optimalPrediction?.toFixed(4) ?? '-'} highlight />
+        {baselinePrediction != null && (
+          <OptimizationMetricCard label="베이스라인" value={baselinePrediction.toFixed(4)} delta={improvement} />
+        )}
+      </div>
+
+      {constraints.length > 0 && (
+        <div className={`grid gap-3 ${constraints.length >= 2 ? 'grid-cols-2' : 'grid-cols-1'}`}>
+          {constraints.map((constraint) => (
+            <OptimizationMetricCard
+              key={constraint.target_column}
+              label={`${constraint.target_column} (${constraint.type === 'gte' ? '≥' : '≤'} ${constraint.threshold})`}
+              value={constraint.prediction?.toFixed(4) ?? '-'}
+            />
+          ))}
+        </div>
+      )}
+
+      {compositionConstraints.length > 0 && (
+        <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-xs text-emerald-800">
+          {compositionConstraints.map((constraint, idx) => (
+            <div key={`${constraint.balance_feature}-${idx}`}>
+              <span className="font-semibold">조성합 제약</span>
+              <span className="ml-2">
+                합계 {constraint.actual_sum?.toFixed(4) ?? '-'} / 목표 {constraint.total ?? 100}
+                · balance {constraint.balance_feature}
+                · {constraint.valid ? '만족' : '범위 위반'}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <div>
+        <p className="text-xs font-semibold text-gray-600 mb-2">피처별 최적화 결과</p>
+        <div className="overflow-x-auto rounded-lg border border-gray-100">
+          <table className="w-full text-xs text-left">
+            <thead>
+              <tr className="bg-gray-50 border-b border-gray-200">
+                <th className="py-2 px-3 text-gray-500 font-medium">피처</th>
+                <th className="py-2 px-2 text-right text-gray-500 font-medium">베이스라인</th>
+                <th className="py-2 px-2 text-right text-gray-500 font-medium">최적값</th>
+                <th className="py-2 px-2 text-right text-gray-500 font-medium">변화량</th>
+                <th className="py-2 px-3 text-center text-gray-500 font-medium">구분</th>
+              </tr>
+            </thead>
+            <tbody>
+              {allFeatureKeys.map((key) => {
+                const optVal = optimalAllFeats[key] ?? optFeats[key] ?? fixedFeats[key]
+                const baseVal = baselineAllFeats[key] ?? baseFeats[key]
+                const role = featureRoles[key] ?? (key in fixedFeats ? 'fixed' : key in optFeats ? 'optimized' : 'constant')
+                const delta = typeof optVal === 'number' && typeof baseVal === 'number' ? optVal - baseVal : null
+                const roleLabel = role === 'optimized' ? '최적'
+                  : role === 'fixed' ? '고정'
+                  : role === 'balance' ? 'balance'
+                  : role === 'selected_constant' ? '선택상수'
+                  : '상수'
+                const roleClass = role === 'optimized' ? 'bg-blue-100 text-blue-700'
+                  : role === 'fixed' ? 'bg-orange-100 text-orange-600'
+                  : role === 'balance' ? 'bg-emerald-100 text-emerald-700'
+                  : 'bg-gray-100 text-gray-500'
+
+                return (
+                  <tr key={key} className="border-b border-gray-50 hover:bg-gray-50/50 transition-colors">
+                    <td className="py-2 px-3 text-gray-700 font-medium truncate max-w-[120px]" title={key}>{key}</td>
+                    <td className="py-2 px-2 text-right tabular-nums text-gray-400">
+                      {typeof baseVal === 'number' ? baseVal.toFixed(4) : (baseVal ?? '-')}
+                    </td>
+                    <td className="py-2 px-2 text-right tabular-nums text-gray-800 font-bold">
+                      {typeof optVal === 'number' ? optVal.toFixed(4) : (optVal ?? '-')}
+                    </td>
+                    <td className={`py-2 px-2 text-right tabular-nums font-medium ${
+                      (delta ?? 0) > 0 ? 'text-blue-500' : (delta ?? 0) < 0 ? 'text-red-500' : 'text-gray-300'
+                    }`}>
+                      {delta !== null ? (delta > 0 ? `+${delta.toFixed(4)}` : delta.toFixed(4)) : '-'}
+                    </td>
+                    <td className="py-2 px-3 text-center">
+                      <span className={`inline-block rounded-full px-1.5 py-0.5 text-[10px] font-bold ${roleClass}`}>
+                        {roleLabel}
+                      </span>
+                    </td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function OptimizationMetricCard({
+  label,
+  value,
+  delta,
+  highlight,
+}: {
+  label: string
+  value: string
+  delta?: number | null
+  highlight?: boolean
+}) {
+  return (
+    <div className={`rounded-lg p-3 border ${highlight ? 'border-brand-red/30 bg-brand-red/5' : 'border-gray-200 bg-gray-50'}`}>
+      <p className="text-xs text-gray-500 mb-1 truncate">{label}</p>
+      <p className={`text-lg font-bold tabular-nums ${highlight ? 'text-brand-red' : 'text-gray-800'}`}>{value}</p>
+      {typeof delta === 'number' && Number.isFinite(delta) && (
+        <p className={`text-xs font-medium mt-0.5 ${delta >= 0 ? 'text-green-600' : 'text-red-500'}`}>
+          {delta >= 0 ? '+' : ''}{delta.toFixed(4)}
+        </p>
       )}
     </div>
   )

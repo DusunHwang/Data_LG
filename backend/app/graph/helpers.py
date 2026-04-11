@@ -2,6 +2,8 @@
 
 import glob
 import json
+import os
+import tempfile
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -32,6 +34,9 @@ def setup_korean_font() -> None:
     NanumGothic → 기타 Nanum 계열 → CJK 계열 순으로 우선 선택.
     """
     try:
+        os.environ.setdefault("MPLCONFIGDIR", os.path.join(tempfile.gettempdir(), "matplotlib-cache"))
+        os.makedirs(os.environ["MPLCONFIGDIR"], exist_ok=True)
+
         import matplotlib
         import matplotlib.font_manager as fm
 
@@ -50,12 +55,14 @@ def setup_korean_font() -> None:
 
         all_fonts = registered + direct
 
-        # ── 우선순위: NanumGothic > 기타 Nanum > CJK ─────────────────────
+        # ── 우선순위: NanumGothic > 기타 Nanum > Noto CJK > 기타 CJK ──────
         def _pick(candidates: list[str]) -> str | None:
-            gothic  = [f for f in candidates if 'NanumGothic' in f]
-            nanum   = [f for f in candidates if 'Nanum' in f or 'nanum' in f]
-            cjk     = [f for f in candidates if 'CJK' in f or 'cjk' in f]
-            return (gothic or nanum or cjk or [None])[0]
+            normalized = [(f, os.path.basename(f).lower()) for f in candidates]
+            gothic = [f for f, name in normalized if 'nanumgothic' in name or 'nanumbarungothic' in name]
+            nanum = [f for f, name in normalized if 'nanum' in name]
+            noto = [f for f, name in normalized if 'noto' in name and ('cjk' in name or 'kr' in name)]
+            cjk = [f for f, name in normalized if 'cjk' in name or 'korean' in name or 'malgun' in name]
+            return (gothic or nanum or noto or cjk or [None])[0]
 
         font_path = _pick(all_fonts)
 
@@ -89,6 +96,10 @@ def setup_korean_font() -> None:
 # 샌드박스 서브프로세스 전용: 인라인 실행 가능한 코드 문자열
 KOREAN_FONT_PREAMBLE = r"""
 # ── 한글 폰트 설정 ────────────────────────────────────────────
+import os as _os
+import tempfile as _tempfile
+_os.environ.setdefault("MPLCONFIGDIR", _os.path.join(_tempfile.gettempdir(), "matplotlib-cache"))
+_os.makedirs(_os.environ["MPLCONFIGDIR"], exist_ok=True)
 import glob as _glob
 import matplotlib as _mpl
 import matplotlib.font_manager as _fm
@@ -99,10 +110,12 @@ for _pat in ['/usr/share/fonts/**/*.ttf', '/usr/share/fonts/**/*.TTF',
     _candidates.extend(_glob.glob(_pat, recursive=True))
 
 def _pick_font(lst):
-    g = [f for f in lst if 'NanumGothic' in f]
-    n = [f for f in lst if 'Nanum' in f or 'nanum' in f]
-    c = [f for f in lst if 'CJK' in f or 'cjk' in f]
-    return (g or n or c or [None])[0]
+    pairs = [(f, _os.path.basename(f).lower()) for f in lst]
+    g = [f for f, name in pairs if 'nanumgothic' in name or 'nanumbarungothic' in name]
+    n = [f for f, name in pairs if 'nanum' in name]
+    noto = [f for f, name in pairs if 'noto' in name and ('cjk' in name or 'kr' in name)]
+    c = [f for f, name in pairs if 'cjk' in name or 'korean' in name or 'malgun' in name]
+    return (g or n or noto or c or [None])[0]
 
 _font_path = _pick_font(_candidates)
 if _font_path is None:
@@ -121,7 +134,7 @@ if _font_path:
     _mpl.rcParams['font.sans-serif'] = [_font_name, 'DejaVu Sans']
     _mpl.rcParams['font.family'] = 'sans-serif'
 _mpl.rcParams['axes.unicode_minus'] = False
-del _glob, _candidates, _pick_font, _font_path
+del _os, _tempfile, _glob, _candidates, _pick_font, _font_path
 try: del _font_name
 except NameError: pass
 # ─────────────────────────────────────────────────────────────

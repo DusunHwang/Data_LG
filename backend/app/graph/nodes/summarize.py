@@ -137,10 +137,13 @@ def _build_summary_context(state: GraphState) -> str:
     intent = state.get("intent", "unknown")
     parts.append(f"## 분석 유형: {intent}")
 
+    target_columns = state.get("target_columns") or []
     target_column = state.get("target_column")
     if not target_column:
         target_column = (state.get("execution_result") or {}).get("target_column")
-    if target_column:
+    if target_columns:
+        parts.append(f"## 타겟 컬럼 목록: {', '.join(target_columns)}")
+    elif target_column:
         parts.append(f"## 타겟 컬럼: {target_column}")
 
     user_message = state.get("user_message", "")
@@ -152,7 +155,7 @@ def _build_summary_context(state: GraphState) -> str:
         # 핵심 결과만 포함
         result_summary = {}
         for key in ["summary", "metrics", "top_features", "n_subsets", "best_score",
-                    "champion_model", "artifact_count", "rows", "cols", "target_column"]:
+                    "champion_model", "artifact_count", "rows", "cols", "target_column", "target_columns"]:
             if key in execution_result:
                 result_summary[key] = execution_result[key]
         if result_summary:

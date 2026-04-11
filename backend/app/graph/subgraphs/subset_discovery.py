@@ -1,5 +1,6 @@
 """Dense Subset Discovery 서브그래프 - 결측 구조 기반"""
 
+import base64
 import json
 import os
 from datetime import datetime, timezone
@@ -540,12 +541,183 @@ def score_subset_candidates(df: pd.DataFrame, candidates: list, target_columns: 
 
 
 def select_top_k(scored_candidates: list, k: int = 5) -> list:
-    """상위 k개 서브셋 선택"""
-    return scored_candidates[:k]
+    """상위 k개 서브셋 선택.
+
+    같은 컬럼 조합을 가진 후보가 여러 개 있으면 사용자에게는 사실상 같은
+    분석 데이터프레임으로 보이므로, 점수가 가장 높은 후보 하나만 유지한다.
+    행 집합 차이는 heatmap/레지스트리에서 의미가 있을 수 있지만, 최종
+    분석 데이터 후보는 컬럼 조합의 다양성을 우선한다.
+    """
+    return _deduplicate_scored_by_columns(scored_candidates)[:k]
+
+
+def _deduplicate_scored_by_columns(scored_candidates: list) -> list:
+    """동일 컬럼 조합 후보를 하나로 축약한다. 입력은 score 내림차순이라고 가정."""
+    seen_col_signatures: set[tuple[str, ...]] = set()
+    unique: list[dict] = []
+
+    for candidate in scored_candidates:
+        signature = tuple(sorted(str(c) for c in candidate.get("cols", [])))
+        if not signature:
+            continue
+        if signature in seen_col_signatures:
+            logger.info(
+                "동일 컬럼 조합 서브셋 후보 제거",
+                name=candidate.get("name"),
+                strategy=candidate.get("strategy"),
+                n_cols=len(signature),
+            )
+            continue
+        seen_col_signatures.add(signature)
+        unique.append(candidate)
+
+    return unique
 
 
 # 테스트 및 외부 사용을 위한 공개 별칭
 select_top_subsets = select_top_k
+
+
+def _save_subset_nullity_heatmap(
+    conn,
+    step_id: Optional[str],
+    session_id: str,
+    plot_dir: str,
+    df: pd.DataFrame,
+    subset_no: int,
+    subset: dict,
+    valid_rows: list,
+    valid_cols: list,
+    target_suffix: str = "",
+) -> Optional[str]:
+    """
+    전체 데이터 기준 nullity heatmap을 저장한다.
+
+    색상 의미:
+    - 흰색: 전체 데이터에서 결측
+    - 회색: 전체 데이터에서 값 존재
+    - 검정: 현재 서브셋에 포함되는 셀(row ∩ column)
+    """
+    try:
+        import matplotlib
+        matplotlib.use("Agg")
+        from app.graph.helpers import setup_korean_font
+        setup_korean_font()
+        import matplotlib.pyplot as plt
+        from matplotlib.colors import ListedColormap, BoundaryNorm
+
+        if df.empty:
+            return None
+
+        max_rows = 900
+        if len(df) > max_rows:
+            subset_row_set = set(valid_rows)
+            subset_rows_ordered = [idx for idx in df.index if idx in subset_row_set]
+            non_subset_rows = [idx for idx in df.index if idx not in subset_row_set]
+            keep_subset = subset_rows_ordered[: min(len(subset_rows_ordered), max_rows)]
+            remaining = max_rows - len(keep_subset)
+            if remaining > 0 and non_subset_rows:
+                sampled_non_subset = pd.Index(non_subset_rows).to_series().sample(
+                    n=min(remaining, len(non_subset_rows)),
+                    random_state=42,
+                ).tolist()
+            else:
+                sampled_non_subset = []
+            plot_index = keep_subset + sampled_non_subset
+        else:
+            plot_index = list(df.index)
+
+        plot_df = df.loc[plot_index]
+        matrix = plot_df.notna().astype(int).to_numpy()
+        row_pos = {idx: pos for pos, idx in enumerate(plot_df.index)}
+        col_pos = {col: pos for pos, col in enumerate(plot_df.columns)}
+
+        for row in valid_rows:
+            r = row_pos.get(row)
+            if r is None:
+                continue
+            for col in valid_cols:
+                c = col_pos.get(col)
+                if c is not None:
+                    matrix[r, c] = 2
+
+        fig_w = max(7.5, min(18.0, 0.34 * len(plot_df.columns)))
+        fig_h = max(4.5, min(12.0, 0.012 * len(plot_df) + 3.2))
+        fig, ax = plt.subplots(figsize=(fig_w, fig_h))
+        cmap = ListedColormap(["#ffffff", "#c9c9c9", "#111111"])
+        norm = BoundaryNorm([-0.5, 0.5, 1.5, 2.5], cmap.N)
+        ax.imshow(matrix, aspect="auto", interpolation="nearest", cmap=cmap, norm=norm)
+
+        row_coverage = subset.get("row_coverage", 0)
+        feature_coverage = subset.get("feature_coverage", 0)
+        ax.set_title(
+            (
+                f"Subset {subset_no} Nullity Heatmap - {subset.get('name', '')}\n"
+                f"black=subset cells, gray=observed, white=missing | "
+                f"rows {len(valid_rows):,}/{len(df):,} ({row_coverage:.1%}), "
+                f"cols {len(valid_cols):,}/{len(df.columns):,} ({feature_coverage:.1%})"
+            ),
+            fontsize=10,
+            loc="left",
+        )
+        ax.set_xlabel("Columns")
+        ax.set_ylabel("Rows")
+
+        if len(plot_df.columns) <= 40:
+            ax.set_xticks(range(len(plot_df.columns)))
+            ax.set_xticklabels(plot_df.columns, rotation=90, fontsize=7)
+        else:
+            ax.set_xticks([])
+        ax.set_yticks([])
+
+        from matplotlib.patches import Patch
+        ax.legend(
+            handles=[
+                Patch(facecolor="#ffffff", edgecolor="#999999", label="missing"),
+                Patch(facecolor="#c9c9c9", label="observed"),
+                Patch(facecolor="#111111", label="subset cell"),
+            ],
+            loc="upper right",
+            fontsize=8,
+            frameon=True,
+        )
+
+        safe_step_id = step_id or "default"
+        heatmap_path = os.path.join(plot_dir, f"subset_{subset_no}_nullity_heatmap_{safe_step_id}.png")
+        plt.savefig(heatmap_path, dpi=120, bbox_inches="tight")
+        plt.close(fig)
+
+        with open(heatmap_path, "rb") as f:
+            data_url = "data:image/png;base64," + base64.b64encode(f.read()).decode()
+
+        return save_artifact_to_db(
+            conn,
+            step_id,
+            session_id,
+            "plot",
+            f"서브셋 {subset_no} Nullity Heatmap{target_suffix}",
+            heatmap_path,
+            "image/png",
+            os.path.getsize(heatmap_path),
+            {"data_url": data_url},
+            {
+                "type": "subset_nullity_heatmap",
+                "subset_no": subset_no,
+                "subset_name": subset.get("name"),
+                "n_rows": len(valid_rows),
+                "n_cols": len(valid_cols),
+                "row_coverage": row_coverage,
+                "feature_coverage": feature_coverage,
+                "legend": {
+                    "white": "missing in full data",
+                    "gray": "observed in full data",
+                    "black": "cell belongs to this subset",
+                },
+            },
+        )
+    except Exception as e:
+        logger.warning("서브셋 nullity heatmap 저장 실패", subset_no=subset_no, error=str(e))
+        return None
 
 
 def _save_subset_artifacts(
@@ -566,6 +738,7 @@ def _save_subset_artifacts(
     created_artifact_ids = []
     step_id = None
     df_dir = get_artifact_dir(session_id, "dataframe")
+    plot_dir = get_artifact_dir(session_id, "plot")
     report_dir = get_artifact_dir(session_id, "report")
 
     conn = None
@@ -598,7 +771,31 @@ def _save_subset_artifacts(
                 ),
             )
 
-        # 1. 컬럼 분류 저장
+        # 1. 서브셋별 nullity heatmap 저장 — 결과 해석용이므로 가장 먼저 노출한다.
+        for i, subset in enumerate(top_subsets, 1):
+            row_indices = subset.get("row_indices", [])
+            cols = subset.get("cols", [])
+            valid_rows = [r for r in row_indices if r in df.index]
+            valid_cols = [c for c in cols if c in df.columns]
+            if not valid_rows or not valid_cols:
+                continue
+
+            artifact_id = _save_subset_nullity_heatmap(
+                conn=conn,
+                step_id=step_id,
+                session_id=session_id,
+                plot_dir=plot_dir,
+                df=df,
+                subset_no=i,
+                subset=subset,
+                valid_rows=valid_rows,
+                valid_cols=valid_cols,
+                target_suffix=tc_suffix,
+            )
+            if artifact_id:
+                created_artifact_ids.append(artifact_id)
+
+        # 2. 컬럼 분류 저장
         col_class_data = []
         for cls_name, cols in col_classification.items():
             for col in cols:
@@ -618,7 +815,7 @@ def _save_subset_artifacts(
         )
         created_artifact_ids.append(artifact_id)
 
-        # 2. 결측 구조 저장 (JSON)
+        # 3. 결측 구조 저장 (JSON)
         missing_path = os.path.join(report_dir, f"missing_structure_{step_id or 'default'}.json")
         with open(missing_path, "w", encoding="utf-8") as f:
             json.dump(missing_structure, f, ensure_ascii=False, indent=2)
@@ -634,7 +831,7 @@ def _save_subset_artifacts(
         )
         created_artifact_ids.append(artifact_id)
 
-        # 3. 서브셋 레지스트리 (메타데이터, 행 데이터 제외)
+        # 4. 서브셋 레지스트리 (메타데이터, 행 데이터 제외)
         registry = []
         for i, subset in enumerate(top_subsets, 1):
             registry.append({
@@ -666,7 +863,7 @@ def _save_subset_artifacts(
         )
         created_artifact_ids.append(artifact_id)
 
-        # 4. 서브셋 점수 테이블
+        # 5. 서브셋 점수 테이블
         score_cols = ["subset_no", "name", "score", "n_rows", "n_cols",
                       "row_coverage", "feature_coverage", "mean_missingness", "target_completeness"]
         score_df = registry_df[[c for c in score_cols if c in registry_df.columns]]
@@ -683,7 +880,7 @@ def _save_subset_artifacts(
         )
         created_artifact_ids.append(artifact_id)
 
-        # 5. 각 서브셋 데이터프레임 저장 (subset_N_df)
+        # 6. 각 서브셋 데이터프레임 저장 (subset_N_df)
         for i, subset in enumerate(top_subsets, 1):
             row_indices = subset.get("row_indices", [])
             cols = subset.get("cols", [])
@@ -715,7 +912,7 @@ def _save_subset_artifacts(
             )
             created_artifact_ids.append(artifact_id)
 
-        # 6. 요약 리포트 (JSON)
+        # 7. 요약 리포트 (JSON)
         summary = {
             "total_candidates_generated": len(top_subsets),
             "top_subsets": registry,

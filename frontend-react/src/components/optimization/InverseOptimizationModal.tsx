@@ -18,6 +18,10 @@ type Step = 'subset' | 'ni_setup' | 'ni_running' | 'feat_config' | 'target_confi
 
 const POLL_MS = 3_000
 
+function isCompositionFeature(feature: string) {
+  return /_(?:at|wt)_pct$/i.test(feature) || /_pct$/i.test(feature)
+}
+
 function isSelectableOptimizationDataframe(a: Artifact | undefined) {
   if (!a) return false
   if (a.type !== 'dataframe') return false
@@ -88,6 +92,10 @@ export default function InverseOptimizationModal({ onClose, variant = 'modal' }:
   const [fixedValues, setFixedValues] = useState<Record<string, number>>({})
   const [expandRatio, setExpandRatio] = useState(12)
   const [expandedFeat, setExpandedFeat] = useState<string | null>(null)
+  const [compositionEnabled, setCompositionEnabled] = useState(false)
+  const [compositionColumns, setCompositionColumns] = useState<string[]>([])
+  const [compositionTotal, setCompositionTotal] = useState(100)
+  const [compositionBalanceFeature, setCompositionBalanceFeature] = useState('')
 
   // ── Step 4: 타겟 설정 ────────────────────────────────────────────────────
   const [modelType, setModelType] = useState<'lgbm' | 'bcm'>('lgbm')
@@ -126,6 +134,16 @@ export default function InverseOptimizationModal({ onClose, variant = 'modal' }:
       return next
     })
   }, [selectedTargetColumns])
+
+  useEffect(() => {
+    const detected = featureColumns.filter(isCompositionFeature)
+    setCompositionColumns((prev) => {
+      const kept = prev.filter((feature) => detected.includes(feature))
+      return kept.length > 0 ? kept : detected
+    })
+    setCompositionBalanceFeature((prev) => (detected.includes(prev) ? prev : (detected[0] ?? '')))
+    setCompositionEnabled((prev) => prev || detected.length >= 2)
+  }, [featureColumns])
 
   const startPolling = useCallback((jobId: string, onDone: (j: Job) => void, onFail?: (j: Job) => void) => {
     stopPolling()
@@ -288,8 +306,17 @@ export default function InverseOptimizationModal({ onClose, variant = 'modal' }:
     const finalFeatures = subsetFeatures.length > 0
       ? candidateFeatures.filter((f) => subsetFeatures.includes(f))
       : candidateFeatures
+    const compositionConstraintActive = (
+      compositionEnabled &&
+      compositionColumns.length >= 2 &&
+      Boolean(compositionBalanceFeature) &&
+      compositionColumns.includes(compositionBalanceFeature)
+    )
+    const runFeatures = compositionConstraintActive && !finalFeatures.includes(compositionBalanceFeature)
+      ? [...finalFeatures, compositionBalanceFeature]
+      : finalFeatures
 
-    if (finalFeatures.length === 0) {
+    if (runFeatures.length === 0) {
       setJobError('선택된 서브셋에 유효한 최적화 피처가 없습니다.')
       return
     }
@@ -312,20 +339,30 @@ export default function InverseOptimizationModal({ onClose, variant = 'modal' }:
       addMessage(currentBranchId, {
         id: genId(),
         role: 'user',
-        content: `[최적화 가이드] 모델기반 최적화를 시작합니다. 목표: ${optTarget} ${direction === 'maximize' ? '최대화' : '최소화'}${activeConstraints.length > 0 ? ` / 제약 ${activeConstraints.map((c) => `${c.target_column} ${c.type === 'gte' ? '≥' : '≤'} ${c.threshold}`).join(', ')}` : ''} / 피처 ${finalFeatures.join(', ')}`,
+        content: `[최적화 가이드] 모델기반 최적화를 시작합니다. 목표: ${optTarget} ${direction === 'maximize' ? '최대화' : '최소화'}${activeConstraints.length > 0 ? ` / 제약 ${activeConstraints.map((c) => `${c.target_column} ${c.type === 'gte' ? '≥' : '≤'} ${c.threshold}`).join(', ')}` : ''}${compositionConstraintActive ? ` / 조성합 ${compositionColumns.join('+')}=${compositionTotal}, balance ${compositionBalanceFeature}` : ''} / 피처 ${runFeatures.join(', ')}`,
         timestamp: new Date().toISOString(),
       })
       const res = await optimizationApi.constrainedInverseRun({
         session_id: sessionId,
         branch_id: branchId,
         target_column: optTarget,
-        selected_features: finalFeatures,
+        selected_features: runFeatures,
         fixed_values: activeFixes,
         feature_ranges: niResult.feature_ranges,
         expand_ratio: expandRatio / 100,
         direction,
         n_calls: nCalls,
         model_type: modelType,
+        ...(compositionConstraintActive ? {
+          composition_constraints: [{
+            enabled: true,
+            columns: compositionColumns,
+            total: compositionTotal,
+            balance_feature: compositionBalanceFeature,
+            min_value: 0,
+            max_value: compositionTotal,
+          }],
+        } : {}),
         ...(sourceArtifactId ? { source_artifact_id: sourceArtifactId } : {}),
         ...(activeConstraints.length > 0 ? {
           constraints: activeConstraints,
@@ -410,6 +447,7 @@ export default function InverseOptimizationModal({ onClose, variant = 'modal' }:
       ? niResult.recommended_features.filter((f) => featureColumns.includes(f))
       : niResult.recommended_features)
     : []
+  const detectedCompositionFeatures = featureColumns.filter(isCompositionFeature)
 
   const importanceRows = niResult
     ? niResult.feature_names.slice(0, 20).map((feat) => {
@@ -720,6 +758,91 @@ export default function InverseOptimizationModal({ onClose, variant = 'modal' }:
                     />
                   </div>
 
+                  {detectedCompositionFeatures.length >= 2 && (
+                    <div className="rounded-xl border border-emerald-200 bg-emerald-50/70 p-3 space-y-3">
+                      <label className="flex items-center gap-2 text-xs font-semibold text-emerald-800 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={compositionEnabled}
+                          onChange={(e) => setCompositionEnabled(e.target.checked)}
+                          className="accent-emerald-600"
+                        />
+                        조성 합계 제약 사용
+                      </label>
+                      <p className="text-xs text-emerald-700">
+                        `_pct` 계열 변수는 후보 생성 시 합계가 지정값이 되도록 balance 변수를 자동 보정합니다.
+                      </p>
+                      {compositionEnabled && (
+                        <div className="space-y-3">
+                          <div>
+                            <p className="mb-1.5 text-xs font-medium text-emerald-800">조성 그룹</p>
+                            <div className="flex flex-wrap gap-1.5">
+                              {detectedCompositionFeatures.map((feature) => {
+                                const checked = compositionColumns.includes(feature)
+                                return (
+                                  <label
+                                    key={feature}
+                                    className={`flex items-center gap-1 rounded-full border px-2 py-1 text-xs cursor-pointer ${
+                                      checked
+                                        ? 'border-emerald-300 bg-white text-emerald-800'
+                                        : 'border-emerald-100 bg-emerald-50 text-emerald-500'
+                                    }`}
+                                  >
+                                    <input
+                                      type="checkbox"
+                                      checked={checked}
+                                      onChange={(e) => {
+                                        setCompositionColumns((prev) => {
+                                          const next = e.target.checked
+                                            ? Array.from(new Set([...prev, feature]))
+                                            : prev.filter((item) => item !== feature)
+                                          if (!next.includes(compositionBalanceFeature)) {
+                                            setCompositionBalanceFeature(next[0] ?? '')
+                                          }
+                                          return next
+                                        })
+                                      }}
+                                      className="accent-emerald-600"
+                                    />
+                                    {feature}
+                                  </label>
+                                )
+                              })}
+                            </div>
+                          </div>
+                          <div className="grid grid-cols-2 gap-3">
+                            <div>
+                              <label className="mb-1 block text-xs font-medium text-emerald-800">합계</label>
+                              <input
+                                type="number"
+                                step="any"
+                                value={compositionTotal}
+                                onChange={(e) => setCompositionTotal(Number(e.target.value))}
+                                className="w-full rounded border border-emerald-200 bg-white px-2 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                              />
+                            </div>
+                            <div>
+                              <label className="mb-1 block text-xs font-medium text-emerald-800">Balance 변수</label>
+                              <select
+                                value={compositionBalanceFeature}
+                                onChange={(e) => setCompositionBalanceFeature(e.target.value)}
+                                className="w-full rounded border border-emerald-200 bg-white px-2 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                              >
+                                {compositionColumns.map((feature) => (
+                                  <option key={feature} value={feature}>{feature}</option>
+                                ))}
+                              </select>
+                            </div>
+                          </div>
+                          <p className="text-xs text-emerald-700">
+                            계산식: <strong>{compositionBalanceFeature || 'balance'}</strong> = {compositionTotal} - 나머지 조성 변수 합.
+                            보정값이 0~{compositionTotal} 범위를 벗어나면 패널티를 부여합니다.
+                          </p>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
                   <button
                     onClick={() => setStep('target_config')}
                     className="w-full rounded-lg bg-brand-red py-2 text-sm text-white font-medium hover:bg-red-700 transition-colors"
@@ -730,6 +853,9 @@ export default function InverseOptimizationModal({ onClose, variant = 'modal' }:
               ) : (
                 <p className="text-xs text-gray-500">
                   피처 {filteredFeatures.length}개 선택됨 · 탐색 확장 ±{expandRatio}%
+                  {compositionEnabled && compositionColumns.length >= 2 && compositionColumns.includes(compositionBalanceFeature)
+                    ? ` · 조성합 ${compositionTotal} (${compositionBalanceFeature} balance)`
+                    : ''}
                 </p>
               )}
             </WizardSection>
@@ -1008,6 +1134,9 @@ function InverseResult({ result }: { result: InverseRunResult }) {
   const optFeats = result.optimal_features ?? {}
   const baseFeats = result.baseline_features ?? {}
   const fixedFeats = result.fixed_features ?? {}
+  const optimalAllFeats = result.optimal_all_features ?? optFeats
+  const baselineAllFeats = result.baseline_all_features ?? baseFeats
+  const featureRoles = result.feature_roles ?? {}
   const constraints = result.constraints ?? (
     result.constraint_target_column
       ? [{
@@ -1018,13 +1147,15 @@ function InverseResult({ result }: { result: InverseRunResult }) {
         }]
       : []
   )
+  const compositionConstraints = result.composition_constraints ?? []
   const hasConstraint = constraints.length > 0
 
-  // 모든 피처 키 합집합 (선택된 피처들 위주)
-  const allFeatureKeys = Array.from(new Set([
-    ...Object.keys(optFeats),
-    ...Object.keys(fixedFeats),
-  ]))
+  const allFeatureKeys = result.all_feature_names?.length
+    ? result.all_feature_names
+    : Array.from(new Set([
+        ...Object.keys(optFeats),
+        ...Object.keys(fixedFeats),
+      ]))
 
   return (
     <div className="space-y-4">
@@ -1054,6 +1185,20 @@ function InverseResult({ result }: { result: InverseRunResult }) {
           ))}
         </div>
       )}
+      {compositionConstraints.length > 0 && (
+        <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-xs text-emerald-800">
+          {compositionConstraints.map((constraint, idx) => (
+            <div key={`${constraint.balance_feature}-${idx}`}>
+              <span className="font-semibold">조성합 제약</span>
+              <span className="ml-2">
+                합계 {constraint.actual_sum?.toFixed(4) ?? '-'} / 목표 {constraint.total}
+                · balance {constraint.balance_feature}
+                · {constraint.valid ? '만족' : '범위 위반'}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
 
       <div>
         <p className="text-xs font-semibold text-gray-600 mb-2">피처별 최적화 결과</p>
@@ -1070,9 +1215,18 @@ function InverseResult({ result }: { result: InverseRunResult }) {
             </thead>
             <tbody>
               {allFeatureKeys.map((k) => {
-                const optVal = optFeats[k] ?? fixedFeats[k]
-                const baseVal = baseFeats[k]
-                const isFixed = k in fixedFeats
+                const optVal = optimalAllFeats[k] ?? optFeats[k] ?? fixedFeats[k]
+                const baseVal = baselineAllFeats[k] ?? baseFeats[k]
+                const role = featureRoles[k] ?? (k in fixedFeats ? 'fixed' : k in optFeats ? 'optimized' : 'constant')
+                const roleLabel = role === 'optimized' ? '최적'
+                  : role === 'fixed' ? '고정'
+                  : role === 'balance' ? 'balance'
+                  : role === 'selected_constant' ? '선택상수'
+                  : '상수'
+                const roleClass = role === 'optimized' ? 'bg-blue-100 text-blue-700'
+                  : role === 'fixed' ? 'bg-orange-100 text-orange-600'
+                  : role === 'balance' ? 'bg-emerald-100 text-emerald-700'
+                  : 'bg-gray-100 text-gray-500'
                 
                 let delta: number | null = null
                 if (typeof optVal === 'number' && typeof baseVal === 'number') {
@@ -1094,10 +1248,8 @@ function InverseResult({ result }: { result: InverseRunResult }) {
                       {delta !== null ? (delta > 0 ? `+${delta.toFixed(4)}` : delta.toFixed(4)) : '-'}
                     </td>
                     <td className="py-2 px-3 text-center">
-                      <span className={`inline-block rounded-full px-1.5 py-0.5 text-[10px] font-bold ${
-                        isFixed ? 'bg-orange-100 text-orange-600' : 'bg-blue-100 text-blue-700'
-                      }`}>
-                        {isFixed ? '고정' : '최적'}
+                      <span className={`inline-block rounded-full px-1.5 py-0.5 text-[10px] font-bold ${roleClass}`}>
+                        {roleLabel}
                       </span>
                     </td>
                   </tr>

@@ -159,20 +159,46 @@ def run_analysis_task(
         if len(target_columns) > 1 and requested_intent not in TARGET_INDEPENDENT_INTENTS:
             all_artifact_ids: list[str] = []
             all_messages: list[str] = []
+            failed_targets: list[tuple[str, str]] = []
             final_state = {}
             for i, tc in enumerate(target_columns):
                 is_last = (i == len(target_columns) - 1)
                 reporter.update(20, f"타겟 '{tc}' 분석 중... ({i+1}/{len(target_columns)})")
                 state = _run_once(tc, skip_finalize=not is_last)
                 final_state = state
-                all_artifact_ids.extend(state.get("created_artifact_ids", []))
+                target_artifact_ids = state.get("created_artifact_ids", [])
+                all_artifact_ids.extend(target_artifact_ids)
                 msg = state.get("assistant_message", "")
-                if msg:
+                error_code = state.get("error_code")
+                error_message = state.get("error_message")
+                if error_code:
+                    failed_targets.append((tc, str(error_message or error_code)))
+                    all_messages.append(f"[{tc}] 실패: {error_message or error_code}")
+                elif msg:
                     all_messages.append(f"[{tc}] {msg}")
+
             final_state["created_artifact_ids"] = all_artifact_ids
-            final_state["assistant_message"] = "\n\n".join(all_messages) or f"{len(target_columns)}개 타겟 분석 완료"
+            if failed_targets and all_artifact_ids:
+                final_state.pop("error_code", None)
+                final_state.pop("error_message", None)
+                failed_summary = "\n".join(f"- {target}: {reason}" for target, reason in failed_targets)
+                final_state["assistant_message"] = (
+                    f"가능한 타겟에 대해서는 분석을 완료했습니다.\n\n"
+                    f"학습하지 못한 타겟:\n{failed_summary}\n\n"
+                    + ("\n\n".join(m for m in all_messages if m) if all_messages else "")
+                )
+            elif failed_targets and not all_artifact_ids:
+                final_state["error_code"] = "ALL_TARGETS_FAILED"
+                final_state["error_message"] = (
+                    "모든 타겟 분석이 실패했습니다.\n"
+                    + "\n".join(f"- {target}: {reason}" for target, reason in failed_targets)
+                )
+                final_state["assistant_message"] = final_state["error_message"]
+            else:
+                final_state["assistant_message"] = "\n\n".join(all_messages) or f"{len(target_columns)}개 타겟 분석 완료"
         else:
-            final_state = _run_once(target_columns[0] if target_columns else None)
+            tc = None if requested_intent in TARGET_INDEPENDENT_INTENTS else (target_columns[0] if target_columns else None)
+            final_state = _run_once(tc)
 
         result = {
             "status": "completed",

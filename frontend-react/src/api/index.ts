@@ -309,6 +309,7 @@ function mapArtifactPreview(raw: Record<string, unknown>, sessionId: string): Ar
         }
       }
       data = {
+        ...pj,
         metrics: Object.keys(metrics).length > 0 ? metrics : undefined,
         text: Object.keys(pj).length > 0 ? JSON.stringify(pj, null, 2) : undefined,
       }

@@ -141,9 +141,13 @@ def run_eda_subgraph(state: GraphState) -> GraphState:
             # --- PandasAI 경로 ---
             state = update_progress(state, 35, "EDA", "PandasAI 분석 중...")
             feature_columns = state.get("feature_columns") or []
+            target_columns = state.get("target_columns") or []
             target_column = state.get("target_column")
             constraint_lines = []
-            if target_column:
+            if target_columns:
+                constraint_lines.append(f"- target columns: {', '.join(target_columns)}")
+                constraint_lines.append("- treat all target columns as targets; do not silently reduce them to a single target")
+            elif target_column:
                 constraint_lines.append(f"- target column: {target_column}")
             if feature_columns:
                 constraint_lines.append(f"- allowed feature columns: {', '.join(feature_columns)}")

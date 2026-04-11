@@ -1,140 +1,27 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, type ReactNode } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   Upload,
   Database,
-  ChevronRight,
-  ChevronDown,
   X,
   Loader2,
-  MessageSquare,
-  BookOpen,
   LogOut,
   User,
   Activity,
   Trash2,
-  FlaskConical,
 } from 'lucide-react'
 import { LineChart, Line, ResponsiveContainer } from 'recharts'
 import { sessionsApi, datasetsApi, branchesApi, authApi } from '@/api'
 import { useSessionStore, useAuthStore, useChatStore, useArtifactStore } from '@/store'
 import { useVllmMonitor } from '@/hooks/useVllmMonitor'
-import InverseOptimizationModal from '@/components/optimization/InverseOptimizationModal'
 
 interface SidebarProps {
-  onQuestionSelect: (text: string, immediate?: boolean) => void
-  optimizationGuideOpen: boolean
-  onOpenOptimizationGuide: () => void
-  onCloseOptimizationGuide: () => void
-}
-
-// ─── QuestionList.md 파싱 ─────────────────────────────────────────────────────
-
-interface QNode {
-  type: 'h1' | 'h2' | 'question'
-  text: string
-  id: string
-  children?: QNode[]
-}
-
-function parseQuestionList(content: string): QNode[] {
-  const lines = content.split('\n').map((l) => l.trimEnd())
-  const roots: QNode[] = []
-  let currentH1: QNode | null = null
-  let currentH2: QNode | null = null
-  let counter = 0
-
-  for (const line of lines) {
-    if (line.startsWith('# ') && !line.startsWith('## ')) {
-      currentH1 = { type: 'h1', text: line.slice(2).trim(), id: `h1-${counter++}`, children: [] }
-      currentH2 = null
-      roots.push(currentH1)
-    } else if (line.startsWith('## ')) {
-      currentH2 = { type: 'h2', text: line.slice(3).trim(), id: `h2-${counter++}`, children: [] }
-      if (currentH1) currentH1.children!.push(currentH2)
-      else roots.push(currentH2)
-    } else if (line.startsWith('* ')) {
-      const q: QNode = { type: 'question', text: line.slice(2).trim(), id: `q-${counter++}` }
-      if (currentH2) currentH2.children!.push(q)
-      else if (currentH1) currentH1.children!.push(q)
-      else roots.push(q)
-    }
-  }
-
-  return roots
-}
-
-function QuestionTree({
-  nodes,
-  onSelect,
-  depth = 0,
-}: {
-  nodes: QNode[]
-  onSelect: (text: string, immediate?: boolean) => void
-  depth?: number
-}) {
-  const [collapsed, setCollapsed] = useState<Set<string>>(new Set())
-
-  const toggle = (id: string) => {
-    setCollapsed((prev) => {
-      const next = new Set(prev)
-      if (next.has(id)) next.delete(id)
-      else next.add(id)
-      return next
-    })
-  }
-
-  return (
-    <div className={depth > 0 ? 'ml-2 border-l border-gray-100 pl-2' : ''}>
-      {nodes.map((node) => {
-        if (node.type === 'question') {
-          return (
-            <button
-              key={node.id}
-              onClick={() => onSelect(node.text, false)}
-              onDoubleClick={() => onSelect(node.text, true)}
-              className="flex w-full items-start gap-1.5 rounded-md px-2 py-1.5 text-left text-xs text-gray-600 hover:bg-brand-red/5 hover:text-brand-red transition-colors group select-none"
-            >
-              <MessageSquare className="h-3 w-3 mt-0.5 shrink-0 text-gray-300 group-hover:text-brand-red/60" />
-              <span className="leading-tight">{node.text}</span>
-            </button>
-          )
-        }
-        const isCollapsed = collapsed.has(node.id)
-        const isH1 = node.type === 'h1'
-        return (
-          <div key={node.id} className="mb-0.5">
-            <button
-              onClick={() => toggle(node.id)}
-              className={`flex w-full items-center gap-1.5 rounded-md px-2 py-1.5 text-left transition-colors hover:bg-gray-100 ${
-                isH1 ? 'font-semibold text-gray-700' : 'font-medium text-gray-600'
-              }`}
-            >
-              {isCollapsed ? (
-                <ChevronRight className="h-3 w-3 shrink-0 text-gray-400" />
-              ) : (
-                <ChevronDown className="h-3 w-3 shrink-0 text-gray-400" />
-              )}
-              <span className={isH1 ? 'text-xs uppercase tracking-wide' : 'text-xs'}>{node.text}</span>
-            </button>
-            {!isCollapsed && node.children && node.children.length > 0 && (
-              <QuestionTree nodes={node.children} onSelect={onSelect} depth={depth + 1} />
-            )}
-          </div>
-        )
-      })}
-    </div>
-  )
+  children?: ReactNode
 }
 
 // ─── Sidebar ──────────────────────────────────────────────────────────────────
 
-export default function Sidebar({
-  onQuestionSelect,
-  optimizationGuideOpen,
-  onOpenOptimizationGuide,
-  onCloseOptimizationGuide,
-}: SidebarProps) {
+export default function Sidebar({ children }: SidebarProps) {
   const qc = useQueryClient()
   const {
     sessionId,
@@ -151,7 +38,6 @@ export default function Sidebar({
 
   const [showBuiltin, setShowBuiltin] = useState(false)
   const [uploadProgress, setUploadProgress] = useState<number | null>(null)
-  const [questionNodes, setQuestionNodes] = useState<QNode[]>([])
 
   const { metrics, isOnline } = useVllmMonitor(true)
   const sparkData = metrics.map((m) => ({ v: Math.round(m.genPerSec * 10) / 10 }))
@@ -272,15 +158,6 @@ export default function Sidebar({
     queryFn: () => datasetsApi.listBuiltin(sessionId!),
     enabled: !!sessionId && showBuiltin,
   })
-
-  // ─── QuestionList.md 로드 ──────────────────────────────────────────────────
-
-  useEffect(() => {
-    fetch('/QuestionList.md')
-      .then((r) => (r.ok ? r.text() : ''))
-      .then((text) => setQuestionNodes(parseQuestionList(text)))
-      .catch(() => {})
-  }, [])
 
   // ─── Upload ───────────────────────────────────────────────────────────────
 
@@ -420,31 +297,8 @@ export default function Sidebar({
         </div>
       </section>
 
-      {/* ─── Question Templates ─────────────────────────────────────────── */}
-      <section className="relative flex-1 overflow-y-auto scrollbar-thin p-3 min-h-0">
-        <div className="flex items-center justify-between gap-2 mb-2">
-          <div className="flex items-center gap-1.5">
-            <BookOpen className="h-3.5 w-3.5 text-gray-400" />
-            <span className="text-xs font-semibold uppercase tracking-wider text-gray-500">질문 템플릿</span>
-          </div>
-          <button
-            onClick={onOpenOptimizationGuide}
-            className="flex items-center gap-1 rounded-full border border-purple-200 px-2 py-0.5 text-[11px] font-medium text-purple-700 hover:bg-purple-50 transition-colors"
-          >
-            <FlaskConical className="h-3 w-3" />
-            최적화
-          </button>
-        </div>
-        {questionNodes.length === 0 ? (
-          <p className="text-xs text-gray-400 px-1 py-1">QuestionList.md 없음</p>
-        ) : (
-          <QuestionTree nodes={questionNodes} onSelect={onQuestionSelect} />
-        )}
-        {optimizationGuideOpen && (
-        <div className="absolute inset-x-0 top-8 bottom-0 z-20 bg-white/96 backdrop-blur-sm">
-          <InverseOptimizationModal onClose={onCloseOptimizationGuide} variant="sidebar" />
-        </div>
-        )}
+      <section className="flex-1 min-h-0 overflow-hidden">
+        {children}
       </section>
 
       {/* ─── 하단: 스파크라인 + 사용자 메뉴 ─────────────────────────────── */}

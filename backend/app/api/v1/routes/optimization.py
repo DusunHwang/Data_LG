@@ -609,6 +609,7 @@ async def run_constrained_inverse_optimization(
         body.get("n_calls", 300),
         body.get("model_type", "lgbm"),
         constraint_infos,
+        body.get("composition_constraints", []),
         job_id=str(job_run.id),
     )
     job_run.rq_job_id = rq_job.id

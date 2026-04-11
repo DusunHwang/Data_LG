@@ -62,8 +62,9 @@ def execute_code_in_sandbox(
             # matplotlib 비대화형 백엔드 설정
             import matplotlib
             matplotlib.use('Agg')
-            import matplotlib.pyplot as plt
             """) + KOREAN_FONT_PREAMBLE + textwrap.dedent("""
+            import matplotlib.pyplot as plt
+
             # 작업 디렉터리를 스크립트 위치로 설정
             os.chdir(os.path.dirname(os.path.abspath(__file__)))
 

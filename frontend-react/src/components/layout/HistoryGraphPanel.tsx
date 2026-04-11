@@ -208,7 +208,7 @@ function ResultGroupNode({
   const Icon = isExpanded ? FolderOpen : Folder
 
   return (
-    <div id={`node-group-${turnId}`} className="flex flex-col items-center gap-1 z-10 relative">
+    <div id={`node-group-${turnId}`} className="flex flex-col items-center gap-0.5 z-10 relative">
       <button
         onClick={() => { onSelect(`node-group-${turnId}`); onToggle(turnId) }}
         className={`flex items-center gap-2 rounded-xl border px-3 py-2 shadow-sm transition-all ${
@@ -642,7 +642,7 @@ export default function HistoryGraphPanel() {
             <p className="text-xs text-gray-400">대화를 시작하면 흐름이 표시됩니다</p>
           </div>
         ) : (
-          <div className="relative flex flex-col items-center w-full gap-10 pb-8 pt-4" ref={contentRef}>
+          <div className="relative flex flex-col items-center w-full gap-5 pb-4 pt-2" ref={contentRef}>
             <svg className="absolute top-0 left-0 w-full h-full pointer-events-none" style={{ zIndex: 0, overflow: 'visible' }}>
               <defs>
                 <marker id="arrowhead-background-blue" markerWidth="6" markerHeight="4" refX="5" refY="2" orient="auto">
@@ -675,7 +675,7 @@ export default function HistoryGraphPanel() {
                 const artifactIds = item.sysMsg!.artifact_ids ?? []
                 return (
                   <div key={item.sysMsg!.id} className="flex flex-col items-center w-full z-10 relative">
-                    <div className="flex flex-row flex-wrap gap-8 justify-center w-full">
+                    <div className="flex flex-row flex-wrap gap-4 justify-center w-full">
                       {artifactIds.map((id) => {
                         const isEffective = id === targetDataframeArtifactId ||
                           (!targetDataframeArtifactId && id === `dataset-${datasetId}`)
@@ -710,7 +710,7 @@ export default function HistoryGraphPanel() {
                 : false
 
               return (
-                <div key={userMsg!.id} className="flex flex-col items-center w-full gap-7 z-10 relative">
+                <div key={userMsg!.id} className="flex flex-col items-center w-full gap-3.5 z-10 relative">
                   {/* 질문 노드 */}
                   <QuestionNode
                     msg={userMsg!}
@@ -734,7 +734,7 @@ export default function HistoryGraphPanel() {
 
                   {/* 아티팩트 행 */}
                   {artifactIds.length > 0 && isExpanded && (
-                    <div className="flex flex-row flex-wrap gap-8 justify-center w-full">
+                    <div className="flex flex-row flex-wrap gap-4 justify-center w-full">
                       {artifactIds.map((id) => {
                         const isEffective = id === targetDataframeArtifactId ||
                           (!targetDataframeArtifactId && id === `dataset-${datasetId}`)

@@ -2,6 +2,7 @@ import { useState, useRef, useEffect, useCallback } from 'react'
 import Sidebar from '@/components/layout/Sidebar'
 import ChatPanel from '@/components/chat/ChatPanel'
 import HistoryGraphPanel from '@/components/layout/HistoryGraphPanel'
+import QuestionGuidePanel from '@/components/layout/QuestionGuidePanel'
 import { useSessionStore, useChatStore, useArtifactStore } from '@/store'
 import { datasetsApi } from '@/api'
 
@@ -53,7 +54,7 @@ export default function WorkspacePage() {
     immediate: false,
   })
   const [leftWidth, setLeftWidth] = useState(288)
-  const [rightWidth, setRightWidth] = useState(312)
+  const [rightWidth, setRightWidth] = useState(468)
   const [optimizationGuideOpen, setOptimizationGuideOpen] = useState(false)
 
   // ─── 데이터셋 → 채팅 자동 표시 ─────────────────────────────────────────────
@@ -98,7 +99,7 @@ export default function WorkspacePage() {
   }, [])
 
   const handleRightDrag = useCallback((delta: number) => {
-    setRightWidth((w) => Math.max(216, Math.min(576, w - delta)))
+    setRightWidth((w) => Math.max(324, Math.min(760, w - delta)))
   }, [])
 
   const handleQuestionSelect = useCallback((text: string, immediate = false) => {
@@ -113,12 +114,9 @@ export default function WorkspacePage() {
     <div className="flex h-screen overflow-hidden bg-gray-50">
       {/* 좌측 패널 */}
       <div style={{ width: leftWidth }} className="shrink-0 overflow-hidden">
-        <Sidebar
-          onQuestionSelect={handleQuestionSelect}
-          optimizationGuideOpen={optimizationGuideOpen}
-          onOpenOptimizationGuide={() => setOptimizationGuideOpen(true)}
-          onCloseOptimizationGuide={() => setOptimizationGuideOpen(false)}
-        />
+        <Sidebar>
+          <HistoryGraphPanel />
+        </Sidebar>
       </div>
 
       <DragDivider onDrag={handleLeftDrag} />
@@ -135,9 +133,14 @@ export default function WorkspacePage() {
 
       <DragDivider onDrag={handleRightDrag} />
 
-      {/* 우측 분석 흐름 패널 */}
+      {/* 우측 질문/최적화 패널 */}
       <div style={{ width: rightWidth }} className="shrink-0 overflow-hidden">
-        <HistoryGraphPanel />
+        <QuestionGuidePanel
+          onQuestionSelect={handleQuestionSelect}
+          optimizationGuideOpen={optimizationGuideOpen}
+          onOpenOptimizationGuide={() => setOptimizationGuideOpen(true)}
+          onCloseOptimizationGuide={() => setOptimizationGuideOpen(false)}
+        />
       </div>
     </div>
   )

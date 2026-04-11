@@ -47,6 +47,134 @@ def _apply_saved_preprocessing(
     return processed
 
 
+def _normalize_composition_constraints(raw_constraints: Optional[list]) -> list[dict]:
+    """조성 합계 제약 입력을 워커 내부 표현으로 정리한다."""
+    normalized: list[dict] = []
+    for item in raw_constraints or []:
+        if not isinstance(item, dict) or not item.get("enabled", True):
+            continue
+        columns = [str(col) for col in item.get("columns", []) if str(col)]
+        balance_feature = str(item.get("balance_feature") or "")
+        if len(columns) < 2 or balance_feature not in columns:
+            continue
+        try:
+            total = float(item.get("total", 100.0))
+        except (TypeError, ValueError):
+            total = 100.0
+        try:
+            min_value = float(item.get("min_value", 0.0))
+        except (TypeError, ValueError):
+            min_value = 0.0
+        try:
+            max_value = float(item.get("max_value", total))
+        except (TypeError, ValueError):
+            max_value = total
+        normalized.append({
+            "enabled": True,
+            "columns": columns,
+            "total": total,
+            "balance_feature": balance_feature,
+            "min_value": min_value,
+            "max_value": max_value,
+        })
+    return normalized
+
+
+def _as_float(value) -> float:
+    try:
+        numeric = float(value)
+        return numeric if np.isfinite(numeric) else 0.0
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _apply_composition_constraints(row: dict, composition_specs: list[dict]) -> tuple[float, list[dict]]:
+    """row를 조성 합계 제약에 맞게 보정하고 위반량을 반환한다.
+
+    Balance 변수는 `total - 나머지 조성합`으로 결정한다. 보정 후 조성값이
+    허용 범위를 벗어나면 최적화 목적함수에 패널티로 반영할 위반량을 누적한다.
+    """
+    total_violation = 0.0
+    reports: list[dict] = []
+
+    for spec in composition_specs:
+        columns = spec["columns"]
+        balance_feature = spec["balance_feature"]
+        total = float(spec["total"])
+        min_value = float(spec["min_value"])
+        max_value = float(spec["max_value"])
+
+        other_sum = sum(_as_float(row.get(col, 0.0)) for col in columns if col != balance_feature)
+        row[balance_feature] = total - other_sum
+
+        values = {col: _as_float(row.get(col, 0.0)) for col in columns}
+        actual_sum = sum(values.values())
+        violation = abs(actual_sum - total)
+        for value in values.values():
+            if value < min_value:
+                violation += min_value - value
+            elif value > max_value:
+                violation += value - max_value
+
+        total_violation += violation
+        reports.append({
+            **spec,
+            "actual_sum": float(actual_sum),
+            "valid": bool(violation <= 1e-6),
+        })
+
+    return float(total_violation), reports
+
+
+def _json_safe_value(value):
+    """최적화 결과 row 값을 JSON 저장 가능한 스칼라로 변환한다."""
+    if isinstance(value, (np.integer,)):
+        return int(value)
+    if isinstance(value, (np.floating,)):
+        value = float(value)
+    if isinstance(value, float):
+        return value if np.isfinite(value) else None
+    if isinstance(value, (str, int, bool)) or value is None:
+        return value
+    try:
+        if pd.isna(value):
+            return None
+    except Exception:
+        pass
+    return str(value)
+
+
+def _row_values(row: dict, feature_names: list) -> dict:
+    """모델 입력 피처 전체의 row 값을 결과 표시용 dict로 만든다."""
+    return {feat: _json_safe_value(row.get(feat, 0.0)) for feat in feature_names}
+
+
+def _feature_roles(
+    feature_names: list,
+    opt_features: list,
+    selected_features: list,
+    fixed_values: dict,
+    balance_features: set,
+) -> dict:
+    """결과 테이블에서 각 피처가 어떤 방식으로 취급됐는지 표시한다."""
+    opt_set = set(opt_features)
+    selected_set = set(selected_features)
+    fixed_set = set(fixed_values or {})
+    roles = {}
+    for feat in feature_names:
+        if feat in fixed_set:
+            roles[feat] = "fixed"
+        elif feat in balance_features:
+            roles[feat] = "balance"
+        elif feat in opt_set:
+            roles[feat] = "optimized"
+        elif feat in selected_set:
+            roles[feat] = "selected_constant"
+        else:
+            roles[feat] = "constant"
+    return roles
+
+
 # ─────────────────────────────────────────────────────────
 # Phase 1: Null Importance 분석
 # ─────────────────────────────────────────────────────────
@@ -589,6 +717,13 @@ def run_inverse_optimize_task(
             feat: base_row.get(feat)
             for feat in selected_features
         }
+        feature_roles = _feature_roles(
+            feature_names,
+            opt_features,
+            selected_features,
+            fixed_values,
+            set(),
+        )
 
         reporter.update(95, "결과 저장 중...")
 
@@ -604,6 +739,11 @@ def run_inverse_optimize_task(
             "baseline_features": baseline_features,
             "fixed_features": fixed_values,
             "selected_features": selected_features,
+            "optimized_features": opt_features,
+            "all_feature_names": feature_names,
+            "optimal_all_features": _row_values(optimal_row, feature_names),
+            "baseline_all_features": _row_values(base_row, feature_names),
+            "feature_roles": feature_roles,
             "n_evaluations": call_count[0],
             "convergence": bool(result_opt.success),
             "target_column": target_column,
@@ -644,6 +784,7 @@ def run_constrained_inverse_optimize_task(
     model_type: str = "lgbm",          # "lgbm" | "bcm"
     # 제약 조건 (선택, 다중 타겟용)
     constraints: Optional[list] = None,
+    composition_constraints: Optional[list] = None,
     constraint_penalty: float = 1e6,
 ) -> dict:
     """
@@ -713,10 +854,19 @@ def run_constrained_inverse_optimize_task(
         else:
             model = lgbm_model
 
+        composition_specs = _normalize_composition_constraints(composition_constraints)
+        balance_features = {
+            spec["balance_feature"]
+            for spec in composition_specs
+            if spec.get("balance_feature")
+        }
+
         # 탐색 공간
         bounds, opt_features = [], []
         for feat in selected_features:
             if feat in categorical_features:
+                continue
+            if feat in balance_features:
                 continue
             opt_features.append(feat)
             if feat in feature_ranges:
@@ -780,6 +930,7 @@ def run_constrained_inverse_optimize_task(
             row = base_row.copy()
             for feat, val in zip(opt_features, x):
                 row[feat] = val
+            composition_violation, _ = _apply_composition_constraints(row, composition_specs)
 
             try:
                 pred_primary = float(model.predict(
@@ -789,7 +940,7 @@ def run_constrained_inverse_optimize_task(
                 return 1e9
 
             # 제약 패널티
-            penalty = 0.0
+            penalty = constraint_penalty * composition_violation
             for constraint in constraint_specs:
                 constraint_type = constraint.get("type")
                 constraint_threshold = constraint.get("threshold")
@@ -829,6 +980,8 @@ def run_constrained_inverse_optimize_task(
         optimal_row = base_row.copy()
         for feat, val in zip(opt_features, result_opt.x):
             optimal_row[feat] = val
+        _, composition_results = _apply_composition_constraints(optimal_row, composition_specs)
+        _apply_composition_constraints(base_row, composition_specs)
 
         def safe_predict(m, row, feat_list, cat_feats, cat_encoders=None, model_kind: str = "baseline_model"):
             try:
@@ -870,6 +1023,13 @@ def run_constrained_inverse_optimize_task(
             feat: base_row.get(feat)
             for feat in selected_features
         }
+        feature_roles = _feature_roles(
+            feature_names,
+            opt_features,
+            selected_features,
+            fixed_values,
+            balance_features,
+        )
 
         reporter.update(95, "결과 저장 중...")
 
@@ -886,9 +1046,15 @@ def run_constrained_inverse_optimize_task(
             "baseline_features": baseline_features,
             "fixed_features": fixed_values,
             "selected_features": selected_features,
+            "optimized_features": opt_features,
+            "all_feature_names": feature_names,
+            "optimal_all_features": _row_values(optimal_row, feature_names),
+            "baseline_all_features": _row_values(base_row, feature_names),
+            "feature_roles": feature_roles,
             "n_evaluations": call_count[0],
             "convergence": bool(result_opt.success),
             "constraints": constraint_results,
+            "composition_constraints": composition_results,
             "constraint_target_column": constraint_results[0]["target_column"] if constraint_results else None,
             "constraint_type": constraint_results[0]["type"] if constraint_results else None,
             "constraint_threshold": constraint_results[0]["threshold"] if constraint_results else None,

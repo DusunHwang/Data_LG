@@ -198,6 +198,7 @@ export type JobStatus = 'pending' | 'running' | 'completed' | 'failed' | 'cancel
 export interface Job {
   id: string
   session_id: string
+  job_type?: string
   status: JobStatus
   progress: number
   progress_message?: string | null
@@ -321,6 +322,14 @@ export interface ConstrainedInverseRunRequest {
   n_calls?: number
   model_type?: 'lgbm' | 'bcm'
   source_artifact_id?: string
+  composition_constraints?: Array<{
+    enabled: boolean
+    columns: string[]
+    total: number
+    balance_feature: string
+    min_value?: number
+    max_value?: number
+  }>
   // 제약 조건
   constraints?: Array<{
     target_column: string
@@ -339,11 +348,24 @@ export interface InverseRunResult {
   optimal_features: Record<string, number | string>
   baseline_features?: Record<string, number | string>
   fixed_features?: Record<string, number | string>
+  optimal_all_features?: Record<string, number | string | null>
+  baseline_all_features?: Record<string, number | string | null>
+  all_feature_names?: string[]
+  optimized_features?: string[]
+  feature_roles?: Record<string, 'optimized' | 'fixed' | 'balance' | 'selected_constant' | 'constant' | string>
   convergence: boolean
   n_evaluations: number
   direction: string
   target_column: string
   selected_features: string[]
+  composition_constraints?: Array<{
+    enabled: boolean
+    columns: string[]
+    total: number
+    balance_feature: string
+    actual_sum?: number
+    valid?: boolean
+  }>
   constraints?: Array<{
     target_column: string
     type: string

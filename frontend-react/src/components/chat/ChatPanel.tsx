@@ -140,7 +140,7 @@ export default function ChatPanel({
           session_id: sessionId,
           branch_id: branchId,
           message: text.trim(),
-          target_column: targetColumns[0] ?? undefined,
+          target_column: targetColumns.length === 1 ? targetColumns[0] : undefined,
           context: {
             mode,
             dataset_id: datasetId ?? undefined,
@@ -250,6 +250,9 @@ export default function ChatPanel({
   const handleJobDone = useCallback(
     async (job: import('@/types').Job) => {
       setActiveJob(currentBranchId, null)
+      if ((job as { job_type?: string }).job_type === 'inverse_optimization') {
+        return
+      }
 
       if (job.status === 'completed' && job.result) {
         const content =
@@ -583,6 +586,72 @@ export default function ChatPanel({
 
 // ─── MessageBubble ────────────────────────────────────────────────────────────
 
+function StructuredMessageContent({ content }: { content: string }) {
+  const lines = content.split('\n')
+  const tableStart = lines.findIndex((line) => line.includes('\t'))
+
+  if (tableStart < 0) {
+    return <div className="text-sm whitespace-pre-wrap leading-relaxed">{content}</div>
+  }
+
+  const before = lines.slice(0, tableStart).join('\n').trimEnd()
+  const tableLines = lines.slice(tableStart).filter((line) => line.includes('\t'))
+  const after = lines.slice(tableStart + tableLines.length).join('\n').trim()
+  const [headerLine, ...bodyLines] = tableLines
+  const headers = headerLine.split('\t').map((cell) => cell.trim())
+  const rows = bodyLines.map((line) => line.split('\t').map((cell) => cell.trim()))
+
+  if (headers.length < 2 || rows.length === 0) {
+    return <div className="text-sm whitespace-pre-wrap leading-relaxed">{content}</div>
+  }
+
+  return (
+    <div className="space-y-3 text-sm leading-relaxed">
+      {before && <div className="whitespace-pre-wrap">{before}</div>}
+      <div className="overflow-x-auto rounded-xl border border-gray-200 bg-white/70">
+        <table className="w-full min-w-[560px] text-xs">
+          <thead>
+            <tr className="border-b border-gray-200 bg-gray-50">
+              {headers.map((header, idx) => (
+                <th
+                  key={`${header}-${idx}`}
+                  className={`px-3 py-2 font-semibold text-gray-600 ${
+                    idx === 1 ? 'text-right' : idx === 2 ? 'text-center' : 'text-left'
+                  }`}
+                >
+                  {header}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((row, rowIdx) => (
+              <tr key={`${row[0] ?? 'row'}-${rowIdx}`} className="border-b border-gray-100 last:border-0">
+                {headers.map((_, colIdx) => {
+                  const value = row[colIdx] ?? ''
+                  return (
+                    <td
+                      key={`${rowIdx}-${colIdx}`}
+                      className={`px-3 py-2 align-top text-gray-700 ${
+                        colIdx === 0 ? 'font-medium whitespace-nowrap' : ''
+                      } ${colIdx === 1 ? 'text-right tabular-nums whitespace-nowrap' : ''} ${
+                        colIdx === 2 ? 'text-center whitespace-nowrap' : ''
+                      } ${colIdx >= 3 ? 'min-w-[220px] whitespace-normal break-words text-gray-500' : ''}`}
+                    >
+                      {value || '-'}
+                    </td>
+                  )
+                })}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      {after && <div className="whitespace-pre-wrap">{after}</div>}
+    </div>
+  )
+}
+
 const MessageBubble = memo(({
   msg,
   isExpanded,
@@ -594,7 +663,7 @@ const MessageBubble = memo(({
 }) => {
   const isUser = msg.role === 'user'
   const isSystem = msg.role === 'system'
-  const artifactIds = msg.artifact_ids ?? []
+  const artifactIds = Array.from(new Set(msg.artifact_ids ?? []))
   const hasArtifacts = artifactIds.length > 0
 
   const { sessionId } = useSessionStore()
@@ -664,7 +733,7 @@ const MessageBubble = memo(({
             <ChevronRight className="h-3.5 w-3.5 shrink-0 opacity-50" />
           </button>
         ) : !isExpanded && !shouldToggle ? (
-          <div className="text-sm whitespace-pre-wrap leading-relaxed">{msg.content}</div>
+          <StructuredMessageContent content={msg.content} />
         ) : (
           <>
             {/* ── 상단 접기 버튼 ── */}
@@ -681,7 +750,7 @@ const MessageBubble = memo(({
             )}
 
             {/* ── 펼친 상태: 본문 ── */}
-            <div className="text-sm whitespace-pre-wrap leading-relaxed">{msg.content}</div>
+            <StructuredMessageContent content={msg.content} />
 
             {/* ── 하단: 타임스탬프 + 접기 버튼 ── */}
             <div className="mt-2 flex items-center justify-between">
