@@ -108,6 +108,20 @@ def validate_preconditions(state: GraphState) -> GraphState:
                     logger.info("요청 파라미터에서 타겟 컬럼 설정", target_column=target_col)
 
             if not target_col:
+                inferred_target = _infer_target_column_from_message(
+                    state.get("user_message", ""),
+                    dataset,
+                )
+                if inferred_target:
+                    target_col = inferred_target
+                    state = {
+                        **state,
+                        "target_column": inferred_target,
+                        "target_columns": [inferred_target],
+                    }
+                    logger.info("사용자 요청 문장에서 타겟 컬럼 추론", target_column=inferred_target)
+
+            if not target_col:
                 return {
                     **state,
                     "error_code": "TARGET_REQUIRED",
@@ -142,3 +156,32 @@ def _update_branch_config(conn, branch_id: str, config: dict) -> None:
         (json.dumps(config), datetime.now(timezone.utc), branch_id),
     )
     conn.commit()
+
+
+def _infer_target_column_from_message(message: str, dataset: dict) -> str | None:
+    """요청 문장에 실제 컬럼명이 들어 있으면 타겟으로 사용한다."""
+    if not message:
+        return None
+    columns = _dataset_columns(dataset)
+    if not columns:
+        return None
+    lowered = message.lower()
+    compact = "".join(lowered.split())
+    for col in sorted(columns, key=len, reverse=True):
+        col_lower = str(col).lower()
+        if col_lower in lowered or "".join(col_lower.split()) in compact:
+            return str(col)
+    return None
+
+
+def _dataset_columns(dataset: dict) -> list[str]:
+    schema = dataset.get("schema_profile") or {}
+    if isinstance(schema, dict):
+        columns = schema.get("columns")
+        if isinstance(columns, list):
+            if columns and isinstance(columns[0], dict):
+                return [str(c.get("name")) for c in columns if c.get("name")]
+            return [str(c) for c in columns]
+        if isinstance(columns, dict):
+            return [str(c) for c in columns.keys()]
+    return []

@@ -59,17 +59,28 @@ def run_modeling_subgraph(state: GraphState) -> GraphState:
         or branch_config.get("target_column")
         or dataset.get("target_column")
     )
+    user_message = state.get("user_message", "")
 
     if not dataset_path:
         return {**state, "error_code": "NO_DATASET", "error_message": "데이터셋 경로를 찾을 수 없습니다."}
-
-    if not target_col:
-        return {**state, "error_code": "NO_TARGET", "error_message": "타겟 컬럼이 지정되지 않았습니다. UI에서 타겟 컬럼을 먼저 확정해 주세요."}
 
     y1_columns = [c for c in (state.get("y1_columns") or []) if c and c != target_col]
 
     try:
         df = load_dataframe(dataset_path)
+
+        threshold_spec = _parse_threshold_classification_request(user_message, list(df.columns))
+        if threshold_spec:
+            target_col = threshold_spec["column"]
+            return _run_threshold_decision_tree_classification(
+                state, df, threshold_spec, session_id, branch_id, dataset
+            )
+
+        if not target_col:
+            target_col = _infer_target_from_message(user_message, list(df.columns))
+
+        if not target_col:
+            return {**state, "error_code": "NO_TARGET", "error_message": "타겟 컬럼이 지정되지 않았습니다. 요청 문장에 타겟 컬럼명을 포함하거나 UI에서 타겟 컬럼을 확정해 주세요."}
 
         if target_col not in df.columns:
             return {**state, "error_code": "INVALID_TARGET",
@@ -376,6 +387,421 @@ def _run_hierarchical_modeling(
 def select_champion(models: list) -> dict:
     """RMSE 기준 챔피언 모델 선택 (테스트 및 외부 사용)"""
     return min(models, key=lambda m: m.get("cv_rmse", float("inf")))
+
+
+def _parse_threshold_classification_request(message: str, columns: list[str]) -> dict | None:
+    """예: young_modulus_calc_GPa 150 이상/이하 분류 모델 요청을 구조화한다."""
+    import re
+
+    if not message:
+        return None
+    msg = message.lower()
+    if not any(keyword in msg for keyword in ["분류", "classification", "classifier", "classify"]):
+        return None
+
+    column = _infer_target_from_message(message, columns)
+    if not column:
+        return None
+
+    col_pattern = re.escape(column)
+    patterns = [
+        rf"{col_pattern}\D{{0,30}}([-+]?\d+(?:\.\d+)?)\s*(?:이상|초과|>=|>|greater|above)",
+        rf"{col_pattern}\D{{0,30}}([-+]?\d+(?:\.\d+)?)\s*(?:이하|미만|<=|<|less|below)",
+        rf"([-+]?\d+(?:\.\d+)?)\s*(?:이상|초과|>=|>|greater|above)\D{{0,30}}{col_pattern}",
+        rf"([-+]?\d+(?:\.\d+)?)\s*(?:이하|미만|<=|<|less|below)\D{{0,30}}{col_pattern}",
+    ]
+    threshold = None
+    for pattern in patterns:
+        match = re.search(pattern, message, flags=re.IGNORECASE)
+        if match:
+            threshold = float(match.group(1))
+            break
+
+    if threshold is None:
+        numbers = re.findall(r"[-+]?\d+(?:\.\d+)?", message)
+        if not numbers:
+            return None
+        threshold = float(numbers[0])
+
+    algorithm = "decision_tree" if any(keyword in msg for keyword in ["decision tree", "decisiontree", "의사결정", "결정트리", "tree"]) else "decision_tree"
+    return {
+        "column": column,
+        "threshold": threshold,
+        "positive_rule": "gte",
+        "algorithm": algorithm,
+        "target_name": f"{column}_gte_{threshold:g}",
+    }
+
+
+def _infer_target_from_message(message: str, columns: list[str]) -> str | None:
+    lowered = message.lower()
+    compact = "".join(lowered.split())
+    for col in sorted(columns, key=len, reverse=True):
+        col_lower = str(col).lower()
+        if col_lower in lowered or "".join(col_lower.split()) in compact:
+            return str(col)
+    return None
+
+
+def _run_threshold_decision_tree_classification(
+    state: GraphState,
+    df: pd.DataFrame,
+    spec: dict,
+    session_id: str,
+    branch_id: Optional[str],
+    dataset: dict,
+) -> GraphState:
+    """수치 컬럼을 임계값으로 이진화해 Decision Tree 분류 모델을 훈련한다."""
+    from sklearn.metrics import accuracy_score, f1_score, precision_score, recall_score
+    from sklearn.model_selection import train_test_split
+    from sklearn.tree import DecisionTreeClassifier
+
+    target_col = spec["column"]
+    threshold = float(spec["threshold"])
+    target_name = spec["target_name"]
+
+    if target_col not in df.columns:
+        return {**state, "error_code": "INVALID_TARGET",
+                "error_message": f"타겟 컬럼 '{target_col}'이(가) 데이터셋에 없습니다."}
+    if not pd.api.types.is_numeric_dtype(df[target_col]):
+        return {**state, "error_code": "NON_NUMERIC_TARGET",
+                "error_message": f"임계값 분류 타겟 '{target_col}'은 수치형이어야 합니다."}
+
+    state = update_progress(state, 25, "분류 모델링", "Decision Tree 분류 데이터 준비 중...")
+    df_clean = df.dropna(subset=[target_col]).copy()
+    if len(df_clean) < 20:
+        return {**state, "error_code": "INSUFFICIENT_DATA",
+                "error_message": "분류 모델링에 사용할 수 있는 유효 행이 너무 적습니다 (최소 20개 필요)."}
+
+    y = (df_clean[target_col] >= threshold).astype(int)
+    class_counts = y.value_counts().to_dict()
+    if y.nunique() <= 1:
+        return {**state, "error_code": "CONSTANT_CLASS_TARGET",
+                "error_message": f"{target_col} {threshold:g} 기준으로 한쪽 클래스만 존재합니다."}
+
+    feature_cols = [c for c in df_clean.columns if c != target_col]
+    allowed_feature_cols = state.get("feature_columns") or []
+    if allowed_feature_cols:
+        feature_cols = [c for c in allowed_feature_cols if c in df_clean.columns and c != target_col] or feature_cols
+    X_raw = df_clean.loc[:, feature_cols].copy()
+    X, encoded_feature_to_source = _build_decision_tree_feature_matrix(X_raw)
+    if X.empty:
+        return {**state, "error_code": "NO_TRAINING_DATA",
+                "error_message": "Decision Tree 분류에 사용할 수 있는 피처가 없습니다."}
+
+    stratify = y if y.value_counts().min() >= 2 else None
+    X_train, X_val, y_train, y_val = train_test_split(
+        X, y, test_size=0.2, random_state=42, stratify=stratify
+    )
+
+    state = update_progress(state, 50, "분류 모델링", "Decision Tree 분류 모델 훈련 중...")
+    clf = DecisionTreeClassifier(
+        max_depth=4,
+        min_samples_leaf=max(2, int(len(X_train) * 0.02)),
+        random_state=42,
+        class_weight="balanced",
+    )
+    clf.fit(X_train, y_train)
+
+    y_pred = clf.predict(X_val)
+    metrics = {
+        "accuracy": round(float(accuracy_score(y_val, y_pred)), 6),
+        "precision": round(float(precision_score(y_val, y_pred, zero_division=0)), 6),
+        "recall": round(float(recall_score(y_val, y_pred, zero_division=0)), 6),
+        "f1": round(float(f1_score(y_val, y_pred, zero_division=0)), 6),
+    }
+    importances = _aggregate_tree_importances(
+        clf.feature_importances_,
+        list(X.columns),
+        encoded_feature_to_source,
+    )
+    top_features = [item["feature"] for item in importances[:10]]
+
+    state = update_progress(state, 82, "분류 모델링", "Decision Tree 분류 결과 저장 중...")
+    artifact_ids = _save_decision_tree_classification_artifacts(
+        model=clf,
+        importances=importances,
+        metrics=metrics,
+        class_counts=class_counts,
+        spec=spec,
+        session_id=session_id,
+        branch_id=branch_id,
+        dataset=dataset,
+        state=state,
+        n_train=len(X_train),
+        n_val=len(X_val),
+        n_features=len(feature_cols),
+    )
+
+    top_feature = top_features[0] if top_features else None
+    summary = (
+        f"{target_col} >= {threshold:g} 여부를 Decision Tree로 분류했습니다. "
+        f"가장 중요한 인자는 {top_feature}입니다."
+        if top_feature else
+        f"{target_col} >= {threshold:g} 여부를 Decision Tree로 분류했습니다."
+    )
+
+    return {
+        **state,
+        "target_column": target_col,
+        "target_columns": [target_col],
+        "created_step_id": artifact_ids.get("step_id"),
+        "created_artifact_ids": artifact_ids.get("artifact_ids", []),
+        "created_model_run_ids": artifact_ids.get("model_run_ids", []),
+        "execution_result": {
+            "mode": "threshold_classification",
+            "model_type": "decision_tree_classifier",
+            "target_column": target_col,
+            "classification_target": target_name,
+            "threshold": threshold,
+            "positive_class": f"{target_col} >= {threshold:g}",
+            "negative_class": f"{target_col} < {threshold:g}",
+            "class_counts": {str(k): int(v) for k, v in class_counts.items()},
+            "metrics": metrics,
+            "top_features": top_features,
+            "summary": summary,
+            "n_train": len(X_train),
+            "n_val": len(X_val),
+            "n_features": len(feature_cols),
+        },
+    }
+
+
+def _build_decision_tree_feature_matrix(X_raw: pd.DataFrame) -> tuple[pd.DataFrame, dict[str, str]]:
+    encoded_to_source: dict[str, str] = {}
+    usable = X_raw.copy()
+    drop_cols = []
+    for col in usable.columns:
+        non_null = usable[col].dropna()
+        if non_null.empty or non_null.nunique(dropna=True) <= 1:
+            drop_cols.append(col)
+            continue
+        if pd.api.types.is_numeric_dtype(usable[col]):
+            usable[col] = usable[col].fillna(usable[col].median())
+            encoded_to_source[col] = col
+        else:
+            usable[col] = usable[col].fillna("__missing__").astype(str)
+    usable = usable.drop(columns=drop_cols, errors="ignore")
+    if usable.empty:
+        return pd.DataFrame(index=X_raw.index), encoded_to_source
+
+    encoded = pd.get_dummies(usable, dummy_na=False)
+    for encoded_col in encoded.columns:
+        if encoded_col in encoded_to_source:
+            continue
+        source = next((col for col in usable.columns if encoded_col == col or encoded_col.startswith(f"{col}_")), encoded_col)
+        encoded_to_source[encoded_col] = source
+    return encoded.astype(float), encoded_to_source
+
+
+def _aggregate_tree_importances(
+    raw_importances: np.ndarray,
+    encoded_features: list[str],
+    encoded_to_source: dict[str, str],
+) -> list[dict]:
+    totals: dict[str, float] = {}
+    for encoded_feature, importance in zip(encoded_features, raw_importances):
+        source = encoded_to_source.get(encoded_feature, encoded_feature)
+        totals[source] = totals.get(source, 0.0) + float(importance)
+    return [
+        {"feature": feature, "importance": round(value, 8)}
+        for feature, value in sorted(totals.items(), key=lambda item: item[1], reverse=True)
+    ]
+
+
+def _save_decision_tree_classification_artifacts(
+    model,
+    importances: list[dict],
+    metrics: dict,
+    class_counts: dict,
+    spec: dict,
+    session_id: str,
+    branch_id: Optional[str],
+    dataset: dict,
+    state: GraphState,
+    n_train: int,
+    n_val: int,
+    n_features: int,
+) -> dict:
+    """Decision Tree 임계값 분류 결과 아티팩트 저장."""
+    import uuid as uuid_module
+
+    created_artifact_ids: list[str] = []
+    model_run_ids: list[str] = []
+    step_id = None
+    target_col = spec["column"]
+    threshold = float(spec["threshold"])
+    target_name = spec["target_name"]
+    dataset_path = state.get("dataset_path")
+    source_artifact_id = state.get("selected_artifact_id")
+    if source_artifact_id and str(source_artifact_id).startswith("dataset-"):
+        source_artifact_id = None
+
+    model_dir = get_artifact_dir(session_id, "model")
+    df_dir = get_artifact_dir(session_id, "dataframe")
+    report_dir = get_artifact_dir(session_id, "report")
+
+    conn = None
+    try:
+        conn = get_sync_db_connection()
+        cur = conn.cursor()
+        now = datetime.now(timezone.utc)
+        model_run_id = str(uuid_module.uuid4())
+
+        if branch_id:
+            step_id = str(uuid_module.uuid4())
+            cur.execute(
+                """
+                INSERT INTO steps (
+                    id, branch_id, step_type, status, sequence_no, title,
+                    input_data, output_data, created_at, updated_at
+                ) VALUES (?, ?, 'modeling', 'completed', 0, ?, ?, ?, ?, ?)
+                """,
+                (
+                    step_id,
+                    branch_id,
+                    f"Decision Tree 분류 모델링 [{target_col} >= {threshold:g}]",
+                    json.dumps({
+                        "target_column": target_col,
+                        "threshold": threshold,
+                        "dataset_id": dataset.get("id"),
+                    }),
+                    json.dumps({
+                        "model_type": "decision_tree_classifier",
+                        "metrics": metrics,
+                        "top_feature": importances[0]["feature"] if importances else None,
+                    }),
+                    now,
+                    now,
+                ),
+            )
+
+        model_path = os.path.join(model_dir, f"decision_tree_{model_run_id}.pkl")
+        joblib.dump(model, model_path)
+        model_artifact_id = save_artifact_to_db(
+            conn, step_id, session_id,
+            "model", f"Decision Tree 분류 모델 [{target_col} >= {threshold:g}]",
+            model_path, "application/octet-stream",
+            os.path.getsize(model_path),
+            None,
+            {
+                "type": "decision_tree_classifier",
+                "model_run_id": model_run_id,
+                "target_column": target_col,
+                "classification_target": target_name,
+                "threshold": threshold,
+                "dataset_path": dataset_path,
+                "source_artifact_id": source_artifact_id,
+            },
+        )
+        created_artifact_ids.append(model_artifact_id)
+
+        leaderboard_df = pd.DataFrame([{
+            "모델명": "Decision Tree Classifier",
+            "타겟": f"{target_col} >= {threshold:g}",
+            "Accuracy": metrics["accuracy"],
+            "Precision": metrics["precision"],
+            "Recall": metrics["recall"],
+            "F1": metrics["f1"],
+            "훈련 샘플": n_train,
+            "검증 샘플": n_val,
+            "피처 수": n_features,
+            "챔피언": "✓",
+        }])
+        leaderboard_path = os.path.join(df_dir, f"decision_tree_leaderboard_{step_id or model_run_id}.parquet")
+        leaderboard_df.to_parquet(leaderboard_path, index=False)
+        created_artifact_ids.append(save_artifact_to_db(
+            conn, step_id, session_id,
+            "leaderboard", f"Decision Tree 분류 성능 [{target_col} >= {threshold:g}]",
+            leaderboard_path, "application/parquet", os.path.getsize(leaderboard_path),
+            dataframe_to_preview(leaderboard_df),
+            {"type": "decision_tree_leaderboard", "model_run_id": model_run_id},
+        ))
+
+        fi_df = pd.DataFrame(importances)
+        fi_path = os.path.join(df_dir, f"decision_tree_feature_importance_{model_run_id}.parquet")
+        fi_df.to_parquet(fi_path, index=False)
+        created_artifact_ids.append(save_artifact_to_db(
+            conn, step_id, session_id,
+            "feature_importance", f"Decision Tree 피처 중요도 [{target_col} >= {threshold:g}]",
+            fi_path, "application/parquet", os.path.getsize(fi_path),
+            dataframe_to_preview(fi_df, max_rows=30),
+            {"type": "decision_tree_feature_importance", "model_run_id": model_run_id},
+        ))
+
+        report = {
+            "message": (
+                f"{target_col} >= {threshold:g} 여부를 Decision Tree로 분류했습니다. "
+                f"가장 중요한 인자는 {importances[0]['feature'] if importances else '-'}입니다."
+            ),
+            "metrics": metrics,
+            "target_column": target_col,
+            "classification_target": target_name,
+            "threshold": threshold,
+            "positive_class": f"{target_col} >= {threshold:g}",
+            "negative_class": f"{target_col} < {threshold:g}",
+            "class_counts": {str(k): int(v) for k, v in class_counts.items()},
+            "top_features": [item["feature"] for item in importances[:10]],
+            "feature_importances": importances[:30],
+        }
+        report_path = os.path.join(report_dir, f"decision_tree_classification_{step_id or model_run_id}.json")
+        with open(report_path, "w", encoding="utf-8") as f:
+            json.dump(report, f, ensure_ascii=False, indent=2)
+        created_artifact_ids.append(save_artifact_to_db(
+            conn, step_id, session_id,
+            "report", f"Decision Tree 분류 요약 [{target_col} >= {threshold:g}]",
+            report_path, "application/json", os.path.getsize(report_path),
+            report,
+            {"type": "decision_tree_classification_report", "model_run_id": model_run_id},
+        ))
+
+        if branch_id:
+            cur.execute(
+                """
+                INSERT INTO model_runs (
+                    id, branch_id, job_run_id, model_name, model_type, status,
+                    test_rmse, test_mae, test_r2, n_train, n_test, n_features,
+                    target_column, dataset_path, source_artifact_id, hyperparams, feature_importances, is_champion,
+                    model_artifact_id, created_at, updated_at
+                ) VALUES (
+                    ?, ?, ?, ?, 'decision_tree_classifier', 'completed',
+                    NULL, NULL, ?, ?, ?, ?,
+                    ?, ?, ?, ?, ?, true,
+                    ?, ?, ?
+                )
+                """,
+                (
+                    model_run_id,
+                    branch_id,
+                    state.get("job_run_id"),
+                    "Decision Tree Classifier",
+                    metrics["accuracy"],
+                    n_train,
+                    n_val,
+                    n_features,
+                    target_name,
+                    dataset_path,
+                    source_artifact_id,
+                    json.dumps({"max_depth": model.get_depth(), "threshold": threshold}),
+                    json.dumps({item["feature"]: item["importance"] for item in importances}),
+                    model_artifact_id,
+                    now,
+                    now,
+                ),
+            )
+            model_run_ids.append(model_run_id)
+
+        conn.commit()
+        return {"step_id": step_id, "artifact_ids": created_artifact_ids, "model_run_ids": model_run_ids}
+
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        logger.error("Decision Tree 분류 아티팩트 저장 실패", error=str(e))
+        raise
+    finally:
+        if conn:
+            conn.close()
 
 
 def build_feature_matrix(

@@ -4,6 +4,7 @@ import asyncio
 import json
 import os
 import shutil
+import tempfile
 from datetime import datetime, timezone
 from typing import List, Optional
 
@@ -127,6 +128,33 @@ def run_eda_subgraph(state: GraphState) -> GraphState:
         n_rows, n_cols = df.shape
 
         check_cancellation(state)
+
+        scalar_result = _try_run_scalar_aggregation(df, user_message, state)
+        if scalar_result:
+            state = update_progress(state, 70, "EDA", "집계 결과 저장 중...")
+            sandbox_result = _scalar_result_to_sandbox(scalar_result)
+            artifact_ids = _save_eda_artifacts(
+                sandbox_result, session_id, branch_id, dataset, state,
+                generated_code="",
+                used_fallback=False,
+                sandbox_error=None,
+                method_used="scalar_aggregation",
+            )
+            cleanup_sandbox(sandbox_result.get("work_dir", ""))
+            return {
+                **state,
+                "method_used": "scalar_aggregation",
+                "created_step_id": artifact_ids.get("step_id"),
+                "created_artifact_ids": artifact_ids.get("artifact_ids", []),
+                "execution_result": {
+                    "summary": scalar_result.get("message"),
+                    "scalar_result": scalar_result,
+                    "artifact_count": len(artifact_ids.get("artifact_ids", [])),
+                    "success": True,
+                    "used_fallback": False,
+                    "method_used": "scalar_aggregation",
+                },
+            }
 
         # 2. 분석 방법 결정 (PandasAI vs 직접 코드)
         method = decide_method("eda", user_message, n_rows)
@@ -327,6 +355,184 @@ def _default_eda_plan(df: pd.DataFrame) -> dict:
             "plot_type": "heatmap",
         })
     return {"analyses": analyses, "n_analyses": len(analyses)}
+
+
+def _try_run_scalar_aggregation(df: pd.DataFrame, user_message: str, state: GraphState) -> dict | None:
+    """최대/최소/평균 같은 단순 집계 질의는 차트 생성 없이 즉시 계산한다."""
+    msg = user_message.lower()
+    plot_keywords = [
+        "그래프", "차트", "시각화", "그려", "plot", "chart", "graph",
+        "histogram", "scatter", "heatmap", "boxplot", "분포",
+    ]
+    if any(keyword in msg for keyword in plot_keywords):
+        return None
+
+    operations = [
+        ("max", ["최대값", "최댓값", "최대 값", "최대", "max", "maximum"]),
+        ("min", ["최소값", "최솟값", "최소 값", "최소", "min", "minimum"]),
+        ("mean", ["평균값", "평균", "mean", "average"]),
+        ("sum", ["합계", "총합", "합", "sum", "total"]),
+        ("count", ["개수", "건수", "몇 개", "count"]),
+        ("median", ["중앙값", "median"]),
+    ]
+    operation = None
+    for op, keywords in operations:
+        if any(keyword in msg for keyword in keywords):
+            operation = op
+            break
+    if not operation:
+        return None
+    if operation == "max" and ("최대화" in msg or "최적화" in msg):
+        return None
+
+    numeric_cols = df.select_dtypes(include="number").columns.tolist()
+    if not numeric_cols and operation != "count":
+        return None
+
+    column = _resolve_aggregation_column(df, user_message, state, numeric_cols)
+    if column:
+        result = _aggregate_column(df, column, operation)
+        return {
+            "type": "scalar_aggregation",
+            "operation": operation,
+            "column": column,
+            "metrics": {operation: result.get("value")},
+            **result,
+            "message": _format_scalar_message(operation, column, result),
+        }
+
+    if operation == "count":
+        result = {
+            "value": int(len(df)),
+            "non_null_count": int(len(df)),
+            "row_count": int(len(df)),
+            "metrics": {"count": int(len(df))},
+            "message": f"전체 행 개수는 {len(df):,}개입니다.",
+        }
+        return {"type": "scalar_aggregation", "operation": operation, "column": None, **result}
+
+    rows = []
+    for col in numeric_cols:
+        col_result = _aggregate_column(df, col, operation)
+        rows.append({
+            "column": col,
+            "value": col_result["value"],
+            "row_index": col_result.get("row_index"),
+            "non_null_count": col_result.get("non_null_count"),
+        })
+    return {
+        "type": "scalar_aggregation",
+        "operation": operation,
+        "column": None,
+        "results": rows,
+        "metrics": {row["column"]: row["value"] for row in rows},
+        "message": f"컬럼이 명시되지 않아 수치형 컬럼 {len(rows)}개의 {operation} 값을 계산했습니다.",
+    }
+
+
+def _resolve_aggregation_column(
+    df: pd.DataFrame,
+    user_message: str,
+    state: GraphState,
+    numeric_cols: list[str],
+) -> str | None:
+    msg = user_message.lower()
+    for col in sorted(df.columns, key=len, reverse=True):
+        if col.lower() in msg:
+            return col
+
+    compact_msg = "".join(msg.split())
+    for col in sorted(df.columns, key=len, reverse=True):
+        if "".join(col.lower().split()) in compact_msg:
+            return col
+
+    target_columns = state.get("target_columns") or []
+    if len(target_columns) == 1 and target_columns[0] in df.columns:
+        return target_columns[0]
+
+    target_column = state.get("target_column")
+    if target_column in df.columns:
+        return target_column
+
+    if len(numeric_cols) == 1:
+        return numeric_cols[0]
+    return None
+
+
+def _aggregate_column(df: pd.DataFrame, column: str, operation: str) -> dict:
+    series = df[column].dropna()
+    non_null_count = int(series.shape[0])
+    result: dict = {
+        "non_null_count": non_null_count,
+        "row_count": int(len(df)),
+    }
+    if operation == "count":
+        result["value"] = non_null_count
+        return result
+    if series.empty:
+        result["value"] = None
+        return result
+
+    if operation == "max":
+        value = series.max()
+        result["row_index"] = _json_safe_scalar(series.idxmax())
+    elif operation == "min":
+        value = series.min()
+        result["row_index"] = _json_safe_scalar(series.idxmin())
+    elif operation == "mean":
+        value = series.mean()
+    elif operation == "sum":
+        value = series.sum()
+    elif operation == "median":
+        value = series.median()
+    else:
+        value = None
+    result["value"] = _json_safe_scalar(value)
+    return result
+
+
+def _json_safe_scalar(value):
+    try:
+        if pd.isna(value):
+            return None
+    except Exception:
+        pass
+    if hasattr(value, "item"):
+        try:
+            value = value.item()
+        except Exception:
+            pass
+    return value
+
+
+def _format_scalar_message(operation: str, column: str, result: dict) -> str:
+    labels = {
+        "max": "최대값",
+        "min": "최소값",
+        "mean": "평균",
+        "sum": "합계",
+        "count": "개수",
+        "median": "중앙값",
+    }
+    value = result.get("value")
+    value_text = f"{value:,}" if isinstance(value, (int, float)) else str(value)
+    row_text = f" (행 인덱스: {result['row_index']})" if result.get("row_index") is not None else ""
+    return f"{column} 컬럼의 {labels.get(operation, operation)}은 {value_text}입니다.{row_text}"
+
+
+def _scalar_result_to_sandbox(result: dict) -> dict:
+    tmp_dir = tempfile.mkdtemp(prefix="scalar_aggregation_")
+    result_path = os.path.join(tmp_dir, "result_1.json")
+    with open(result_path, "w", encoding="utf-8") as f:
+        json.dump(result, f, ensure_ascii=False, indent=2)
+    return {
+        "success": True,
+        "stdout": result.get("message", "집계 완료"),
+        "stderr": "",
+        "output_files": {"result_1.json": result_path},
+        "work_dir": tmp_dir,
+        "error": None,
+    }
 
 
 async def _generate_eda_code(

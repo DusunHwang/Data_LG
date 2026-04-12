@@ -15,7 +15,7 @@ interface Props {
   variant?: 'modal' | 'sidebar'
 }
 
-type Step = 'subset' | 'ni_setup' | 'ni_running' | 'feat_config' | 'target_config' | 'opt_config' | 'running' | 'done'
+type Step = 'subset' | 'ni_setup' | 'ni_running' | 'feat_config' | 'target_config' | 'bcm_training' | 'opt_config' | 'running' | 'done'
 
 const POLL_MS = 3_000
 
@@ -116,6 +116,8 @@ export default function InverseOptimizationModal({ onClose, variant = 'modal' }:
   const [optPhase, setOptPhase] = useState<'modeling' | 'optimizing' | null>(null)
   // 실행 중인 jobId (중단 버튼용)
   const [runningJobId, setRunningJobId] = useState<string | null>(null)
+  const [bcmModelPath, setBcmModelPath] = useState<string | null>(null)
+  const [bcmModelKey, setBcmModelKey] = useState<string | null>(null)
 
   // ── Job polling ──────────────────────────────────────────────────────────
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
@@ -155,6 +157,11 @@ export default function InverseOptimizationModal({ onClose, variant = 'modal' }:
     setCompositionBalanceFeature((prev) => (detected.includes(prev) ? prev : (detected[0] ?? '')))
     setCompositionEnabled((prev) => prev || detected.length >= 2)
   }, [featureColumns])
+
+  useEffect(() => {
+    setBcmModelPath(null)
+    setBcmModelKey(null)
+  }, [branchId, sourceArtifactId, optTarget, nFeat, selectedSubsetId, compositionEnabled, compositionColumns, compositionBalanceFeature])
 
   const startPolling = useCallback((jobId: string, onDone: (j: Job) => void, onFail?: (j: Job) => void, trackOpt?: boolean) => {
     stopPolling()
@@ -318,11 +325,8 @@ export default function InverseOptimizationModal({ onClose, variant = 'modal' }:
     } catch (e: unknown) { setJobError(e instanceof Error ? e.message : '요청 실패') }
   }
 
-  const runOpt = async () => {
-    if (!sessionId || !branchId || !niResult) return
-    setJobError(null); setJobProgress(0); setJobMsg('')
-
-    // 서브셋 피처와 교집합 (서브셋 선택 시)
+  const getOptimizationFeatures = () => {
+    if (!niResult) return { runFeatures: [], error: '피처 유의성 분석 결과가 없습니다.' }
     const allowedFeatures = featureColumns.length > 0
       ? niResult.recommended_features.filter((f) => featureColumns.includes(f))
       : niResult.recommended_features
@@ -339,9 +343,95 @@ export default function InverseOptimizationModal({ onClose, variant = 'modal' }:
     const runFeatures = compositionConstraintActive && !finalFeatures.includes(compositionBalanceFeature)
       ? [...finalFeatures, compositionBalanceFeature]
       : finalFeatures
+    return { runFeatures, compositionConstraintActive, error: runFeatures.length === 0 ? '선택된 서브셋에 유효한 최적화 피처가 없습니다.' : null }
+  }
 
-    if (runFeatures.length === 0) {
-      setJobError('선택된 서브셋에 유효한 최적화 피처가 없습니다.')
+  const currentBcmKey = () => JSON.stringify({
+    branchId,
+    sourceArtifactId: sourceArtifactId ?? null,
+    target: optTarget,
+    features: getOptimizationFeatures().runFeatures,
+  })
+
+  const runBcmPretrain = async () => {
+    if (!sessionId || !branchId || !niResult) return
+    const { runFeatures, error } = getOptimizationFeatures()
+    if (error) {
+      setJobError(error)
+      return
+    }
+    const key = currentBcmKey()
+    if (bcmModelPath && bcmModelKey === key) {
+      setStep('opt_config')
+      return
+    }
+    setJobError(null)
+    setJobProgress(0)
+    setJobMsg('')
+    setOptPhase('modeling')
+    setBcmModelPath(null)
+    setBcmModelKey(null)
+    try {
+      addMessage(currentBranchId, {
+        id: genId(),
+        role: 'user',
+        content: `[최적화 가이드] BCM 모델 사전 학습을 시작합니다. 타겟: ${optTarget} / 피처 ${runFeatures.join(', ')}`,
+        timestamp: new Date().toISOString(),
+      })
+      const res = await optimizationApi.bcmPretrain({
+        session_id: sessionId,
+        branch_id: branchId,
+        target_column: optTarget,
+        selected_features: runFeatures,
+        ...(sourceArtifactId ? { source_artifact_id: sourceArtifactId } : {}),
+      })
+      setActiveJob(currentBranchId, res.job_id)
+      setStep('bcm_training')
+      startPolling(
+        res.job_id,
+        (job) => {
+          const result = (job.result ?? {}) as { bcm_model_path?: string; message?: string }
+          if (!result.bcm_model_path) {
+            setJobError('BCM 모델 학습 결과 파일 경로가 없습니다.')
+            setStep('target_config')
+            return
+          }
+          setBcmModelPath(result.bcm_model_path)
+          setBcmModelKey(key)
+          setOptPhase(null)
+          addMessage(currentBranchId, {
+            id: genId(),
+            role: 'assistant',
+            content: '[최적화 가이드] BCM 모델 학습이 완료되었습니다. 이제 실행 방식을 선택하면 최적화 탐색만 진행됩니다.',
+            timestamp: new Date().toISOString(),
+          })
+          setStep('opt_config')
+        },
+        (job) => {
+          setOptPhase(null)
+          setJobError(job.error_message ?? 'BCM 모델 학습 실패')
+          setStep('target_config')
+        },
+        true,
+      )
+    } catch (e: unknown) {
+      setOptPhase(null)
+      setJobError(e instanceof Error ? e.message : 'BCM 모델 학습 요청 실패')
+    }
+  }
+
+  const runOpt = async () => {
+    if (!sessionId || !branchId || !niResult) return
+    setJobError(null); setJobProgress(0); setJobMsg('')
+
+    const { runFeatures, compositionConstraintActive, error } = getOptimizationFeatures()
+    if (error) {
+      setJobError(error)
+      return
+    }
+    if (modelType === 'bcm' && (!bcmModelPath || bcmModelKey !== currentBcmKey())) {
+      setJobError('BCM 모델 사전 학습이 먼저 필요합니다.')
+      setStep('target_config')
       return
     }
 
@@ -378,6 +468,7 @@ export default function InverseOptimizationModal({ onClose, variant = 'modal' }:
         n_calls: optMode === 'timed' ? 999999 : nCalls,
         max_seconds: optMode === 'timed' ? maxMinutes * 60 : undefined,
         model_type: modelType,
+        ...(modelType === 'bcm' && bcmModelPath ? { bcm_model_path: bcmModelPath } : {}),
         ...(compositionConstraintActive ? {
           composition_constraints: [{
             enabled: true,
@@ -438,6 +529,7 @@ export default function InverseOptimizationModal({ onClose, variant = 'modal' }:
     setJobError(null); setJobProgress(0); setJobMsg('')
     setFixedValues({}); setFixedEnabled({})
     setGenBests([])
+    setBcmModelPath(null); setBcmModelKey(null)
   }
 
   // ── 단계별 돌아가기 ──────────────────────────────────────────────────────
@@ -448,6 +540,7 @@ export default function InverseOptimizationModal({ onClose, variant = 'modal' }:
     setJobError(null); setJobProgress(0); setJobMsg('')
     setFixedValues({}); setFixedEnabled({})
     setGenBests([])
+    setBcmModelPath(null); setBcmModelKey(null)
   }
   const goToStep2 = () => {
     stopPolling()
@@ -458,6 +551,7 @@ export default function InverseOptimizationModal({ onClose, variant = 'modal' }:
     stopPolling()
     setStep('feat_config'); setInvResult(null)
     setJobError(null); setJobProgress(0); setJobMsg('')
+    setBcmModelPath(null); setBcmModelKey(null)
   }
   const goToStep4 = () => {
     stopPolling()
@@ -660,8 +754,8 @@ export default function InverseOptimizationModal({ onClose, variant = 'modal' }:
           {step !== 'subset' && (
             <WizardSection
               num={2} title="피처 유의성 분석 (Null Importance)"
-              done={['feat_config', 'target_config', 'running', 'done'].includes(step)}
-              onBack={['feat_config', 'target_config', 'running', 'done'].includes(step) ? goToStep2 : undefined}
+              done={['feat_config', 'target_config', 'bcm_training', 'opt_config', 'running', 'done'].includes(step)}
+              onBack={['feat_config', 'target_config', 'bcm_training', 'opt_config', 'running', 'done'].includes(step) ? goToStep2 : undefined}
             >
               {(step === 'ni_setup') && (
                 <div className="space-y-3">
@@ -759,18 +853,18 @@ export default function InverseOptimizationModal({ onClose, variant = 'modal' }:
                 </div>
               )}
               {step === 'ni_running' && <ProgressBar progress={jobProgress} message={jobMsg || 'Null Importance 분석 중...'} />}
-              {['feat_config', 'target_config', 'running', 'done'].includes(step) && niResult && (
+              {['feat_config', 'target_config', 'bcm_training', 'opt_config', 'running', 'done'].includes(step) && niResult && (
                 <ImportanceTable rows={importanceRows} />
               )}
             </WizardSection>
           )}
 
           {/* ── STEP 3: 피처 설정 ───────────────────────────────────── */}
-          {['feat_config', 'target_config', 'running', 'done'].includes(step) && niResult && (
+          {['feat_config', 'target_config', 'bcm_training', 'opt_config', 'running', 'done'].includes(step) && niResult && (
             <WizardSection
               num={3} title="최적화 피처 설정"
-              done={['target_config', 'running', 'done'].includes(step)}
-              onBack={['target_config', 'running', 'done'].includes(step) ? goToStep3 : undefined}
+              done={['target_config', 'bcm_training', 'opt_config', 'running', 'done'].includes(step)}
+              onBack={['target_config', 'bcm_training', 'opt_config', 'running', 'done'].includes(step) ? goToStep3 : undefined}
             >
               {step === 'feat_config' ? (
                 <div className="space-y-4">
@@ -950,7 +1044,7 @@ export default function InverseOptimizationModal({ onClose, variant = 'modal' }:
           )}
 
           {/* ── STEP 4: 최적화 목표 수립 및 모델링 ─────────────────── */}
-          {['target_config', 'opt_config', 'running', 'done'].includes(step) && (
+          {['target_config', 'bcm_training', 'opt_config', 'running', 'done'].includes(step) && (
             <WizardSection
               num={4} title="최적화 목표 수립 및 모델링"
               done={['opt_config', 'running', 'done'].includes(step)}
@@ -1074,22 +1168,33 @@ export default function InverseOptimizationModal({ onClose, variant = 'modal' }:
                     </div>
                     {modelType === 'bcm' && (
                       <p className="mt-1.5 text-xs text-purple-600">
-                        GPR(RBF) + GPR(Linear) 를 BCM으로 결합 후 LGBM과 50/50 앙상블. 첫 실행 시 GPR 학습으로 시간이 더 걸립니다.
+                        GPR(RBF) + GPR(Linear) 를 BCM으로 결합 후 LGBM과 50/50 앙상블. 다음 단계로 가기 전에 BCM 학습을 먼저 완료합니다.
                       </p>
                     )}
                   </div>
 
-                  <button onClick={() => setStep('opt_config')}
+                  <button onClick={() => { if (modelType === 'bcm') void runBcmPretrain(); else setStep('opt_config') }}
                     className="w-full rounded-lg bg-brand-red py-2 text-sm text-white font-medium hover:bg-red-700 transition-colors"
                   >
-                    다음 →
+                    {modelType === 'bcm' ? 'BCM 학습 후 다음 →' : '다음 →'}
                   </button>
+                </div>
+              )}
+
+              {step === 'bcm_training' && (
+                <div className="space-y-3">
+                  <div className="flex items-center gap-2 rounded-lg bg-purple-50 border border-purple-200 px-3 py-2">
+                    <Loader2 className="h-3.5 w-3.5 text-purple-500 animate-spin shrink-0" />
+                    <span className="text-xs text-purple-700 font-medium">BCM 모델 학습 중입니다. 완료 후 실행 방식 선택 단계로 이동합니다.</span>
+                  </div>
+                  <ProgressBar progress={jobProgress} message={jobMsg || 'BCM 모델 학습 중...'} />
                 </div>
               )}
 
               {['opt_config', 'running', 'done'].includes(step) && (
                 <p className="text-xs text-gray-500">
                   {optTarget} {direction === 'maximize' ? '최대화' : '최소화'} · {modelType === 'bcm' ? 'BCM' : 'LGBM'}
+                  {modelType === 'bcm' && bcmModelPath ? ' · 사전 학습 완료' : ''}
                   {useConstraint && otherTargets.some((t) => constraintConfigs[t]?.enabled)
                     ? ` · 제약 ${otherTargets.filter((t) => constraintConfigs[t]?.enabled).map((t) => `${t}${constraintConfigs[t]?.type === 'gte' ? '≥' : '≤'}${constraintConfigs[t]?.threshold ?? 0}`).join(', ')}`
                     : ''}

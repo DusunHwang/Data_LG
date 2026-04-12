@@ -335,6 +335,7 @@ export interface ConstrainedInverseRunRequest {
   n_calls?: number
   max_seconds?: number
   model_type?: 'lgbm' | 'bcm'
+  bcm_model_path?: string
   source_artifact_id?: string
   composition_constraints?: Array<{
     enabled: boolean
@@ -369,6 +370,7 @@ export interface InverseRunResult {
   feature_roles?: Record<string, 'optimized' | 'fixed' | 'balance' | 'selected_constant' | 'constant' | string>
   convergence: boolean
   n_evaluations: number
+  stopped_reason?: string
   direction: string
   target_column: string
   selected_features: string[]

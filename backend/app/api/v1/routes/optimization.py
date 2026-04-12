@@ -651,6 +651,7 @@ async def run_constrained_inverse_optimization(
         n_calls=body.get("n_calls", 300),
         max_seconds=body.get("max_seconds"),
         model_type=body.get("model_type", "lgbm"),
+        bcm_model_path=body.get("bcm_model_path"),
         constraints=constraint_infos,
         composition_constraints=body.get("composition_constraints", []),
         stage1_model_paths=opt_info.get("stage1_model_paths") if opt_is_hierarchical else None,
@@ -663,6 +664,107 @@ async def run_constrained_inverse_optimization(
     await db.flush()
 
     return success_response({"job_id": str(job_run.id), "message": "제약 역최적화가 시작되었습니다."})
+
+
+@router.post("/bcm-pretrain", response_model=dict)
+async def pretrain_bcm_model(
+    body: dict,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """최적화 실행 전에 BCM 모델만 미리 학습한다."""
+    session_id = UUID(body["session_id"])
+    branch_id = UUID(body["branch_id"])
+    target_column = body.get("target_column")
+    source_artifact_id = body.get("source_artifact_id")
+    selected_features = body.get("selected_features") or []
+
+    if not target_column:
+        raise HTTPException(status_code=400, detail=error_response("NO_TARGET", "최적화 대상 타겟이 없습니다."))
+    if not selected_features:
+        raise HTTPException(status_code=400, detail=error_response("NO_FEATURES", "BCM 학습에 사용할 피처가 없습니다."))
+
+    session_obj = await validate_user_session(session_id, current_user.id, db)
+    model_repo = ModelRunRepository(db)
+    artifact_repo = ArtifactRepository(db)
+    source_artifact = await artifact_repo.get(UUID(source_artifact_id)) if source_artifact_id else None
+
+    champion_model = None
+    if source_artifact_id or (source_artifact and source_artifact.file_path):
+        champion_model = await model_repo.get_champion_by_target(
+            branch_id,
+            target_column,
+            source_artifact.file_path if source_artifact and source_artifact.file_path else None,
+            UUID(source_artifact_id) if source_artifact_id else None,
+        )
+    if not champion_model and not source_artifact_id:
+        champion_model = await model_repo.get_champion_by_target(branch_id, target_column)
+    if not champion_model:
+        raise HTTPException(status_code=400, detail=error_response("NO_CHAMPION_MODEL", f"챔피언 모델이 없습니다 (target={target_column})."))
+
+    model_artifact = await artifact_repo.get(champion_model.model_artifact_id)
+    if not model_artifact or not model_artifact.file_path:
+        raise HTTPException(status_code=400, detail=error_response("NO_MODEL_FILE", "모델 파일을 찾을 수 없습니다."))
+
+    artifact_metadata = model_artifact.meta or {}
+    if isinstance(artifact_metadata, str):
+        import json as _json
+        artifact_metadata = _json.loads(artifact_metadata)
+
+    is_hierarchical = isinstance(artifact_metadata, dict) and artifact_metadata.get("type") == "lgbm_hierarchical_model"
+    dataset_path = (
+        source_artifact.file_path
+        if source_artifact and source_artifact.file_path
+        else artifact_metadata.get("dataset_path") or champion_model.dataset_path
+    )
+    if not dataset_path:
+        dataset_repo = DatasetRepository(db)
+        dataset = await dataset_repo.get(session_obj.active_dataset_id)
+        dataset_path = dataset.file_path if dataset else None
+    if not dataset_path:
+        raise HTTPException(status_code=400, detail=error_response("NO_DATASET", "데이터셋이 없습니다."))
+
+    job_run = JobRun(
+        session_id=session_id,
+        user_id=current_user.id,
+        job_type=JobType.inverse_optimization,
+        status=JobStatus.pending,
+        params={
+            "subtype": "bcm_pretrain",
+            "branch_id": str(branch_id),
+            "target_column": target_column,
+            "selected_features": selected_features,
+        },
+    )
+    db.add(job_run)
+    await db.flush()
+    await db.refresh(job_run)
+
+    from app.worker.inverse_optimize_tasks import train_bcm_model_task
+    from app.worker.queue import enqueue_job
+
+    rq_job = enqueue_job(
+        train_bcm_model_task,
+        str(job_run.id),
+        str(session_id),
+        str(branch_id),
+        model_artifact.file_path,
+        artifact_metadata.get("feature_names", []),
+        artifact_metadata.get("target_column") or champion_model.target_column or target_column,
+        selected_features,
+        artifact_metadata.get("categorical_features", []),
+        artifact_metadata.get("categorical_encoders", {}),
+        dataset_path,
+        stage1_model_paths=artifact_metadata.get("stage1_model_paths") if is_hierarchical else None,
+        stage1_feature_names=artifact_metadata.get("stage1_feature_names") if is_hierarchical else None,
+        y1_columns=artifact_metadata.get("y1_columns") if is_hierarchical else None,
+        job_id=str(job_run.id),
+    )
+    job_run.rq_job_id = rq_job.id
+    db.add(job_run)
+    await db.flush()
+
+    return success_response({"job_id": str(job_run.id), "message": "BCM 모델 학습이 시작되었습니다."})
 
 
 @router.post("/hierarchical-stats", response_model=dict)

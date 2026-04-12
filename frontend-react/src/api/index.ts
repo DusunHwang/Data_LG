@@ -387,6 +387,16 @@ export const optimizationApi = {
     const res = await http.post<ApiSuccess<AnalyzeResponse>>('/optimization/constrained-inverse-run', req)
     return unwrap(res)
   },
+  bcmPretrain: async (req: {
+    session_id: string
+    branch_id: string
+    target_column: string
+    selected_features: string[]
+    source_artifact_id?: string
+  }): Promise<AnalyzeResponse> => {
+    const res = await http.post<ApiSuccess<AnalyzeResponse>>('/optimization/bcm-pretrain', req)
+    return unwrap(res)
+  },
   hierarchicalStats: async (req: {
     session_id: string
     branch_id: string

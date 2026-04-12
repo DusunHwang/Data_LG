@@ -20,6 +20,10 @@ from app.worker.progress import ProgressReporter
 logger = get_logger(__name__)
 
 
+DEFAULT_CONVERGENCE_PATIENCE = 8
+DEFAULT_CONVERGENCE_TOL = 1e-6
+
+
 def _apply_saved_preprocessing(
     frame: pd.DataFrame,
     categorical_features: list[str],
@@ -173,6 +177,162 @@ def _feature_roles(
         else:
             roles[feat] = "constant"
     return roles
+
+
+def _has_converged(
+    best_history: list[float],
+    direction: str,
+    patience: int = DEFAULT_CONVERGENCE_PATIENCE,
+    tol: float = DEFAULT_CONVERGENCE_TOL,
+) -> bool:
+    """최근 patience 세대 동안 최적값 개선이 작으면 수렴으로 간주한다."""
+    if patience <= 0 or len(best_history) <= patience:
+        return False
+    previous_best = best_history[-patience - 1]
+    current_best = best_history[-1]
+    improvement = (
+        current_best - previous_best
+        if direction == "maximize"
+        else previous_best - current_best
+    )
+    threshold = max(tol, abs(previous_best) * tol)
+    return improvement <= threshold
+
+
+def _append_generation_best(
+    gen_bests: list[dict],
+    best_history: list[float],
+    gen: int,
+    n_evals: int,
+    value: float,
+    direction: str,
+) -> dict:
+    """세대별 후보값과 누적 최적값 이력을 함께 갱신한다."""
+    gen_bests.append({"gen": gen, "n": n_evals, "v": value})
+    best_entry = max(gen_bests, key=lambda e: e["v"]) if direction == "maximize" else min(gen_bests, key=lambda e: e["v"])
+    best_history.append(float(best_entry["v"]))
+    return best_entry
+
+
+def _prepare_bcm_training_frame(
+    df: pd.DataFrame,
+    feature_names: list,
+    target_column: str,
+    categorical_features: list,
+    categorical_encoders: dict | None,
+    stage1_models: dict | None = None,
+    stage1_feature_names: dict | None = None,
+) -> tuple[pd.DataFrame, pd.Series]:
+    """BCM 학습에 필요한 X/y를 모델 피처 순서에 맞춰 구성한다."""
+    y_col = df[target_column] if target_column in df.columns else None
+    if y_col is None:
+        raise ValueError(f"데이터셋에 타겟 컬럼 '{target_column}'이 없습니다.")
+    if y_col.isnull().any():
+        logger.info("BCM 타겟 컬럼 결측치 처리 (중앙값)", column=target_column)
+        y_col = y_col.fillna(y_col.median())
+
+    X_bcm = df.copy()
+    for y1_col, s1_model in (stage1_models or {}).items():
+        s1_feats = (stage1_feature_names or {}).get(y1_col, [])
+        if not s1_feats:
+            continue
+        available_s1_feats = [f for f in s1_feats if f in X_bcm.columns]
+        if len(available_s1_feats) != len(s1_feats):
+            missing = [f for f in s1_feats if f not in X_bcm.columns]
+            logger.warning("BCM Stage 1 피처 일부 없음", y1_col=y1_col, missing=missing)
+        s1_X = X_bcm[available_s1_feats].copy()
+        for feat in s1_feats:
+            if feat not in s1_X.columns:
+                s1_X[feat] = 0.0
+        X_bcm[f"y1_pred_{y1_col}"] = s1_model.predict(s1_X[s1_feats])
+
+    for col in feature_names:
+        if col not in X_bcm.columns:
+            X_bcm[col] = 0.0
+    X_bcm = X_bcm[feature_names]
+    X_bcm = _apply_saved_preprocessing(
+        X_bcm,
+        list(categorical_features or []),
+        categorical_encoders or {},
+    )
+    return X_bcm, y_col
+
+
+def train_bcm_model_task(
+    job_run_id: str,
+    session_id: str,
+    branch_id: str,
+    model_path: str,
+    feature_names: list,
+    target_column: str,
+    selected_features: list,
+    categorical_features: list,
+    categorical_encoders: dict | None,
+    dataset_path: str,
+    stage1_model_paths: dict | None = None,
+    stage1_feature_names: dict | None = None,
+    y1_columns: list | None = None,
+) -> dict:
+    """BCM 모델을 최적화 전에 미리 학습하고 파일로 저장한다."""
+    reporter = ProgressReporter(job_run_id)
+    is_hierarchical = bool(stage1_model_paths and y1_columns)
+    hier_tag = " [계층적: x→y₁→y₂]" if is_hierarchical else ""
+    update_job_status_sync(job_run_id, "running", 0, f"BCM 학습 준비 중...{hier_tag}")
+
+    try:
+        from app.graph.helpers import get_artifact_dir
+        from app.worker.bcm_model import BCMModel
+
+        reporter.update(5, f"LGBM 챔피언 모델 로드 중...{hier_tag}", extra={"phase": "modeling"})
+        lgbm_model = joblib.load(model_path)
+
+        stage1_models: dict = {}
+        if is_hierarchical and stage1_model_paths:
+            for y1_col, s1_path in stage1_model_paths.items():
+                if os.path.exists(s1_path):
+                    stage1_models[y1_col] = joblib.load(s1_path)
+                else:
+                    logger.warning("Stage 1 모델 파일 없음", y1_col=y1_col, path=s1_path)
+
+        reporter.update(10, "BCM 학습 데이터 구성 중...", extra={"phase": "modeling"})
+        df = pd.read_parquet(dataset_path)
+        X_bcm, y_col = _prepare_bcm_training_frame(
+            df,
+            feature_names,
+            target_column,
+            categorical_features,
+            categorical_encoders,
+            stage1_models,
+            stage1_feature_names,
+        )
+
+        def bcm_progress(pct: int, msg: str):
+            mapped = 15 + int(pct * 75 / 100)
+            reporter.update(mapped, f"[BCM 모델링{hier_tag}] {msg}", extra={"phase": "modeling"})
+
+        bcm = BCMModel(lgbm_model, categorical_features=categorical_features)
+        bcm.fit(X_bcm, y_col.values, gpr_features=selected_features, progress_cb=bcm_progress)
+
+        reporter.update(92, "BCM 모델 저장 중...", extra={"phase": "modeling"})
+        model_dir = get_artifact_dir(session_id, "model")
+        bcm_model_path = os.path.join(model_dir, f"bcm_model_{job_run_id}.joblib")
+        joblib.dump(bcm, bcm_model_path)
+
+        result = {
+            "message": "BCM 학습 완료",
+            "bcm_model_path": bcm_model_path,
+            "target_column": target_column,
+            "selected_features": selected_features,
+            "branch_id": branch_id,
+            "is_hierarchical": is_hierarchical,
+        }
+        update_job_status_sync(job_run_id, "completed", 100, "BCM 학습 완료", result=result)
+        return result
+
+    except Exception as e:
+        logger.error("BCM 학습 실패", error=str(e))
+        update_job_status_sync(job_run_id, "failed", 0, f"오류: {str(e)}")
+        raise
 
 
 # ─────────────────────────────────────────────────────────
@@ -846,7 +1006,7 @@ def run_inverse_optimize_task(
             "baseline_all_features": _row_values(base_row, feature_names),
             "feature_roles": feature_roles,
             "n_evaluations": call_count[0],
-            "convergence": bool(result_opt.success),
+            "convergence": bool(result_opt.success or stopped_reason[0] == "converged"),
             "target_column": target_column,
             "is_hierarchical": is_hierarchical,
             "y1_columns": list(y1_columns) if y1_columns else [],
@@ -887,6 +1047,7 @@ def run_constrained_inverse_optimize_task(
     n_calls: int = 300,
     max_seconds: float | None = None,   # None=고정횟수, float=고정시간(초)
     model_type: str = "lgbm",          # "lgbm" | "bcm"
+    bcm_model_path: str | None = None,
     # 제약 조건 (선택, 다중 타겟용)
     constraints: Optional[list] = None,
     composition_constraints: Optional[list] = None,
@@ -963,34 +1124,24 @@ def run_constrained_inverse_optimize_task(
                     y1_preds[f"y1_pred_{y1_col}"] = 0.0
             return y1_preds
 
-        # BCM 모델 구성 (요청 시)
-        if model_type == "bcm":
+        # BCM 모델 구성 (요청 시). 사전 학습 파일이 있으면 최적화 단계에서는 로드만 한다.
+        if model_type == "bcm" and bcm_model_path:
+            if not os.path.exists(bcm_model_path):
+                raise ValueError("사전 학습된 BCM 모델 파일을 찾을 수 없습니다.")
+            reporter.update(12, "사전 학습된 BCM 모델 로드 중...", extra={"phase": "optimizing"})
+            model = joblib.load(bcm_model_path)
+        elif model_type == "bcm":
             from app.worker.bcm_model import BCMModel
-            y_col = df[target_column] if target_column in df.columns else None
-            if y_col is None:
-                raise ValueError(f"데이터셋에 타겟 컬럼 '{target_column}'이 없습니다.")
-            if y_col.isnull().any():
-                logger.info("BCM 타겟 컬럼 결측치 처리 (중앙값)", column=target_column)
-                y_col = y_col.fillna(y_col.median())
-
-            # BCM용 X (feature_names 전체 보장)
-            X_bcm = df.copy()
-            # 계층적 모델: y1_pred_* 컬럼을 Stage 1으로 미리 계산해 추가
             if is_hierarchical and c_stage1_models:
-                reporter.update(8, "BCM 학습 데이터에 y₁ 예측값 계산 중...")
-                for y1_col, s1_model in c_stage1_models.items():
-                    s1_feats = (stage1_feature_names or {}).get(y1_col, [])
-                    if s1_feats:
-                        s1_X = X_bcm[[f for f in s1_feats if f in X_bcm.columns]]
-                        X_bcm[f"y1_pred_{y1_col}"] = s1_model.predict(s1_X)
-            for col in feature_names:
-                if col not in X_bcm.columns:
-                    X_bcm[col] = 0.0
-            X_bcm = X_bcm[feature_names]
-            X_bcm = _apply_saved_preprocessing(
-                X_bcm,
-                list(categorical_features or []),
-                categorical_encoders or {},
+                reporter.update(8, "BCM 학습 데이터에 y₁ 예측값 계산 중...", extra={"phase": "modeling"})
+            X_bcm, y_col = _prepare_bcm_training_frame(
+                df,
+                feature_names,
+                target_column,
+                categorical_features,
+                categorical_encoders,
+                c_stage1_models,
+                stage1_feature_names,
             )
 
             def bcm_progress(pct: int, msg: str):
@@ -1067,6 +1218,8 @@ def run_constrained_inverse_optimize_task(
         call_count = [0]
         gen_count = [0]
         gen_bests: list[dict] = []   # [{gen, n, v}] 세대별 최적 예측값
+        best_history: list[float] = []
+        stopped_reason = ["max_seconds" if max_seconds else "max_iterations"]
         opt_start = _time.time()
         reporter.update(15, f"역최적화 시작 (방향: {direction}, 피처: {len(opt_features)}개){hier_tag}...",
                         extra={"phase": "optimizing"})
@@ -1133,12 +1286,9 @@ def run_constrained_inverse_optimize_task(
                 cb_row.update(_c_compute_stage1(cb_row))
             pred = _eval_primary(cb_row)
             if pred is not None:
-                gen_bests.append({"gen": gen_count[0], "n": call_count[0], "v": pred})
-            # 누적 최적 항목 계산
-            if gen_bests:
-                best_entry = max(gen_bests, key=lambda e: e["v"]) if direction == "maximize" else min(gen_bests, key=lambda e: e["v"])
+                best_entry = _append_generation_best(gen_bests, best_history, gen_count[0], call_count[0], pred, direction)
             else:
-                best_entry = None
+                best_entry = gen_bests[-1] if gen_bests else None
             if max_seconds:
                 pct = min(90, 15 + int(70 * elapsed / max(max_seconds, 1)))
             else:
@@ -1158,9 +1308,14 @@ def run_constrained_inverse_optimize_task(
                 },
             )
             if max_seconds and elapsed >= max_seconds:
+                stopped_reason[0] = "time_limit"
                 return True   # 시간 초과 → DE 조기 종료
             if is_cancellation_requested(job_run_id):
+                stopped_reason[0] = "cancelled"
                 return True   # 사용자 취소
+            if _has_converged(best_history, direction):
+                stopped_reason[0] = "converged"
+                return True
             return False
 
         popsize = 12
@@ -1261,6 +1416,7 @@ def run_constrained_inverse_optimize_task(
             "feature_roles": feature_roles,
             "n_evaluations": call_count[0],
             "convergence": bool(result_opt.success),
+            "stopped_reason": "scipy_converged" if result_opt.success else stopped_reason[0],
             "constraints": constraint_results,
             "composition_constraints": composition_results,
             "constraint_target_column": constraint_results[0]["target_column"] if constraint_results else None,

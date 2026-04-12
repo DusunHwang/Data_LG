@@ -164,10 +164,12 @@ def _build_summary_context(state: GraphState) -> str:
         result_summary = {}
         RESULT_KEYS = [
             # 공통
-            "summary", "metrics", "top_features", "n_subsets", "best_score",
+            "summary", "metrics", "scalar_result", "top_features", "n_subsets", "best_score",
             "champion_model", "artifact_count", "rows", "cols",
             "target_column", "target_columns",
             "n_models", "champion_rmse", "champion_r2",
+            "model_type", "classification_target", "threshold", "positive_class",
+            "negative_class", "class_counts", "n_train", "n_val",
             # 계층적 모델링
             "mode", "target_col", "y1_columns",
             "stage1_results",

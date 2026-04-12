@@ -80,6 +80,7 @@ INTENT_SYSTEM_PROMPT = """/no_think
 
 중요 구분 규칙:
 - 사용자가 "그려줘", "plot", "차트", "scatter", "histogram", "시각화해줘" 등 새 그래프 생성을 요청하면 → eda
+- "Decision Tree로 A 150 이상/이하 분류 모델", "분류 모델을 만들고 중요 인자"처럼 모델 종류와 분류 기준이 포함되면 → baseline_modeling
 - 데이터의 통계값, 개수, 합계, 평균 등 수치 계산 요청도 → eda
 - "데이터셋 만들어줘", "필터링해줘", "추출해줘", "서브셋", "조건에 맞는 행", "파생 변수", "새 컬럼 추가" 등 데이터프레임 결과물을 요청하면 → create_dataframe
 - create_dataframe은 시각화 없이 데이터프레임 자체가 결과물인 경우
@@ -216,8 +217,12 @@ async def _classify_with_llm(state: GraphState, user_message: str) -> GraphState
 def _keyword_classify(message: str) -> str:
     """키워드 기반 폴백 인텐트 분류"""
     msg = message.lower()
+    if any(w in msg for w in ["decision tree", "decisiontree", "결정트리", "의사결정"]) or (
+        "분류" in msg and "모델" in msg
+    ):
+        return "baseline_modeling"
     # 핵심인자 추출 → 모델링 (create_dataframe "추출" 키워드보다 먼저 체크)
-    if any(w in msg for w in ["핵심인자", "핵심 인자"]):
+    if any(w in msg for w in ["핵심인자", "핵심 인자", "중요 인자", "중요한 인자"]):
         return "baseline_modeling"
     # 인자 최소화 → shap (optimization "최적화"와 구분)
     if any(w in msg for w in ["인자 최소화", "인자최소화", "인자를 최소화"]):
