@@ -49,13 +49,17 @@ async def get_job_status(
         )
 
     # Redis에서 진행률 조회 (running 상태인 경우)
+    progress_extra: dict | None = None
     if job_run.status == JobStatus.running:
         progress_data = get_progress(job_run.id)
         if progress_data:
             job_run.progress = progress_data.get("progress", job_run.progress)
             job_run.progress_message = progress_data.get("message", job_run.progress_message)
+            progress_extra = progress_data.get("extra") or None
 
-    return success_response(JobStatusResponse.model_validate(job_run).model_dump())
+    response_data = JobStatusResponse.model_validate(job_run).model_dump()
+    response_data["progress_extra"] = progress_extra
+    return success_response(response_data)
 
 
 @router.post("/{job_id}/cancel", response_model=dict)

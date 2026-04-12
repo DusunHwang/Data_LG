@@ -43,7 +43,9 @@ def enqueue_job(func: Callable, *args, job_id: str | None = None, **kwargs) -> S
     def _on_done(f):
         exc = f.exception()
         if exc:
-            logger.error("작업 실패", job_id=jid, error=str(exc))
+            import traceback
+            tb = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
+            logger.error("작업 실패", job_id=jid, error=str(exc), traceback=tb)
 
     future.add_done_callback(_on_done)
     return job

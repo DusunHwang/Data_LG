@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useCallback, useMemo, memo } from 'react'
-import { Send, ChevronDown, ChevronRight, Zap, BarChart2, BrainCircuit, Target, ChevronsUpDown, FlaskConical, X } from 'lucide-react'
+import { Send, ChevronDown, ChevronRight, Zap, BarChart2, BrainCircuit, Target, ChevronsUpDown, FlaskConical, X, GitBranch } from 'lucide-react'
 import { analysisApi, artifactsApi } from '@/api'
 import { useChatStore, useSessionStore, useArtifactStore, genId } from '@/store'
 import type { ChatMessage } from '@/types'
@@ -66,6 +66,7 @@ export default function ChatPanel({
   const activeConfig = activeArtifactId ? dataframeConfigsByBranch[currentBranchId]?.[activeArtifactId] : undefined
   const targetColumns = activeConfig?.targetColumns ?? (targetColumn ? [targetColumn] : [])
   const featureColumns = activeConfig?.featureColumns ?? []
+  const y1Columns = activeConfig?.y1Columns ?? []
   const {
     histories,
     activeJobIds,
@@ -146,6 +147,7 @@ export default function ChatPanel({
             dataset_id: datasetId ?? undefined,
             target_columns: targetColumns,
             feature_columns: featureColumns.length > 0 ? featureColumns : undefined,
+            y1_columns: y1Columns.length > 0 ? y1Columns : undefined,
             target_dataframe_id: targetDataframeArtifactId ?? undefined,
           },
         })
@@ -161,7 +163,7 @@ export default function ChatPanel({
         setSending(false)
       }
     },
-    [sessionId, branchId, currentBranchId, sending, mode, datasetId, targetColumns, featureColumns, targetDataframeArtifactId, addMessage, setActiveJob],
+    [sessionId, branchId, currentBranchId, sending, mode, datasetId, targetColumns, featureColumns, y1Columns, targetDataframeArtifactId, addMessage, setActiveJob],
   )
 
   // 외부에서 입력 삽입 (질문 템플릿 클릭/더블클릭)
@@ -412,6 +414,12 @@ export default function ChatPanel({
               <strong className="text-amber-700">{targetColumns.join(', ')}</strong>
             </span>
           )}
+          {y1Columns.length > 0 && (
+            <span className="flex items-center gap-1">
+              <GitBranch className="h-3 w-3 text-green-600" />
+              <strong className="text-green-700">y₁: {y1Columns.join(', ')}</strong>
+            </span>
+          )}
           {targetDataframeArtifactId && (
             <span className="flex items-center gap-1 text-teal-600">
               <span className="h-1.5 w-1.5 rounded-full bg-teal-500" />
@@ -461,6 +469,24 @@ export default function ChatPanel({
                 <FlaskConical className="h-4 w-4 shrink-0" />
                 모델기반 최적화
               </button>
+              {y1Columns.length > 0 ? (
+                <button
+                  onClick={() => handleSend(`계층적 모델링을 수행해줘 (중간 변수: ${y1Columns.join(', ')})`)}
+                  className="flex items-center gap-2 rounded-lg border border-green-400 bg-green-50 px-3 py-2.5 text-sm text-green-700 hover:border-green-600 hover:bg-green-100 transition-colors text-left"
+                >
+                  <GitBranch className="h-4 w-4 shrink-0" />
+                  계층적 모델링
+                </button>
+              ) : (
+                <button
+                  disabled
+                  className="flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-3 py-2.5 text-sm text-gray-400 cursor-not-allowed opacity-50 text-left"
+                  title="데이터프레임 카드에서 중간 변수(y₁)를 먼저 설정하세요"
+                >
+                  <GitBranch className="h-4 w-4 shrink-0" />
+                  계층적 모델링
+                </button>
+              )}
             </div>
           </div>
         )}
@@ -536,6 +562,26 @@ export default function ChatPanel({
             <FlaskConical className="h-3 w-3" />
             모델기반 최적화
           </button>
+          {y1Columns.length > 0 ? (
+            <button
+              onClick={() => handleSend(`계층적 모델링을 수행해줘 (중간 변수: ${y1Columns.join(', ')})`)}
+              disabled={sending || !!activeJobId}
+              className="flex shrink-0 items-center gap-1.5 rounded-full border border-green-400 bg-green-50 px-3 py-1 text-xs text-green-700 hover:border-green-600 hover:bg-green-100 transition-colors disabled:opacity-50"
+              title={`y₁: ${y1Columns.join(', ')} → 계층적 모델링 실행`}
+            >
+              <GitBranch className="h-3 w-3" />
+              계층적 모델링
+            </button>
+          ) : (
+            <button
+              disabled
+              className="flex shrink-0 items-center gap-1.5 rounded-full border border-gray-200 px-3 py-1 text-xs text-gray-400 cursor-not-allowed opacity-50"
+              title="데이터프레임 카드에서 중간 변수(y₁)를 먼저 설정하세요"
+            >
+              <GitBranch className="h-3 w-3" />
+              계층적 모델링
+            </button>
+          )}
         </div>
 
         <div className="flex items-end gap-2">

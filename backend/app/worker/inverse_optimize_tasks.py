@@ -540,28 +540,52 @@ def run_inverse_optimize_task(
     categorical_encoders: dict | None,
     dataset_path: str,
     n_calls: int = 300,
+    max_seconds: float | None = None,
+    # 계층적 모델 전용 파라미터
+    stage1_model_paths: dict | None = None,   # {y1_col: model_file_path}
+    stage1_feature_names: dict | None = None, # {y1_col: [feat_names]}
+    y1_columns: list | None = None,           # y₁ 컬럼 이름 목록
 ) -> dict:
     """
     역최적화: 모델이 정의한 공간에서 예측값을 maximize/minimize하는 피처 조합 탐색.
     scipy.differential_evolution 사용.
+    계층적 모델(lgbm_hierarchical_model)일 경우 Stage 1으로 y₁을 예측 후 Stage 2에 투입.
     """
     reporter = ProgressReporter(job_run_id)
     update_job_status_sync(job_run_id, "running", 0, "역최적화 준비 중...")
 
+    is_hierarchical = bool(stage1_model_paths and y1_columns)
+
     try:
         from scipy.optimize import differential_evolution
 
-        reporter.update(5, "모델 로드 중...")
-        model = joblib.load(model_path)
+        hier_tag = " [계층적: x→y₁→y₂]" if is_hierarchical else ""
+        reporter.update(5, f"모델 로드 중...{hier_tag}")
+        lgbm_model = joblib.load(model_path)
+
+        # 계층적 모델: Stage 1 모델들 로드
+        stage1_models: dict = {}  # {y1_col: lgbm_model}
+        if is_hierarchical and stage1_model_paths:
+            for y1_col, s1_path in stage1_model_paths.items():
+                if os.path.exists(s1_path):
+                    stage1_models[y1_col] = joblib.load(s1_path)
+                    logger.info("Stage 1 모델 로드", y1_col=y1_col)
+                else:
+                    logger.warning("Stage 1 모델 파일 없음", y1_col=y1_col, path=s1_path)
 
         reporter.update(10, "데이터 로드 및 탐색 공간 구성 중...")
         df = pd.read_parquet(dataset_path)
-        
+
+        # 계층적 모델: y1_pred_* 피처는 최적화 변수가 아니라 Stage 1 예측값으로 대체
+        # feature_names에서 y1_pred_* 제외한 x 피처만 available_features에 포함
+        y1_pred_cols = {f"y1_pred_{c}" for c in (y1_columns or [])}
+        x_feature_names = [f for f in feature_names if f not in y1_pred_cols]
+
         # 모델에 필요한 피처 중 데이터셋에 있는 것만 우선 선택
-        available_features = [f for f in feature_names if f in df.columns]
+        available_features = [f for f in x_feature_names if f in df.columns]
         if not available_features:
              raise ValueError("데이터셋에 모델 피처가 하나도 없습니다.")
-             
+
         X_ref_avail = _apply_saved_preprocessing(
             df[available_features].copy(),
             list(categorical_features or []),
@@ -608,37 +632,59 @@ def run_inverse_optimize_task(
         base_row.update(fixed_values)
 
         # 범주형 피처는 선택 불가 (고정값 강제)
-        opt_features = [f for f in selected_features if f not in categorical_features]
+        # 계층적 모델: y1_pred_* 피처도 선택 불가 (Stage 1에서 자동 계산)
+        opt_features = [
+            f for f in selected_features
+            if f not in categorical_features and f not in y1_pred_cols
+        ]
 
         if not opt_features:
-            raise ValueError("선택된 피처 중 수치형 피처가 없습니다.")
+            raise ValueError("선택된 피처 중 최적화 가능한 수치형 피처가 없습니다.")
 
-        # 범주형이 selected에 포함된 경우 bounds에서 제거
-        opt_bounds = [b for f, b in zip(selected_features, bounds) if f not in categorical_features]
+        # 범주형 / y1_pred_* 가 selected에 포함된 경우 bounds에서 제거
+        opt_bounds = [
+            b for f, b in zip(selected_features, bounds)
+            if f not in categorical_features and f not in y1_pred_cols
+        ]
 
         sign = -1.0 if direction == "maximize" else 1.0
 
+        def _compute_stage1_predictions(row: dict) -> dict:
+            """현재 x 값으로 Stage 1 모델들을 실행해 y1_pred_* 값을 계산한다."""
+            if not is_hierarchical:
+                return {}
+            y1_preds = {}
+            for y1_col, s1_model in stage1_models.items():
+                s1_feats = (stage1_feature_names or {}).get(y1_col, [])
+                if not s1_feats:
+                    continue
+                try:
+                    s1_input = pd.DataFrame([{f: row.get(f, 0.0) for f in s1_feats}])[s1_feats]
+                    y1_preds[f"y1_pred_{y1_col}"] = float(s1_model.predict(s1_input)[0])
+                except Exception:
+                    y1_preds[f"y1_pred_{y1_col}"] = 0.0
+            return y1_preds
+
+        model = lgbm_model
+
+        import time as _time
+        from app.worker.cancellation import is_cancellation_requested
+
         call_count = [0]
-        reporter.update(15, f"역최적화 실행 중 (방향: {direction}, 후보 피처: {len(opt_features)}개)...")
+        gen_count = [0]
+        gen_bests: list[dict] = []  # [{gen, n, v}] 세대별 최적 예측값
+        hier_note = " [계층적: x→y₁→y₂]" if is_hierarchical else ""
+        opt_start = _time.time()
+        reporter.update(15, f"역최적화 시작 (방향: {direction}, 피처: {len(opt_features)}개){hier_note}...",
+                        extra={"phase": "optimizing"})
 
-        def objective(x):
-            call_count[0] += 1
-            if call_count[0] % 50 == 0:
-                pct = min(90, 15 + int(70 * call_count[0] / n_calls))
-                reporter.update(pct, f"탐색 중... {call_count[0]}/{n_calls}회")
-
-            row = base_row.copy()
-            for feat, val in zip(opt_features, x):
-                row[feat] = val
-
+        def _eval_lgbm(row: dict) -> float | None:
             try:
-                # 모델이 요구하는 feature_names 순서대로 데이터프레임 구성
                 input_df = pd.DataFrame([row])
                 for col in feature_names:
                     if col not in input_df.columns:
                         input_df[col] = 0.0
                 input_df = input_df[feature_names]
-                
                 for col in categorical_features:
                     if col in input_df.columns:
                         if categorical_encoders and col in categorical_encoders:
@@ -647,21 +693,71 @@ def run_inverse_optimize_task(
                             )
                         else:
                             input_df[col] = input_df[col].astype("category")
-                pred = model.predict(input_df)[0]
-                return sign * float(pred)
+                return float(model.predict(input_df)[0])
             except Exception:
-                return 1e9
+                return None
+
+        def objective(x):
+            call_count[0] += 1
+            row = base_row.copy()
+            for feat, val in zip(opt_features, x):
+                row[feat] = val
+            if is_hierarchical:
+                row.update(_compute_stage1_predictions(row))
+            result = _eval_lgbm(row)
+            return sign * result if result is not None else 1e9
+
+        def de_callback(xk, convergence=None):
+            gen_count[0] += 1
+            elapsed = _time.time() - opt_start
+            cb_row = base_row.copy()
+            for feat, val in zip(opt_features, xk):
+                cb_row[feat] = val
+            if is_hierarchical:
+                cb_row.update(_compute_stage1_predictions(cb_row))
+            pred = _eval_lgbm(cb_row)
+            if pred is not None:
+                gen_bests.append({"gen": gen_count[0], "n": call_count[0], "v": pred})
+            best_entry = (max(gen_bests, key=lambda e: e["v"]) if direction == "maximize"
+                          else min(gen_bests, key=lambda e: e["v"])) if gen_bests else None
+            if max_seconds:
+                pct = min(90, 15 + int(70 * elapsed / max(max_seconds, 1)))
+            else:
+                pct = min(90, 15 + int(70 * gen_count[0] / max(maxiter, 1)))
+            reporter.update(
+                pct,
+                f"세대 {gen_count[0]} 탐색 중{hier_note} · 경과 {int(elapsed)}초",
+                extra={
+                    "phase": "optimizing",
+                    "gen": gen_count[0],
+                    "n_evals": call_count[0],
+                    "elapsed": int(elapsed),
+                    "gen_bests": gen_bests[-300:],
+                    "best_value": best_entry["v"] if best_entry else None,
+                    "best_gen": best_entry["gen"] if best_entry else None,
+                    "best_n": best_entry["n"] if best_entry else None,
+                },
+            )
+            if max_seconds and elapsed >= max_seconds:
+                return True
+            if is_cancellation_requested(job_run_id):
+                return True
+            return False
 
         popsize = 12
-        maxiter = max(10, n_calls // (popsize * len(opt_bounds)))
+        if max_seconds:
+            maxiter = 100000
+        else:
+            maxiter = max(10, n_calls // (popsize * max(1, len(opt_bounds))))
         result_opt = differential_evolution(
             objective,
             bounds=opt_bounds,
             maxiter=maxiter,
             popsize=popsize,
             seed=42,
-            tol=1e-6,
+            tol=1e-8,
             workers=1,
+            callback=de_callback,
         )
 
         # 최적 솔루션
@@ -727,6 +823,11 @@ def run_inverse_optimize_task(
 
         reporter.update(95, "결과 저장 중...")
 
+        # 계층적 모델: 최적 솔루션의 y₁ 예측값
+        optimal_y1_predictions: dict = {}
+        if is_hierarchical:
+            optimal_y1_predictions = _compute_stage1_predictions(optimal_row)
+
         result = {
             "direction": direction,
             "optimal_prediction": optimal_prediction,
@@ -747,6 +848,9 @@ def run_inverse_optimize_task(
             "n_evaluations": call_count[0],
             "convergence": bool(result_opt.success),
             "target_column": target_column,
+            "is_hierarchical": is_hierarchical,
+            "y1_columns": list(y1_columns) if y1_columns else [],
+            "optimal_y1_predictions": {k.replace("y1_pred_", ""): v for k, v in optimal_y1_predictions.items()},
         }
 
         # DB에 아티팩트로도 저장
@@ -781,25 +885,34 @@ def run_constrained_inverse_optimize_task(
     primary_model_kind: str,
     dataset_path: str,
     n_calls: int = 300,
+    max_seconds: float | None = None,   # None=고정횟수, float=고정시간(초)
     model_type: str = "lgbm",          # "lgbm" | "bcm"
     # 제약 조건 (선택, 다중 타겟용)
     constraints: Optional[list] = None,
     composition_constraints: Optional[list] = None,
     constraint_penalty: float = 1e6,
+    # 계층적 모델 전용 파라미터
+    stage1_model_paths: dict | None = None,   # {y1_col: model_file_path}
+    stage1_feature_names: dict | None = None, # {y1_col: [feat_names]}
+    y1_columns: list | None = None,           # y₁ 컬럼 이름 목록
 ) -> dict:
     """
     제약 조건부 역최적화.
     - 단일 타겟: 기존과 동일 (constraint 파라미터 없음)
     - 이중 타겟: constraint_model이 정의하는 타겟을 threshold 기준으로 제약하면서
                  primary model의 타겟을 maximize/minimize
+    - 계층적 모델: Stage 1(x→y₁) 후 Stage 2(x+y₁→y₂) 체인으로 목적함수 평가
     """
+    is_hierarchical = bool(stage1_model_paths and y1_columns)
+
     reporter = ProgressReporter(job_run_id)
-    update_job_status_sync(job_run_id, "running", 0, "역최적화 준비 중...")
+    hier_tag = " [계층적: x→y₁→y₂]" if is_hierarchical else ""
+    update_job_status_sync(job_run_id, "running", 0, f"역최적화 준비 중...{hier_tag}")
 
     try:
         from scipy.optimize import differential_evolution
 
-        reporter.update(5, "모델 로드 중...")
+        reporter.update(5, f"모델 로드 중...{hier_tag}")
         lgbm_model = joblib.load(model_path)
         constraint_specs = []
         for constraint in constraints or []:
@@ -811,16 +924,44 @@ def run_constrained_inverse_optimize_task(
                 "model": joblib.load(model_path_item),
             })
 
+        # 계층적 모델: Stage 1 모델들 로드
+        c_stage1_models: dict = {}
+        if is_hierarchical and stage1_model_paths:
+            for y1_col, s1_path in stage1_model_paths.items():
+                if os.path.exists(s1_path):
+                    c_stage1_models[y1_col] = joblib.load(s1_path)
+                    logger.info("Stage 1 모델 로드 (constrained)", y1_col=y1_col)
+                else:
+                    logger.warning("Stage 1 모델 파일 없음", y1_col=y1_col, path=s1_path)
+
         reporter.update(10, "데이터 로드 및 탐색 공간 구성 중...")
         df = pd.read_parquet(dataset_path)
 
+        # 계층적 모델: y1_pred_* 피처는 최적화 변수가 아님
+        y1_pred_cols: set = {f"y1_pred_{c}" for c in (y1_columns or [])}
+        x_feature_names = [f for f in feature_names if f not in y1_pred_cols]
+
         # 모델에 필요한 피처 중 데이터셋에 있는 것만 우선 선택
-        available_features = [f for f in feature_names if f in df.columns]
+        available_features = [f for f in x_feature_names if f in df.columns]
         X_ref_avail = _apply_saved_preprocessing(
             df[available_features].copy(),
             list(categorical_features or []),
             categorical_encoders or {},
         )
+
+        def _c_compute_stage1(row: dict) -> dict:
+            """계층적 모델용: 현재 x 값으로 Stage 1 예측 → y1_pred_* 반환"""
+            y1_preds = {}
+            for y1_col, s1_model in c_stage1_models.items():
+                s1_feats = (stage1_feature_names or {}).get(y1_col, [])
+                if not s1_feats:
+                    continue
+                try:
+                    s1_input = pd.DataFrame([{f: row.get(f, 0.0) for f in s1_feats}])[s1_feats]
+                    y1_preds[f"y1_pred_{y1_col}"] = float(s1_model.predict(s1_input)[0])
+                except Exception:
+                    y1_preds[f"y1_pred_{y1_col}"] = 0.0
+            return y1_preds
 
         # BCM 모델 구성 (요청 시)
         if model_type == "bcm":
@@ -831,9 +972,17 @@ def run_constrained_inverse_optimize_task(
             if y_col.isnull().any():
                 logger.info("BCM 타겟 컬럼 결측치 처리 (중앙값)", column=target_column)
                 y_col = y_col.fillna(y_col.median())
-            
+
             # BCM용 X (feature_names 전체 보장)
             X_bcm = df.copy()
+            # 계층적 모델: y1_pred_* 컬럼을 Stage 1으로 미리 계산해 추가
+            if is_hierarchical and c_stage1_models:
+                reporter.update(8, "BCM 학습 데이터에 y₁ 예측값 계산 중...")
+                for y1_col, s1_model in c_stage1_models.items():
+                    s1_feats = (stage1_feature_names or {}).get(y1_col, [])
+                    if s1_feats:
+                        s1_X = X_bcm[[f for f in s1_feats if f in X_bcm.columns]]
+                        X_bcm[f"y1_pred_{y1_col}"] = s1_model.predict(s1_X)
             for col in feature_names:
                 if col not in X_bcm.columns:
                     X_bcm[col] = 0.0
@@ -846,7 +995,7 @@ def run_constrained_inverse_optimize_task(
 
             def bcm_progress(pct: int, msg: str):
                 mapped = 12 + int(pct * 13 / 100)
-                reporter.update(mapped, f"[BCM] {msg}")
+                reporter.update(mapped, f"[BCM 모델링{hier_tag}] {msg}", extra={"phase": "modeling"})
 
             bcm = BCMModel(lgbm_model, categorical_features=categorical_features)
             bcm.fit(X_bcm, y_col.values, gpr_features=selected_features, progress_cb=bcm_progress)
@@ -861,12 +1010,14 @@ def run_constrained_inverse_optimize_task(
             if spec.get("balance_feature")
         }
 
-        # 탐색 공간
+        # 탐색 공간 — 계층적 모델: y1_pred_* 피처 제외
         bounds, opt_features = [], []
         for feat in selected_features:
             if feat in categorical_features:
                 continue
             if feat in balance_features:
+                continue
+            if feat in y1_pred_cols:          # 계층적: Stage 1 자동 계산 피처 제외
                 continue
             opt_features.append(feat)
             if feat in feature_ranges:
@@ -892,11 +1043,11 @@ def run_constrained_inverse_optimize_task(
                 if col not in base_row:
                     modes = X_ref_avail[col].mode()
                     base_row[col] = modes.iloc[0] if not modes.empty else None
-            
+
             for feat in feature_names:
                 if feat not in base_row:
                     base_row[feat] = 0.0
-            
+
             for constraint in constraint_specs:
                 for feat in constraint.get("feature_names", []) or []:
                     if feat not in base_row:
@@ -905,13 +1056,22 @@ def run_constrained_inverse_optimize_task(
             logger.error("기준 벡터(base_row) 생성 중 오류 발생", error=str(e))
             raise
         base_row.update(fixed_values)
+        # 계층적: base_row에 Stage 1 y₁ 예측값도 미리 채움
+        if is_hierarchical:
+            base_row.update(_c_compute_stage1(base_row))
+
+        import time as _time
+        from app.worker.cancellation import is_cancellation_requested
 
         sign = -1.0 if direction == "maximize" else 1.0
         call_count = [0]
-        reporter.update(15, f"역최적화 실행 중 (방향: {direction}, 피처: {len(opt_features)}개)...")
+        gen_count = [0]
+        gen_bests: list[dict] = []   # [{gen, n, v}] 세대별 최적 예측값
+        opt_start = _time.time()
+        reporter.update(15, f"역최적화 시작 (방향: {direction}, 피처: {len(opt_features)}개){hier_tag}...",
+                        extra={"phase": "optimizing"})
 
         def build_input(row, feat_list, cat_feats, cat_encoders=None, model_kind: str = "baseline_model"):
-            # feat_list에 있는 모든 피처가 row에 있음을 보장
             data = {f: [row.get(f, 0.0)] for f in feat_list}
             input_df = pd.DataFrame(data)[feat_list]
             return _apply_saved_preprocessing(
@@ -921,29 +1081,30 @@ def run_constrained_inverse_optimize_task(
                 categorical_mode="category" if model_kind == "lgbm_model" else "encoded",
             )
 
-        def objective(x):
-            call_count[0] += 1
-            if call_count[0] % 50 == 0:
-                pct = min(90, 15 + int(70 * call_count[0] / n_calls))
-                reporter.update(pct, f"탐색 중... {call_count[0]}/{n_calls}회")
-
-            row = base_row.copy()
-            for feat, val in zip(opt_features, x):
-                row[feat] = val
-            composition_violation, _ = _apply_composition_constraints(row, composition_specs)
-
+        def _eval_primary(row: dict) -> float | None:
+            """패널티/부호 없이 순수 예측값만 반환"""
             try:
-                pred_primary = float(model.predict(
+                return float(model.predict(
                     build_input(row, feature_names, categorical_features, categorical_encoders, primary_model_kind)
                 )[0])
             except Exception:
-                return 1e9
+                return None
 
-            # 제약 패널티
+        def objective(x):
+            call_count[0] += 1
+            row = base_row.copy()
+            for feat, val in zip(opt_features, x):
+                row[feat] = val
+            if is_hierarchical:
+                row.update(_c_compute_stage1(row))
+            composition_violation, _ = _apply_composition_constraints(row, composition_specs)
+            pred_primary = _eval_primary(row)
+            if pred_primary is None:
+                return 1e9
             penalty = constraint_penalty * composition_violation
             for constraint in constraint_specs:
-                constraint_type = constraint.get("type")
-                constraint_threshold = constraint.get("threshold")
+                ctype = constraint.get("type")
+                cthresh = constraint.get("threshold")
                 try:
                     pred_c = float(constraint["model"].predict(
                         build_input(
@@ -954,26 +1115,68 @@ def run_constrained_inverse_optimize_task(
                             constraint.get("model_kind", "baseline_model"),
                         )
                     )[0])
-                    if constraint_type == "gte":
-                        violation = max(0.0, float(constraint_threshold) - pred_c)
-                    else:
-                        violation = max(0.0, pred_c - float(constraint_threshold))
+                    violation = max(0.0, float(cthresh) - pred_c) if ctype == "gte" else max(0.0, pred_c - float(cthresh))
                     penalty += constraint_penalty * violation
                 except Exception:
                     penalty += constraint_penalty
-
             return sign * pred_primary + penalty
 
+        def de_callback(xk, convergence=None):
+            """세대 완료 시 호출 — 진행 보고, 시간/취소 확인"""
+            gen_count[0] += 1
+            elapsed = _time.time() - opt_start
+            # 현재 최적 해로 예측
+            cb_row = base_row.copy()
+            for feat, val in zip(opt_features, xk):
+                cb_row[feat] = val
+            if is_hierarchical:
+                cb_row.update(_c_compute_stage1(cb_row))
+            pred = _eval_primary(cb_row)
+            if pred is not None:
+                gen_bests.append({"gen": gen_count[0], "n": call_count[0], "v": pred})
+            # 누적 최적 항목 계산
+            if gen_bests:
+                best_entry = max(gen_bests, key=lambda e: e["v"]) if direction == "maximize" else min(gen_bests, key=lambda e: e["v"])
+            else:
+                best_entry = None
+            if max_seconds:
+                pct = min(90, 15 + int(70 * elapsed / max(max_seconds, 1)))
+            else:
+                pct = min(90, 15 + int(70 * gen_count[0] / max(maxiter, 1)))
+            reporter.update(
+                pct,
+                f"세대 {gen_count[0]} 탐색 중{hier_tag} · 경과 {int(elapsed)}초",
+                extra={
+                    "phase": "optimizing",
+                    "gen": gen_count[0],
+                    "n_evals": call_count[0],
+                    "elapsed": int(elapsed),
+                    "gen_bests": gen_bests[-300:],
+                    "best_value": best_entry["v"] if best_entry else None,
+                    "best_gen": best_entry["gen"] if best_entry else None,
+                    "best_n": best_entry["n"] if best_entry else None,
+                },
+            )
+            if max_seconds and elapsed >= max_seconds:
+                return True   # 시간 초과 → DE 조기 종료
+            if is_cancellation_requested(job_run_id):
+                return True   # 사용자 취소
+            return False
+
         popsize = 12
-        maxiter = max(10, n_calls // (popsize * len(bounds)))
+        if max_seconds:
+            maxiter = 100000   # 시간 기반 — 사실상 무제한
+        else:
+            maxiter = max(10, n_calls // (popsize * max(1, len(bounds))))
         result_opt = differential_evolution(
             objective,
             bounds=bounds,
             maxiter=maxiter,
             popsize=popsize,
             seed=42,
-            tol=1e-6,
+            tol=1e-8,
             workers=1,
+            callback=de_callback,
         )
 
         # 최적 솔루션
@@ -1033,6 +1236,11 @@ def run_constrained_inverse_optimize_task(
 
         reporter.update(95, "결과 저장 중...")
 
+        # 계층적: 최적 솔루션의 y₁ 예측값
+        optimal_y1_predictions: dict = {}
+        if is_hierarchical:
+            optimal_y1_predictions = _c_compute_stage1(optimal_row)
+
         result = {
             "direction": direction,
             "target_column": target_column,
@@ -1059,6 +1267,9 @@ def run_constrained_inverse_optimize_task(
             "constraint_type": constraint_results[0]["type"] if constraint_results else None,
             "constraint_threshold": constraint_results[0]["threshold"] if constraint_results else None,
             "constraint_prediction": constraint_results[0]["prediction"] if constraint_results else None,
+            "is_hierarchical": is_hierarchical,
+            "y1_columns": list(y1_columns) if y1_columns else [],
+            "optimal_y1_predictions": {k.replace("y1_pred_", ""): v for k, v in optimal_y1_predictions.items()},
         }
 
         artifact_ids = _save_inverse_optimize_artifact(result, session_id, branch_id, job_run_id)

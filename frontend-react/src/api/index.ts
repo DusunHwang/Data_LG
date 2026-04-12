@@ -387,6 +387,25 @@ export const optimizationApi = {
     const res = await http.post<ApiSuccess<AnalyzeResponse>>('/optimization/constrained-inverse-run', req)
     return unwrap(res)
   },
+  hierarchicalStats: async (req: {
+    session_id: string
+    branch_id: string
+    target_column: string
+    source_artifact_id?: string
+  }): Promise<{ x_feature_names: string[]; feature_stats: Record<string, { min: number; max: number; mean: number }>; target_column: string; y1_columns: string[] }> => {
+    const res = await http.post<ApiSuccess<{ x_feature_names: string[]; feature_stats: Record<string, { min: number; max: number; mean: number }>; target_column: string; y1_columns: string[] }>>('/optimization/hierarchical-stats', req)
+    return unwrap(res)
+  },
+  hierarchicalPredict: async (req: {
+    session_id: string
+    branch_id: string
+    x_values: Record<string, number>
+    target_column: string
+    source_artifact_id?: string
+  }): Promise<{ y1_predictions: Record<string, number>; y2_prediction: number; target_column: string; y1_columns: string[] }> => {
+    const res = await http.post<ApiSuccess<{ y1_predictions: Record<string, number>; y2_prediction: number; target_column: string; y1_columns: string[] }>>('/optimization/hierarchical-predict', req)
+    return unwrap(res)
+  },
 }
 
 export const modelingApi = {
@@ -396,6 +415,18 @@ export const modelingApi = {
   },
   baseline: async (req: BaselineModelingRequest): Promise<AnalyzeResponse> => {
     const res = await http.post<ApiSuccess<AnalyzeResponse>>('/modeling/baseline', req)
+    return unwrap(res)
+  },
+  y1Candidates: async (req: {
+    session_id: string
+    y2_column: string
+    source_artifact_id?: string
+    exclude_columns?: string[]
+  }): Promise<{ y2_column: string; candidates: { column: string; corr_with_y2: number; recommendation: string }[] }> => {
+    const res = await http.post<ApiSuccess<{
+      y2_column: string
+      candidates: { column: string; corr_with_y2: number; recommendation: string }[]
+    }>>('/modeling/y1-candidates', req)
     return unwrap(res)
   },
 }

@@ -1,6 +1,7 @@
 import { useState } from 'react'
-import { CheckCircle2, ZoomIn, Target, X, Columns, Check, MousePointerClick } from 'lucide-react'
+import { CheckCircle2, ZoomIn, Target, X, Check, MousePointerClick, GitBranch, Columns } from 'lucide-react'
 import { useSessionStore } from '@/store'
+import { modelingApi } from '@/api'
 import type { Artifact } from '@/types'
 import Badge from '@/components/ui/Badge'
 import ErrorBoundary from '@/components/ui/ErrorBoundary'
@@ -11,17 +12,22 @@ interface ArtifactCardProps {
 
 export default function ArtifactCard({ artifact }: ArtifactCardProps) {
   const { sessionId, branchId, datasetId, targetDataframeArtifactId, dataframeConfigsByBranch,
-    setTargetDataframeArtifactId, setDataframeTargetColumns, setDataframeFeatureColumns } = useSessionStore()
+    setTargetDataframeArtifactId, setDataframeConfig, setDataframeFeatureColumns,
+    setDataframeY1Columns } = useSessionStore()
 
   const [imgZoom, setImgZoom] = useState(false)
   const [collapsed, setCollapsed] = useState(
     artifact.type === 'report' || artifact.type === 'code'
   )
   const [showTargetSelector, setShowTargetSelector] = useState(false)
+  const [showY1Selector, setShowY1Selector] = useState(false)
   const [showFeatureSelector, setShowFeatureSelector] = useState(false)
   // 로컬 임시 선택 상태 (완료 버튼 누르기 전)
   const [pendingTargetCols, setPendingTargetCols] = useState<string[]>([])
+  const [pendingY1Cols, setPendingY1Cols] = useState<string[]>([])
   const [pendingFeatureCols, setPendingFeatureCols] = useState<string[]>([])
+  const [featureAllSelected, setFeatureAllSelected] = useState(true)
+  const [y1Candidates, setY1Candidates] = useState<{ column: string; corr_with_y2: number; recommendation: string }[]>([])
 
   // 이 카드가 타겟 데이터프레임인지 판단
   const isBaseDataset = artifact.id === `dataset-${datasetId}`
@@ -32,6 +38,7 @@ export default function ArtifactCard({ artifact }: ArtifactCardProps) {
   const artifactConfig = dataframeConfigsByBranch[currentBranchId]?.[artifact.id]
   const targetColumns = artifactConfig?.targetColumns ?? []
   const featureColumns = artifactConfig?.featureColumns ?? []
+  const y1Columns = artifactConfig?.y1Columns ?? []
 
   const isDataframe = ['dataframe', 'table', 'leaderboard', 'feature_importance'].includes(artifact.type)
   const availableColumns = artifact.data?.columns ?? []
@@ -61,31 +68,87 @@ export default function ArtifactCard({ artifact }: ArtifactCardProps) {
     }
   }
 
-  // "타겟 설정" 패널 열기: 현재 targetColumns를 임시 상태로 복사
+  // x(feature) = 전체 - target - y₁ 자동 계산
+  const deriveFeatureCols = (targetCols: string[], y1Cols: string[]) =>
+    availableColumns.filter((c) => !targetCols.includes(c) && !y1Cols.includes(c))
+
+  // "타겟 설정" 패널 열기
   const openTargetSelector = () => {
     setPendingTargetCols([...targetColumns])
     setShowTargetSelector(true)
+    setShowY1Selector(false)
     setShowFeatureSelector(false)
   }
 
-  // "변수 설정" 패널 열기: 기본값 = 전체 컬럼 중 타겟 제외
+  // 타겟 확정 → x 자동 계산
+  const commitTargetCols = () => {
+    const newFeatureCols = deriveFeatureCols(pendingTargetCols, y1Columns)
+    setDataframeConfig(currentBranchId, artifact.id, pendingTargetCols, newFeatureCols)
+    setShowTargetSelector(false)
+  }
+
+  // "중간 변수(y₁) 설정" 패널 열기 + 후보 추천 API 호출
+  const openY1Selector = () => {
+    setPendingY1Cols([...y1Columns])
+    setShowY1Selector(true)
+    setShowTargetSelector(false)
+    setShowFeatureSelector(false)
+
+    if (sessionId && targetColumns.length > 0) {
+      modelingApi.y1Candidates({
+        session_id: sessionId,
+        y2_column: targetColumns[0],
+        source_artifact_id: artifact.id.startsWith('dataset-') ? undefined : artifact.id,
+        exclude_columns: targetColumns,
+      }).then((res) => setY1Candidates(res.candidates))
+        .catch(() => setY1Candidates([]))
+    }
+  }
+
+  // y₁ 확정 → x 자동 계산
+  const commitY1Cols = () => {
+    const newFeatureCols = deriveFeatureCols(targetColumns, pendingY1Cols)
+    setDataframeY1Columns(currentBranchId, artifact.id, pendingY1Cols)
+    setDataframeFeatureColumns(currentBranchId, artifact.id, newFeatureCols)
+    setShowY1Selector(false)
+  }
+
+  // "변수(x) 설정" 패널 열기 — target·y₁ 제외 컬럼을 기본 선택
   const openFeatureSelector = () => {
-    const defaultFeatures = featureColumns.length > 0
+    const defaults = featureColumns.length > 0
       ? [...featureColumns]
-      : availableColumns.filter((c) => !targetColumns.includes(c))
-    setPendingFeatureCols(defaultFeatures)
+      : deriveFeatureCols(targetColumns, y1Columns)
+    setPendingFeatureCols(defaults)
+    setFeatureAllSelected(true)
     setShowFeatureSelector(true)
     setShowTargetSelector(false)
+    setShowY1Selector(false)
   }
 
-  const commitTargetCols = () => {
-    setDataframeTargetColumns(currentBranchId, artifact.id, pendingTargetCols)
-    setShowTargetSelector(false)
-  }
-
+  // 변수(x) 확정
   const commitFeatureCols = () => {
     setDataframeFeatureColumns(currentBranchId, artifact.id, pendingFeatureCols)
     setShowFeatureSelector(false)
+  }
+
+  // 전체 선택 / 전체 해제 토글
+  const toggleFeatureAll = () => {
+    if (featureAllSelected) {
+      setPendingFeatureCols([])
+      setFeatureAllSelected(false)
+    } else {
+      setPendingFeatureCols(deriveFeatureCols(targetColumns, y1Columns))
+      setFeatureAllSelected(true)
+    }
+  }
+
+  const togglePendingFeature = (col: string) => {
+    setPendingFeatureCols((prev) => {
+      const next = prev.includes(col) ? prev.filter((c) => c !== col) : [...prev, col]
+      const maxCols = deriveFeatureCols(targetColumns, y1Columns)
+      setFeatureAllSelected(next.length === maxCols.length)
+      return next
+    })
   }
 
   const togglePendingTarget = (col: string) => {
@@ -94,9 +157,9 @@ export default function ArtifactCard({ artifact }: ArtifactCardProps) {
     )
   }
 
-  const togglePendingFeature = (col: string) => {
-    if (targetColumns.includes(col)) return // 타겟 컬럼은 선택 불가
-    setPendingFeatureCols((prev) =>
+  const togglePendingY1 = (col: string) => {
+    if (targetColumns.includes(col)) return
+    setPendingY1Cols((prev) =>
       prev.includes(col) ? prev.filter((c) => c !== col) : [...prev, col]
     )
   }
@@ -129,6 +192,12 @@ export default function ArtifactCard({ artifact }: ArtifactCardProps) {
             <span className="flex items-center gap-1 rounded-full bg-amber-200 px-1.5 py-0.5 text-xs text-amber-800">
               <Target className="h-3 w-3" />
               {targetColumns.join(', ')}
+            </span>
+          )}
+          {isEffectiveTarget && y1Columns.length > 0 && (
+            <span className="flex items-center gap-1 rounded-full bg-green-100 border border-green-300 px-1.5 py-0.5 text-xs text-green-800">
+              <GitBranch className="h-3 w-3" />
+              y₁: {y1Columns.join(', ')}
             </span>
           )}
         </div>
@@ -186,7 +255,8 @@ export default function ArtifactCard({ artifact }: ArtifactCardProps) {
                   <button
                     onClick={() => {
                       setPendingTargetCols([])
-                      setDataframeTargetColumns(currentBranchId, artifact.id, [])
+                      setDataframeConfig(currentBranchId, artifact.id, [], availableColumns)
+                      setDataframeY1Columns(currentBranchId, artifact.id, [])
                       setShowTargetSelector(false)
                     }}
                     className="flex items-center gap-1 rounded-md border border-gray-300 px-2.5 py-1 text-xs text-gray-600 hover:border-red-400 hover:text-red-600 hover:bg-red-50"
@@ -205,13 +275,82 @@ export default function ArtifactCard({ artifact }: ArtifactCardProps) {
             </div>
           )}
 
-          {/* 변수 컬럼 선택 패널 */}
+          {/* 중간 변수(y₁) 선택 패널 */}
+          {showY1Selector && isEffectiveTarget && isDataframe && availableColumns.length > 0 && (
+            <div className="border-t border-green-100 bg-green-50 px-3 py-3">
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-xs font-semibold text-green-800 flex items-center gap-1">
+                  <GitBranch className="h-3.5 w-3.5" />
+                  중간 변수(y₁) 선택 — 계층적 모델링용
+                </span>
+                <button onClick={() => setShowY1Selector(false)}>
+                  <X className="h-3.5 w-3.5 text-green-600" />
+                </button>
+              </div>
+              <p className="text-xs text-green-700 mb-2 leading-tight">
+                선택한 컬럼을 x→y₁→y₂ 계층적 경로의 중간 변수로 사용합니다. 타겟(y₂) 컬럼은 선택 불가합니다.
+              </p>
+              <div className="flex flex-wrap gap-1.5 max-h-36 overflow-y-auto scrollbar-thin mb-2">
+                {availableColumns.map((col) => {
+                  const isTarget = targetColumns.includes(col)
+                  const selected = !isTarget && pendingY1Cols.includes(col)
+                  const candidate = y1Candidates.find((c) => c.column === col)
+                  const signal = candidate?.recommendation === 'green' ? '🟢'
+                    : candidate?.recommendation === 'yellow' ? '🟡'
+                    : candidate ? '🔴' : ''
+                  return (
+                    <button
+                      key={col}
+                      onClick={() => togglePendingY1(col)}
+                      disabled={isTarget}
+                      title={candidate ? `y₂와 상관계수: ${candidate.corr_with_y2}` : undefined}
+                      className={`rounded-full px-2.5 py-1 text-xs border transition-colors ${
+                        isTarget
+                          ? 'bg-gray-100 border-gray-200 text-gray-400 cursor-not-allowed'
+                          : selected
+                          ? 'bg-green-500 border-green-500 text-white font-medium'
+                          : 'bg-white border-gray-300 text-gray-600 hover:border-green-400 hover:text-green-700'
+                      }`}
+                    >
+                      {signal && <span className="mr-1">{signal}</span>}{col}
+                      {isTarget && <span className="ml-1 opacity-50">(T)</span>}
+                    </button>
+                  )
+                })}
+              </div>
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-xs text-green-700 min-w-0 truncate">
+                  {pendingY1Cols.length > 0 ? `선택: ${pendingY1Cols.join(', ')}` : '미선택 (일반 모델링)'}
+                </span>
+                <div className="flex gap-1 shrink-0">
+                  <button
+                    onClick={() => {
+                      setPendingY1Cols([])
+                      setDataframeY1Columns(currentBranchId, artifact.id, [])
+                      setShowY1Selector(false)
+                    }}
+                    className="flex items-center gap-1 rounded-md border border-gray-300 px-2.5 py-1 text-xs text-gray-600 hover:border-red-400 hover:text-red-600 hover:bg-red-50"
+                  >
+                    <X className="h-3 w-3" /> 리셋
+                  </button>
+                  <button
+                    onClick={commitY1Cols}
+                    className="flex items-center gap-1 rounded-md bg-green-600 px-2.5 py-1 text-xs text-white hover:bg-green-700"
+                  >
+                    <Check className="h-3 w-3" /> 완료
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* 변수(x) 선택 패널 */}
           {showFeatureSelector && isEffectiveTarget && isDataframe && availableColumns.length > 0 && (
             <div className="border-t border-blue-100 bg-blue-50 px-3 py-3">
               <div className="flex items-center justify-between mb-2">
                 <span className="text-xs font-semibold text-blue-800 flex items-center gap-1">
                   <Columns className="h-3.5 w-3.5" />
-                  변수 컬럼 선택 (타겟 제외, 기본=전체)
+                  변수(x) 선택 — 타겟·y₁ 제외, 미선택 시 전체 사용
                 </span>
                 <button onClick={() => setShowFeatureSelector(false)}>
                   <X className="h-3.5 w-3.5 text-blue-600" />
@@ -220,14 +359,16 @@ export default function ArtifactCard({ artifact }: ArtifactCardProps) {
               <div className="flex flex-wrap gap-1.5 max-h-36 overflow-y-auto scrollbar-thin mb-2">
                 {availableColumns.map((col) => {
                   const isTarget = targetColumns.includes(col)
-                  const selected = !isTarget && pendingFeatureCols.includes(col)
+                  const isY1 = y1Columns.includes(col)
+                  const disabled = isTarget || isY1
+                  const selected = !disabled && pendingFeatureCols.includes(col)
                   return (
                     <button
                       key={col}
                       onClick={() => togglePendingFeature(col)}
-                      disabled={isTarget}
+                      disabled={disabled}
                       className={`rounded-full px-2.5 py-1 text-xs border transition-colors ${
-                        isTarget
+                        disabled
                           ? 'bg-gray-100 border-gray-200 text-gray-400 cursor-not-allowed'
                           : selected
                           ? 'bg-blue-500 border-blue-500 text-white font-medium'
@@ -235,21 +376,22 @@ export default function ArtifactCard({ artifact }: ArtifactCardProps) {
                       }`}
                     >
                       {col}
-                      {isTarget && <span className="ml-1 opacity-50">(T)</span>}
+                      {isTarget && <span className="ml-1 opacity-50">(y₂)</span>}
+                      {isY1 && <span className="ml-1 opacity-50">(y₁)</span>}
                     </button>
                   )
                 })}
               </div>
-              <div className="flex items-center justify-between">
+              <div className="flex items-center justify-between gap-2">
                 <span className="text-xs text-blue-700">
                   {pendingFeatureCols.length > 0 ? `${pendingFeatureCols.length}개 선택` : '미선택 (전체 사용)'}
                 </span>
-                <div className="flex gap-1">
+                <div className="flex gap-1 shrink-0">
                   <button
-                    onClick={() => setPendingFeatureCols(availableColumns.filter((c) => !targetColumns.includes(c)))}
-                    className="text-xs text-blue-500 hover:text-blue-700 underline"
+                    onClick={toggleFeatureAll}
+                    className="text-xs text-blue-600 hover:text-blue-800 underline"
                   >
-                    전체 선택
+                    {featureAllSelected ? '전체 해제' : '전체 선택'}
                   </button>
                   <button
                     onClick={commitFeatureCols}
@@ -265,7 +407,7 @@ export default function ArtifactCard({ artifact }: ArtifactCardProps) {
           {/* Actions */}
           <div className="flex items-center gap-2 px-3 py-2 bg-gray-50 border-t border-gray-100 flex-wrap">
 
-            {/* 타겟 설정 버튼 — 타겟 데이터프레임 + dataframe 타입 */}
+            {/* ① 타겟(y₂) 설정 버튼 */}
             {isEffectiveTarget && isDataframe && (
               <button
                 onClick={() => showTargetSelector ? setShowTargetSelector(false) : openTargetSelector()}
@@ -276,22 +418,49 @@ export default function ArtifactCard({ artifact }: ArtifactCardProps) {
                 }`}
               >
                 <Target className="h-3.5 w-3.5" />
-                타겟 설정{targetColumns.length > 0 ? ` (${targetColumns.length})` : ''}
+                타겟(y₂) 설정{targetColumns.length > 0 ? ` (${targetColumns.length})` : ''}
               </button>
             )}
 
-            {/* 변수 설정 버튼 */}
+            {/* ② 중간 변수(y₁) 설정 버튼 — 타겟 설정 후 활성화 */}
+            {isEffectiveTarget && isDataframe && (
+              <button
+                onClick={() => showY1Selector ? setShowY1Selector(false) : openY1Selector()}
+                disabled={targetColumns.length === 0}
+                title={targetColumns.length === 0 ? '타겟(y₂)을 먼저 설정하세요' : undefined}
+                className={`flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs border transition-colors ${
+                  targetColumns.length === 0
+                    ? 'opacity-40 cursor-not-allowed border-gray-200 text-gray-400'
+                    : showY1Selector
+                    ? 'bg-green-100 border-green-500 text-green-800'
+                    : y1Columns.length > 0
+                    ? 'bg-green-50 border-green-400 text-green-700'
+                    : 'text-gray-600 border-gray-200 hover:border-green-400 hover:text-green-700 hover:bg-green-50'
+                }`}
+              >
+                <GitBranch className="h-3.5 w-3.5" />
+                중간 변수(y₁){y1Columns.length > 0 ? ` (${y1Columns.length})` : ''}
+              </button>
+            )}
+
+            {/* ③ 변수(x) 설정 버튼 — 타겟 설정 후 활성화 */}
             {isEffectiveTarget && isDataframe && (
               <button
                 onClick={() => showFeatureSelector ? setShowFeatureSelector(false) : openFeatureSelector()}
+                disabled={targetColumns.length === 0}
+                title={targetColumns.length === 0 ? '타겟(y₂)을 먼저 설정하세요' : undefined}
                 className={`flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs border transition-colors ${
-                  showFeatureSelector
+                  targetColumns.length === 0
+                    ? 'opacity-40 cursor-not-allowed border-gray-200 text-gray-400'
+                    : showFeatureSelector
                     ? 'bg-blue-100 border-blue-400 text-blue-800'
+                    : featureColumns.length > 0 && featureColumns.length < deriveFeatureCols(targetColumns, y1Columns).length
+                    ? 'bg-blue-50 border-blue-400 text-blue-700'
                     : 'text-gray-600 border-gray-200 hover:border-blue-400 hover:text-blue-700 hover:bg-blue-50'
                 }`}
               >
                 <Columns className="h-3.5 w-3.5" />
-                변수 설정{featureColumns.length > 0 ? ` (${featureColumns.length})` : ''}
+                변수(x) 설정{featureColumns.length > 0 ? ` (${featureColumns.length})` : ''}
               </button>
             )}
 

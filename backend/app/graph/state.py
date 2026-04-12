@@ -72,4 +72,5 @@ class GraphState(TypedDict, total=False):
     target_column: Optional[str]  # 사용자가 지정한 타겟 컬럼 (요청 파라미터)
     target_columns: Optional[List[str]]  # 사용자가 지정한 타겟 컬럼 목록
     feature_columns: Optional[List[str]]  # 사용자가 지정한 피처 컬럼 목록 (비어있으면 자동 선택)
+    y1_columns: Optional[List[str]]  # 계층적 모델링의 중간 변수 컬럼 목록 (비어있으면 일반 모델링)
     skip_job_finalize: Optional[bool]  # True이면 summarize 노드에서 job completed 처리 건너뜀 (iterative 중간 run)

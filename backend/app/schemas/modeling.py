@@ -68,3 +68,24 @@ class SimplifyRequest(BaseModel):
     model_run_id: str | None = Field(None, description="모델 실행 ID (None이면 챔피언)")
     top_n_features: int = Field(10, ge=3, le=50, description="상위 N개 피처 유지")
     target_column: str = Field(..., description="타깃 컬럼명")
+
+
+class Y1CandidatesRequest(BaseModel):
+    """y₁ 후보 추천 요청"""
+    session_id: str = Field(..., description="세션 ID")
+    y2_column: str = Field(..., description="최종 타겟 컬럼 (y₂)")
+    source_artifact_id: str | None = Field(None, description="데이터프레임 아티팩트 ID (None이면 활성 데이터셋)")
+    exclude_columns: list[str] | None = Field(None, description="후보에서 제외할 컬럼 목록")
+
+
+class Y1CandidateItem(BaseModel):
+    """y₁ 후보 항목"""
+    column: str
+    corr_with_y2: float
+    recommendation: str  # "green" | "yellow" | "red"
+
+
+class Y1CandidatesResponse(BaseModel):
+    """y₁ 후보 추천 응답"""
+    y2_column: str
+    candidates: list[Y1CandidateItem]

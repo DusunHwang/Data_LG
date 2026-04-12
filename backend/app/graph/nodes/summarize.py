@@ -18,7 +18,15 @@ SUMMARY_SYSTEM_PROMPT = """/no_think
 - 다음 단계 제안 포함
 - 기술적 용어는 쉽게 설명
 - 분석 ID나 아티팩트 ID는 언급하지 않아도 됨
-- 400자 이내로 간결하게 작성
+- 500자 이내로 간결하게 작성
+
+[계층적 모델링 결과 설명 방법]
+mode가 "hierarchical"이면 반드시 아래 항목을 포함하세요:
+1. 사용한 모델 구조: LightGBM 2단계 (Stage 1: x→y₁, Stage 2: x+ŷ₁→y₂)
+2. Stage 1 중간 변수(y₁) 예측 성능 (R², RMSE)
+3. Stage 2 계층적 모델 최종 성능 vs 직접 모델 비교 (R², RMSE 수치)
+4. 성능 향상 여부 판단 (계층적 모델이 더 나으면 권장, 아니면 주의)
+5. 다음 단계: 계층적 모델 기반 최적화 또는 변수 재검토 제안
 """
 
 
@@ -152,14 +160,25 @@ def _build_summary_context(state: GraphState) -> str:
 
     execution_result = state.get("execution_result", {})
     if execution_result:
-        # 핵심 결과만 포함
+        import json
         result_summary = {}
-        for key in ["summary", "metrics", "top_features", "n_subsets", "best_score",
-                    "champion_model", "artifact_count", "rows", "cols", "target_column", "target_columns"]:
+        RESULT_KEYS = [
+            # 공통
+            "summary", "metrics", "top_features", "n_subsets", "best_score",
+            "champion_model", "artifact_count", "rows", "cols",
+            "target_column", "target_columns",
+            "n_models", "champion_rmse", "champion_r2",
+            # 계층적 모델링
+            "mode", "target_col", "y1_columns",
+            "stage1_results",
+            "hierarchical_r2", "hierarchical_rmse", "hierarchical_mae",
+            "direct_r2", "direct_rmse", "direct_mae",
+            "r2_gain", "n_features_hier",
+        ]
+        for key in RESULT_KEYS:
             if key in execution_result:
                 result_summary[key] = execution_result[key]
         if result_summary:
-            import json
             parts.append(f"## 분석 결과\n{json.dumps(result_summary, ensure_ascii=False, indent=2)}")
 
     created_artifacts = state.get("created_artifact_ids", [])
@@ -186,7 +205,43 @@ def _build_summary_context(state: GraphState) -> str:
 
 def _build_fallback_message(state: GraphState) -> str:
     """LLM 실패 시 폴백 메시지 생성"""
+    import json as _json
     intent = state.get("intent", "분석")
+    execution_result = state.get("execution_result", {}) or {}
+    created_artifacts = state.get("created_artifact_ids", [])
+    artifact_str = f" {len(created_artifacts)}개의 아티팩트가 생성되었습니다." if created_artifacts else ""
+
+    # 계층적 모델링 전용 폴백
+    if execution_result.get("mode") == "hierarchical":
+        target_col = execution_result.get("target_col", "?")
+        y1_cols = execution_result.get("y1_columns", [])
+        hier_r2 = execution_result.get("hierarchical_r2")
+        hier_rmse = execution_result.get("hierarchical_rmse")
+        direct_r2 = execution_result.get("direct_r2")
+        direct_rmse = execution_result.get("direct_rmse")
+
+        hier_str = f"R²={hier_r2:.4f}, RMSE={hier_rmse:.4f}" if hier_r2 is not None else "성능 정보 없음"
+        direct_str = f"R²={direct_r2:.4f}, RMSE={direct_rmse:.4f}" if direct_r2 is not None else "성능 정보 없음"
+        improvement = ""
+        if hier_r2 is not None and direct_r2 is not None:
+            diff = hier_r2 - direct_r2
+            if diff > 0.01:
+                improvement = f" 계층적 경로 도입으로 R² {diff:+.4f} 향상되었습니다."
+            elif diff < -0.01:
+                improvement = f" 직접 모델(x→y₂) 대비 성능 차이가 미미하거나 낮습니다 (R² {diff:+.4f})."
+            else:
+                improvement = " 두 접근법의 성능이 유사합니다."
+
+        y1_str = ", ".join(y1_cols) if y1_cols else "없음"
+        return (
+            f"계층적 LightGBM 모델링(x→y₁→y₂)이 완료되었습니다.\n\n"
+            f"**타겟**: {target_col}  |  **중간 변수(y₁)**: {y1_str}\n\n"
+            f"📊 **Stage 2 계층적 모델**: {hier_str}\n"
+            f"📊 **비교 직접 모델 (x→y₂)**: {direct_str}\n"
+            f"{improvement}\n\n"
+            f"아래 아티팩트에서 Stage 1 성능, 모델 비교 리더보드, 피처 중요도, Real vs Predicted 차트를 확인하세요.{artifact_str}"
+        )
+
     intent_names = {
         "dataset_profile": "데이터셋 프로파일",
         "eda": "탐색적 데이터 분석(EDA)",
@@ -200,8 +255,4 @@ def _build_fallback_message(state: GraphState) -> str:
         "followup_model": "모델 후속 분석",
     }
     intent_name = intent_names.get(intent, intent)
-
-    created_artifacts = state.get("created_artifact_ids", [])
-    artifact_str = f" {len(created_artifacts)}개의 아티팩트가 생성되었습니다." if created_artifacts else ""
-
     return f"{intent_name}이(가) 완료되었습니다.{artifact_str} 결과를 확인해 주세요."

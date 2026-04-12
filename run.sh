@@ -40,6 +40,16 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
+# ── 기존 프로세스 정리 ────────────────────────────────────────────────────────
+for PORT in 8000 3000; do
+  PIDS=$(lsof -ti tcp:$PORT 2>/dev/null || true)
+  if [[ -n "$PIDS" ]]; then
+    warn "포트 $PORT 기존 프로세스 종료: $PIDS"
+    kill $PIDS 2>/dev/null || true
+    sleep 1
+  fi
+done
+
 # ── 백엔드 시작 ───────────────────────────────────────────────────────────────
 info "백엔드 시작 중..."
 cd "$SCRIPT_DIR/backend"
@@ -86,4 +96,4 @@ echo "========================================================"
 echo ""
 
 # ── 포그라운드 대기 (Ctrl+C → cleanup) ───────────────────────────────────────
-wait $BACKEND_PID
+wait $BACKEND_PID || true

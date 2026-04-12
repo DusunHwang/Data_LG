@@ -15,6 +15,7 @@ class JobStatusResponse(BaseModel):
     status: str
     progress: int
     progress_message: str | None
+    progress_extra: dict[str, Any] | None = None
     result: dict[str, Any] | None
     error_message: str | None
     started_at: datetime | None

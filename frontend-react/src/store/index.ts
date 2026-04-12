@@ -63,6 +63,7 @@ interface SessionState {
   dataframeConfigsByBranch: Record<string, Record<string, {
     targetColumns: string[]
     featureColumns: string[]
+    y1Columns: string[]
   }>>
   targetDataframeArtifactId: string | null          // 명시적으로 설정된 타겟 데이터프레임
   setSessionId: (id: string | null) => void
@@ -71,6 +72,7 @@ interface SessionState {
   setTargetColumn: (col: string | null) => void
   setDataframeTargetColumns: (branchId: string, artifactId: string, cols: string[]) => void
   setDataframeFeatureColumns: (branchId: string, artifactId: string, cols: string[]) => void
+  setDataframeY1Columns: (branchId: string, artifactId: string, cols: string[]) => void
   setDataframeConfig: (branchId: string, artifactId: string, targetCols: string[], featureCols: string[]) => void
   cloneDataframeConfig: (branchId: string, fromArtifactId: string, toArtifactId: string) => void
   setTargetDataframeArtifactId: (id: string | null) => void
@@ -108,48 +110,75 @@ export const useSessionStore = create<SessionState>()(
         }),
       setTargetColumn: (col) => set({ targetColumn: col }),
       setDataframeTargetColumns: (branchId, artifactId, cols) =>
-        set((state) => ({
-          dataframeConfigsByBranch: {
-            ...state.dataframeConfigsByBranch,
-            [branchId]: {
-              ...(state.dataframeConfigsByBranch[branchId] ?? {}),
-              [artifactId]: {
-                targetColumns: cols,
-                featureColumns: (
-                  (state.dataframeConfigsByBranch[branchId] ?? {})[artifactId]?.featureColumns ?? []
-                ).filter((col) => !cols.includes(col)),
+        set((state) => {
+          const prev = (state.dataframeConfigsByBranch[branchId] ?? {})[artifactId]
+          return {
+            dataframeConfigsByBranch: {
+              ...state.dataframeConfigsByBranch,
+              [branchId]: {
+                ...(state.dataframeConfigsByBranch[branchId] ?? {}),
+                [artifactId]: {
+                  targetColumns: cols,
+                  featureColumns: (prev?.featureColumns ?? []).filter((col) => !cols.includes(col)),
+                  y1Columns: prev?.y1Columns ?? [],
+                },
               },
             },
-          },
-        })),
+          }
+        }),
       setDataframeFeatureColumns: (branchId, artifactId, cols) =>
-        set((state) => ({
-          dataframeConfigsByBranch: {
-            ...state.dataframeConfigsByBranch,
-            [branchId]: {
-              ...(state.dataframeConfigsByBranch[branchId] ?? {}),
-              [artifactId]: {
-                targetColumns: (state.dataframeConfigsByBranch[branchId] ?? {})[artifactId]?.targetColumns ?? [],
-                featureColumns: cols.filter(
-                  (col) => !(((state.dataframeConfigsByBranch[branchId] ?? {})[artifactId]?.targetColumns ?? []).includes(col)),
-                ),
+        set((state) => {
+          const prev = (state.dataframeConfigsByBranch[branchId] ?? {})[artifactId]
+          const targetCols = prev?.targetColumns ?? []
+          return {
+            dataframeConfigsByBranch: {
+              ...state.dataframeConfigsByBranch,
+              [branchId]: {
+                ...(state.dataframeConfigsByBranch[branchId] ?? {}),
+                [artifactId]: {
+                  targetColumns: targetCols,
+                  featureColumns: cols.filter((col) => !targetCols.includes(col)),
+                  y1Columns: prev?.y1Columns ?? [],
+                },
               },
             },
-          },
-        })),
+          }
+        }),
+      setDataframeY1Columns: (branchId, artifactId, cols) =>
+        set((state) => {
+          const prev = (state.dataframeConfigsByBranch[branchId] ?? {})[artifactId]
+          const targetCols = prev?.targetColumns ?? []
+          return {
+            dataframeConfigsByBranch: {
+              ...state.dataframeConfigsByBranch,
+              [branchId]: {
+                ...(state.dataframeConfigsByBranch[branchId] ?? {}),
+                [artifactId]: {
+                  targetColumns: targetCols,
+                  featureColumns: prev?.featureColumns ?? [],
+                  y1Columns: cols.filter((col) => !targetCols.includes(col)),
+                },
+              },
+            },
+          }
+        }),
       setDataframeConfig: (branchId, artifactId, targetCols, featureCols) =>
-        set((state) => ({
-          dataframeConfigsByBranch: {
-            ...state.dataframeConfigsByBranch,
-            [branchId]: {
-              ...(state.dataframeConfigsByBranch[branchId] ?? {}),
-              [artifactId]: {
-                targetColumns: [...targetCols],
-                featureColumns: featureCols.filter((col) => !targetCols.includes(col)),
+        set((state) => {
+          const prev = (state.dataframeConfigsByBranch[branchId] ?? {})[artifactId]
+          return {
+            dataframeConfigsByBranch: {
+              ...state.dataframeConfigsByBranch,
+              [branchId]: {
+                ...(state.dataframeConfigsByBranch[branchId] ?? {}),
+                [artifactId]: {
+                  targetColumns: [...targetCols],
+                  featureColumns: featureCols.filter((col) => !targetCols.includes(col)),
+                  y1Columns: prev?.y1Columns ?? [],
+                },
               },
             },
-          },
-        })),
+          }
+        }),
       cloneDataframeConfig: (branchId, fromArtifactId, toArtifactId) =>
         set((state) => {
           const branchConfigs = state.dataframeConfigsByBranch[branchId] ?? {}
@@ -163,6 +192,7 @@ export const useSessionStore = create<SessionState>()(
                 [toArtifactId]: {
                   targetColumns: [...sourceConfig.targetColumns],
                   featureColumns: [...sourceConfig.featureColumns],
+                  y1Columns: [...(sourceConfig.y1Columns ?? [])],
                 },
               },
             },

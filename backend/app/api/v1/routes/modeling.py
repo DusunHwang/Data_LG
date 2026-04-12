@@ -19,6 +19,8 @@ from app.schemas.modeling import (
     ModelRunResponse,
     SHAPRequest,
     SimplifyRequest,
+    Y1CandidatesRequest,
+    Y1CandidatesResponse,
 )
 logger = get_logger(__name__)
 router = APIRouter(prefix="/modeling", tags=["모델링"])
@@ -299,4 +301,94 @@ async def simplify_model(
         "job_id": str(job_run.id),
         "status": job_run.status.value,
         "message": "모델 단순화 작업이 제출되었습니다.",
+    })
+
+
+@router.post("/y1-candidates", response_model=dict)
+async def get_y1_candidates(
+    body: Y1CandidatesRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """y₁ 중간 변수 후보 추천 — 각 컬럼과 y₂ 간 Pearson 상관계수 기반"""
+    import pandas as pd
+    import numpy as np
+
+    session_id = UUID(body.session_id)
+    session = await validate_user_session(session_id, current_user.id, db)
+
+    # 데이터셋 경로 결정
+    if body.source_artifact_id:
+        artifact_repo = ArtifactRepository(db)
+        artifact = await artifact_repo.get(UUID(body.source_artifact_id))
+        if not artifact or not artifact.file_path:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=error_response(ErrorCode.DATASET_NOT_FOUND,
+                                      "아티팩트를 찾을 수 없습니다."),
+            )
+        dataset_path = artifact.file_path
+    else:
+        if not session.active_dataset_id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=error_response(ErrorCode.NO_ACTIVE_DATASET,
+                                      ERROR_MESSAGES[ErrorCode.NO_ACTIVE_DATASET]),
+            )
+        dataset_repo = DatasetRepository(db)
+        dataset = await dataset_repo.get(session.active_dataset_id)
+        if not dataset or not dataset.file_path:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=error_response(ErrorCode.DATASET_NOT_FOUND,
+                                      ERROR_MESSAGES[ErrorCode.DATASET_NOT_FOUND]),
+            )
+        dataset_path = dataset.file_path
+
+    try:
+        df = pd.read_parquet(dataset_path)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+    y2_col = body.y2_column
+    if y2_col not in df.columns:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=error_response(ErrorCode.INVALID_TARGET,
+                                  f"타겟 컬럼 '{y2_col}'이(가) 데이터셋에 없습니다."),
+        )
+
+    exclude = set([y2_col] + (body.exclude_columns or []))
+    numeric_cols = [
+        c for c in df.columns
+        if c not in exclude and pd.api.types.is_numeric_dtype(df[c])
+    ]
+
+    y2 = df[y2_col].dropna()
+    candidates = []
+    for col in numeric_cols:
+        col_series = df[col].dropna()
+        common = y2.index.intersection(col_series.index)
+        if len(common) < 10:
+            continue
+        try:
+            corr = float(np.corrcoef(col_series.loc[common].values,
+                                     y2.loc[common].values)[0, 1])
+            if np.isnan(corr):
+                continue
+            abs_corr = abs(corr)
+            recommendation = "green" if abs_corr >= 0.7 else ("yellow" if abs_corr >= 0.4 else "red")
+            candidates.append({
+                "column": col,
+                "corr_with_y2": round(corr, 4),
+                "recommendation": recommendation,
+            })
+        except Exception:
+            continue
+
+    candidates.sort(key=lambda x: abs(x["corr_with_y2"]), reverse=True)
+
+    return success_response({
+        "y2_column": y2_col,
+        "candidates": candidates,
     })

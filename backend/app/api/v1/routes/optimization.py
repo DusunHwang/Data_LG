@@ -101,18 +101,30 @@ async def get_model_availability(
             (source_artifact_id and model_source_artifact_id == source_artifact_id) or
             (model_dataset_path and model_dataset_path == desired_dataset_path)
         )
+        # 계층적 모델 여부 감지
+        is_hierarchical = (
+            isinstance(meta, dict) and meta.get("type") == "lgbm_hierarchical_model"
+        )
+        y1_columns_info = meta.get("y1_columns", []) if isinstance(meta, dict) else []
+        x_feature_names = meta.get("x_feature_names", []) if isinstance(meta, dict) else []
+
         statuses.append({
             "target_column": target_column,
             "ready": dataset_matches,
             "reason": "ready" if dataset_matches else "dataset_mismatch",
             "message": (
-                f"'{target_column}' 타겟 챔피언 모델 준비 완료"
+                (f"'{target_column}' 타겟 계층적 챔피언 모델 준비 완료 (y₁: {', '.join(y1_columns_info)})"
+                 if is_hierarchical else
+                 f"'{target_column}' 타겟 챔피언 모델 준비 완료")
                 if dataset_matches else
                 f"'{target_column}' 타겟 챔피언 모델은 현재 선택 데이터 기준이 아닙니다."
             ),
             "model_run_id": str(champion.id),
             "model_dataset_path": model_dataset_path,
             "model_source_artifact_id": model_source_artifact_id,
+            "is_hierarchical": is_hierarchical,
+            "y1_columns": y1_columns_info,
+            "x_feature_names": x_feature_names,
         })
 
     return success_response({
@@ -411,10 +423,21 @@ async def run_inverse_optimization(
         raise HTTPException(status_code=400, detail=error_response("NO_MODEL_FILE", "모델 파일을 찾을 수 없습니다."))
 
     meta = model_artifact.meta or {}
+    if isinstance(meta, str):
+        import json as _json
+        meta = _json.loads(meta)
     feature_names = meta.get("feature_names", [])
     categorical_features = meta.get("categorical_features", [])
     categorical_encoders = meta.get("categorical_encoders", {})
     target_column = meta.get("target_column") or body.get("target_column", "")
+
+    # 계층적 모델 파라미터 추출
+    is_hierarchical = meta.get("type") == "lgbm_hierarchical_model"
+    stage1_model_paths = meta.get("stage1_model_paths") if is_hierarchical else None
+    stage1_feature_names_map = meta.get("stage1_feature_names") if is_hierarchical else None
+    y1_columns = meta.get("y1_columns") if is_hierarchical else None
+    # 역최적화 대상 피처: 계층적 모델이면 x 전용 피처 사용 (y1_pred_* 제외)
+    x_feature_names = meta.get("x_feature_names", feature_names) if is_hierarchical else feature_names
 
     dataset_path = meta.get("dataset_path")
     if not dataset_path:
@@ -434,11 +457,15 @@ async def run_inverse_optimization(
             "subtype": "inverse_optimize",
             "branch_id": str(branch_id),
             "direction": body.get("direction", "maximize"),
+            "is_hierarchical": is_hierarchical,
         },
     )
     db.add(job_run)
     await db.flush()
     await db.refresh(job_run)
+
+    # 선택 피처: 요청이 없으면 x 전용 피처 중 앞 8개
+    default_selected = body.get("selected_features", x_feature_names[:8])
 
     from app.worker.inverse_optimize_tasks import run_inverse_optimize_task
     from app.worker.queue import enqueue_job
@@ -449,7 +476,7 @@ async def run_inverse_optimization(
         str(branch_id),
         model_artifact.file_path,
         feature_names,
-        body.get("selected_features", feature_names[:8]),
+        default_selected,
         body.get("fixed_values", {}),
         body.get("feature_ranges", {}),
         body.get("expand_ratio", 0.125),
@@ -459,6 +486,9 @@ async def run_inverse_optimization(
         categorical_encoders,
         dataset_path,
         body.get("n_calls", 300),
+        stage1_model_paths,
+        stage1_feature_names_map,
+        y1_columns,
         job_id=str(job_run.id),
     )
     job_run.rq_job_id = rq_job.id
@@ -537,6 +567,7 @@ async def run_constrained_inverse_optimization(
         if isinstance(artifact_metadata, str):
             import json as _json
             artifact_metadata = _json.loads(artifact_metadata)
+        is_hier = isinstance(artifact_metadata, dict) and artifact_metadata.get("type") == "lgbm_hierarchical_model"
         return {
             "model_path": model_artifact.file_path,
             "feature_names": artifact_metadata.get("feature_names", []),
@@ -545,6 +576,11 @@ async def run_constrained_inverse_optimization(
             "model_kind": artifact_metadata.get("type", "baseline_model"),
             "target_column": artifact_metadata.get("target_column") or champion_model.target_column or target_col or "",
             "dataset_path": artifact_metadata.get("dataset_path") or champion_model.dataset_path,
+            "is_hierarchical": is_hier,
+            "stage1_model_paths": artifact_metadata.get("stage1_model_paths") if is_hier else None,
+            "stage1_feature_names": artifact_metadata.get("stage1_feature_names") if is_hier else None,
+            "y1_columns": artifact_metadata.get("y1_columns") if is_hier else None,
+            "x_feature_names": artifact_metadata.get("x_feature_names", []) if is_hier else [],
         }
 
     # 최적화 대상 모델
@@ -587,6 +623,11 @@ async def run_constrained_inverse_optimization(
     await db.flush()
     await db.refresh(job_run)
 
+    # 계층적 모델 파라미터 (opt_info에서 추출)
+    opt_is_hierarchical = opt_info.get("is_hierarchical", False)
+    opt_x_features = opt_info.get("x_feature_names") or opt_info["feature_names"]
+    default_selected = body.get("selected_features", opt_x_features[:8])
+
     from app.worker.inverse_optimize_tasks import run_constrained_inverse_optimize_task
     from app.worker.queue import enqueue_job
     rq_job = enqueue_job(
@@ -597,7 +638,7 @@ async def run_constrained_inverse_optimization(
         opt_info["model_path"],
         opt_info["feature_names"],
         opt_info["target_column"],
-        body.get("selected_features", opt_info["feature_names"][:8]),
+        default_selected,
         body.get("fixed_values", {}),
         body.get("feature_ranges", {}),
         body.get("expand_ratio", 0.125),
@@ -606,10 +647,15 @@ async def run_constrained_inverse_optimization(
         opt_info["categorical_encoders"],
         opt_info.get("model_kind", "baseline_model"),
         dataset_path,
-        body.get("n_calls", 300),
-        body.get("model_type", "lgbm"),
-        constraint_infos,
-        body.get("composition_constraints", []),
+        # 모든 옵션 파라미터는 keyword로 전달 (순서 충돌 방지)
+        n_calls=body.get("n_calls", 300),
+        max_seconds=body.get("max_seconds"),
+        model_type=body.get("model_type", "lgbm"),
+        constraints=constraint_infos,
+        composition_constraints=body.get("composition_constraints", []),
+        stage1_model_paths=opt_info.get("stage1_model_paths") if opt_is_hierarchical else None,
+        stage1_feature_names=opt_info.get("stage1_feature_names") if opt_is_hierarchical else None,
+        y1_columns=opt_info.get("y1_columns") if opt_is_hierarchical else None,
         job_id=str(job_run.id),
     )
     job_run.rq_job_id = rq_job.id
@@ -617,6 +663,158 @@ async def run_constrained_inverse_optimization(
     await db.flush()
 
     return success_response({"job_id": str(job_run.id), "message": "제약 역최적화가 시작되었습니다."})
+
+
+@router.post("/hierarchical-stats", response_model=dict)
+async def hierarchical_feature_stats(
+    body: dict,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """계층적 모델 x 피처 통계 (슬라이더 범위용)"""
+    branch_id = UUID(body["branch_id"])
+    target_column: str = body.get("target_column", "")
+    source_artifact_id = body.get("source_artifact_id")
+
+    model_repo = ModelRunRepository(db)
+    artifact_repo = ArtifactRepository(db)
+
+    source_artifact = await artifact_repo.get(UUID(source_artifact_id)) if source_artifact_id else None
+    source_path = source_artifact.file_path if source_artifact else None
+    champion = await model_repo.get_champion_by_target(
+        branch_id, target_column, source_path,
+        UUID(source_artifact_id) if source_artifact_id else None,
+    )
+    if not champion and not source_artifact_id:
+        champion = await model_repo.get_champion_by_target(branch_id, target_column)
+    if not champion:
+        raise HTTPException(status_code=400, detail=error_response("NO_CHAMPION_MODEL", "챔피언 모델이 없습니다."))
+
+    model_artifact = await artifact_repo.get(champion.model_artifact_id) if champion.model_artifact_id else None
+    if not model_artifact:
+        raise HTTPException(status_code=400, detail=error_response("NO_MODEL_FILE", "모델 파일을 찾을 수 없습니다."))
+
+    meta = model_artifact.meta or {}
+    if isinstance(meta, str):
+        import json as _json
+        meta = _json.loads(meta)
+
+    x_feature_names: list = meta.get("x_feature_names", meta.get("feature_names", []))
+    dataset_path: str = meta.get("dataset_path", "")
+    if not dataset_path:
+        session_obj = await validate_user_session(UUID(body["session_id"]), current_user.id, db)
+        dataset_repo = DatasetRepository(db)
+        dataset = await dataset_repo.get(session_obj.active_dataset_id) if session_obj.active_dataset_id else None
+        dataset_path = dataset.file_path if dataset else ""
+
+    feature_stats: dict = {}
+    if dataset_path and x_feature_names:
+        try:
+            import pandas as pd
+            df = pd.read_csv(dataset_path)
+            for feat in x_feature_names:
+                if feat in df.columns:
+                    col = df[feat].dropna()
+                    if len(col) > 0:
+                        feature_stats[feat] = {
+                            "min": float(col.min()),
+                            "max": float(col.max()),
+                            "mean": float(col.mean()),
+                        }
+        except Exception as e:
+            logger.warning("피처 통계 계산 실패", error=str(e))
+
+    return success_response({
+        "x_feature_names": x_feature_names,
+        "feature_stats": feature_stats,
+        "target_column": target_column or meta.get("target_column", ""),
+        "y1_columns": meta.get("y1_columns", []),
+    })
+
+
+@router.post("/hierarchical-predict", response_model=dict)
+async def hierarchical_predict(
+    body: dict,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """계층적 모델 실시간 예측 (x → y₁ → y₂)"""
+    branch_id = UUID(body["branch_id"])
+    session_id = UUID(body["session_id"])
+    x_values: dict = body.get("x_values", {})
+    target_column: str = body.get("target_column", "")
+    source_artifact_id = body.get("source_artifact_id")
+
+    model_repo = ModelRunRepository(db)
+    artifact_repo = ArtifactRepository(db)
+
+    # 챔피언 모델 조회
+    if source_artifact_id or target_column:
+        source_artifact = await artifact_repo.get(UUID(source_artifact_id)) if source_artifact_id else None
+        source_path = source_artifact.file_path if source_artifact else None
+        champion = await model_repo.get_champion_by_target(
+            branch_id, target_column, source_path,
+            UUID(source_artifact_id) if source_artifact_id else None,
+        )
+        if not champion and not source_artifact_id:
+            champion = await model_repo.get_champion_by_target(branch_id, target_column)
+    else:
+        champion = await model_repo.get_champion(branch_id)
+
+    if not champion:
+        raise HTTPException(status_code=400, detail=error_response("NO_CHAMPION_MODEL", "챔피언 모델이 없습니다."))
+
+    model_artifact = await artifact_repo.get(champion.model_artifact_id) if champion.model_artifact_id else None
+    if not model_artifact or not model_artifact.file_path:
+        raise HTTPException(status_code=400, detail=error_response("NO_MODEL_FILE", "모델 파일을 찾을 수 없습니다."))
+
+    meta = model_artifact.meta or {}
+    if isinstance(meta, str):
+        import json as _json
+        meta = _json.loads(meta)
+
+    if not isinstance(meta, dict) or meta.get("type") != "lgbm_hierarchical_model":
+        raise HTTPException(status_code=400, detail=error_response("NOT_HIERARCHICAL", "계층적 모델이 아닙니다."))
+
+    stage1_model_paths: dict = meta.get("stage1_model_paths", {})
+    stage1_feature_names: dict = meta.get("stage1_feature_names", {})
+    y1_columns: list = meta.get("y1_columns", [])
+    feature_names: list = meta.get("feature_names", [])
+
+    try:
+        import joblib
+        import numpy as np
+
+        # Stage 1: x → y₁
+        y1_predictions: dict[str, float] = {}
+        row_s2 = dict(x_values)
+
+        for y1_col in y1_columns:
+            s1_path = stage1_model_paths.get(y1_col)
+            s1_feats = stage1_feature_names.get(y1_col, [])
+            if not s1_path:
+                continue
+            s1_model = joblib.load(s1_path)
+            x_vec = np.array([[float(row_s2.get(f, 0.0)) for f in s1_feats]])
+            y1_pred = float(s1_model.predict(x_vec)[0])
+            y1_predictions[y1_col] = round(y1_pred, 6)
+            row_s2[f"y1_pred_{y1_col}"] = y1_pred
+
+        # Stage 2: x + y1_pred_* → y₂
+        s2_model = joblib.load(model_artifact.file_path)
+        x_s2 = np.array([[float(row_s2.get(f, 0.0)) for f in feature_names]])
+        y2_pred = float(s2_model.predict(x_s2)[0])
+
+    except Exception as e:
+        logger.error("계층적 예측 실패", error=str(e))
+        raise HTTPException(status_code=500, detail=error_response("PREDICT_ERROR", f"예측 실패: {e}"))
+
+    return success_response({
+        "y1_predictions": y1_predictions,
+        "y2_prediction": round(y2_pred, 6),
+        "target_column": target_column or (meta.get("target_column") or ""),
+        "y1_columns": y1_columns,
+    })
 
 
 @router.get("/results/{branch_id}", response_model=dict)

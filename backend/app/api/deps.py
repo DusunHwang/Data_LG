@@ -7,6 +7,7 @@ from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.logging import get_logger
 from app.core.security import verify_access_token
 from app.db.base import get_db_session
 from app.db.models.session import Session
@@ -16,6 +17,8 @@ from app.db.repositories.session import SessionRepository
 from app.db.repositories.user import UserRepository
 from app.schemas.common import ERROR_MESSAGES, ErrorCode, error_response
 from app.services.session_service import SessionService
+
+logger = get_logger(__name__)
 
 security = HTTPBearer(auto_error=False)
 
@@ -133,18 +136,46 @@ async def validate_user_session(
 
 
 async def check_no_active_job(session_id: UUID, db: AsyncSession) -> None:
-    """활성 작업이 있으면 HTTPException(409) 발생"""
+    """활성 작업이 있으면 HTTPException(409) 발생 (오래된 stale 작업은 자동 정리)"""
+    from datetime import datetime, timezone, timedelta
+    from app.db.models.job import JobStatus
+
     repo = JobRunRepository(db)
     active_job = await repo.get_session_active_job(session_id)
-    if active_job:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=error_response(
-                ErrorCode.ACTIVE_JOB_EXISTS,
-                ERROR_MESSAGES[ErrorCode.ACTIVE_JOB_EXISTS],
-                {"job_id": str(active_job.id), "job_type": active_job.job_type.value},
-            ),
+    if not active_job:
+        return
+
+    # 30분 이상 업데이트되지 않은 작업은 stale로 간주하고 자동 실패 처리
+    STALE_THRESHOLD = timedelta(minutes=30)
+    now = datetime.now(timezone.utc)
+    job_updated_at = active_job.updated_at
+    if job_updated_at and job_updated_at.tzinfo is None:
+        job_updated_at = job_updated_at.replace(tzinfo=timezone.utc)
+
+    if job_updated_at and (now - job_updated_at) > STALE_THRESHOLD:
+        logger.warning(
+            "stale 작업 자동 정리",
+            job_id=str(active_job.id),
+            job_type=active_job.job_type.value,
+            updated_at=str(job_updated_at),
         )
+        active_job.status = JobStatus.failed
+        active_job.finished_at = now
+        active_job.error_message = (
+            f"작업이 {int((now - job_updated_at).total_seconds() / 60)}분간 응답이 없어 자동 종료되었습니다."
+        )
+        db.add(active_job)
+        await db.flush()
+        return
+
+    raise HTTPException(
+        status_code=status.HTTP_409_CONFLICT,
+        detail=error_response(
+            ErrorCode.ACTIVE_JOB_EXISTS,
+            ERROR_MESSAGES[ErrorCode.ACTIVE_JOB_EXISTS],
+            {"job_id": str(active_job.id), "job_type": active_job.job_type.value},
+        ),
+    )
 
 
 async def check_session_ownership(

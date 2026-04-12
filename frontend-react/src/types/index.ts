@@ -202,6 +202,16 @@ export interface Job {
   status: JobStatus
   progress: number
   progress_message?: string | null
+  progress_extra?: {
+    phase?: 'modeling' | 'optimizing'
+    gen?: number
+    n_evals?: number
+    elapsed?: number
+    gen_bests?: { gen: number; n: number; v: number }[]
+    best_value?: number
+    best_gen?: number
+    best_n?: number
+  } | null
   result?: JobResult | null
   error_message?: string | null
   created_at: string
@@ -254,6 +264,9 @@ export interface ModelAvailabilityStatus {
   message: string
   model_run_id?: string
   model_dataset_path?: string | null
+  is_hierarchical?: boolean
+  y1_columns?: string[]
+  x_feature_names?: string[]
 }
 
 export interface ModelAvailabilityResponse {
@@ -320,6 +333,7 @@ export interface ConstrainedInverseRunRequest {
   expand_ratio?: number
   direction: 'maximize' | 'minimize'
   n_calls?: number
+  max_seconds?: number
   model_type?: 'lgbm' | 'bcm'
   source_artifact_id?: string
   composition_constraints?: Array<{
@@ -376,6 +390,10 @@ export interface InverseRunResult {
   constraint_type?: string
   constraint_threshold?: number
   constraint_prediction?: number | null
+  // 계층적 모델 정보
+  is_hierarchical?: boolean
+  y1_columns?: string[]
+  optimal_y1_predictions?: Record<string, number>
 }
 
 // ─── API Response wrapper ─────────────────────────────────────────────────────

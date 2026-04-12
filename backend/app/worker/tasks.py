@@ -117,6 +117,7 @@ def run_analysis_task(
         if not target_columns and target_column:
             target_columns = [target_column]
         feature_columns: list[str] = (context or {}).get("feature_columns") or []
+        y1_columns: list[str] = (context or {}).get("y1_columns") or []
 
         logger.info(
             "분석 작업 파라미터",
@@ -153,6 +154,7 @@ def run_analysis_task(
                 target_column=tc,
                 target_columns=target_columns,
                 feature_columns=feature_columns or None,
+                y1_columns=y1_columns or None,
                 skip_job_finalize=skip_finalize,
             )
 
@@ -209,7 +211,14 @@ def run_analysis_task(
         }
 
         # run_analysis_graph 내부에서 job 완료 처리를 하지 않았을 경우 보완
-        if not final_state.get("error_code"):
+        # (summarize_final_response에서 처리했지만, DB 오류 등으로 실패한 경우 대비)
+        if final_state.get("error_code"):
+            error_msg = final_state.get("error_message") or "분석 중 오류 발생"
+            update_job_status_sync(
+                job_run_id, "failed", 0,
+                str(error_msg), error_message=str(error_msg)
+            )
+        else:
             update_job_status_sync(
                 job_run_id, "completed", 100,
                 "분석 완료", result=result

@@ -1,20 +1,21 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import {
   X, Play, RotateCcw, TrendingUp, TrendingDown,
-  AlertCircle, CheckCircle2, Loader2, ChevronDown, ChevronUp, Pencil, Sparkles, MessageSquare,
+  AlertCircle, CheckCircle2, Loader2, ChevronDown, ChevronUp, Pencil, Sparkles, MessageSquare, Activity,
 } from 'lucide-react'
 import { modelingApi, optimizationApi, jobsApi } from '@/api'
 import { useSessionStore, useArtifactStore, useChatStore, genId } from '@/store'
 import type {
   NullImportanceResult, InverseRunResult, Job, Artifact, ModelAvailabilityResponse,
 } from '@/types'
+import HierarchicalScreeningPanel from './HierarchicalScreeningPanel'
 
 interface Props {
   onClose: () => void
   variant?: 'modal' | 'sidebar'
 }
 
-type Step = 'subset' | 'ni_setup' | 'ni_running' | 'feat_config' | 'target_config' | 'running' | 'done'
+type Step = 'subset' | 'ni_setup' | 'ni_running' | 'feat_config' | 'target_config' | 'opt_config' | 'running' | 'done'
 
 const POLL_MS = 3_000
 
@@ -97,14 +98,24 @@ export default function InverseOptimizationModal({ onClose, variant = 'modal' }:
   const [compositionTotal, setCompositionTotal] = useState(100)
   const [compositionBalanceFeature, setCompositionBalanceFeature] = useState('')
 
-  // ── Step 4: 타겟 설정 ────────────────────────────────────────────────────
+  // ── Step 4: 타겟/모델 설정 ───────────────────────────────────────────────
   const [modelType, setModelType] = useState<'lgbm' | 'bcm'>('lgbm')
   const [optTarget, setOptTarget] = useState<string>('')
   const [direction, setDirection] = useState<'maximize' | 'minimize'>('maximize')
-  const [nCalls, setNCalls] = useState(300)
   // 제약 (이중 타겟)
   const [useConstraint, setUseConstraint] = useState(false)
   const [constraintConfigs, setConstraintConfigs] = useState<Record<string, { enabled: boolean; type: 'gte' | 'lte'; threshold: number }>>({})
+
+  // ── Step 5: 최적화 실행 설정 ─────────────────────────────────────────────
+  const [optMode, setOptMode] = useState<'fixed' | 'timed'>('fixed')
+  const [nCalls, setNCalls] = useState(300)
+  const [maxMinutes, setMaxMinutes] = useState(1)   // 고정시간 모드: 분 단위 (기본 1분)
+  // 세대별 최적값 이력 (차트용)
+  const [genBests, setGenBests] = useState<{ gen: number; n: number; v: number }[]>([])
+  // 최적화 진행 phase (modeling | optimizing)
+  const [optPhase, setOptPhase] = useState<'modeling' | 'optimizing' | null>(null)
+  // 실행 중인 jobId (중단 버튼용)
+  const [runningJobId, setRunningJobId] = useState<string | null>(null)
 
   // ── Job polling ──────────────────────────────────────────────────────────
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
@@ -145,16 +156,29 @@ export default function InverseOptimizationModal({ onClose, variant = 'modal' }:
     setCompositionEnabled((prev) => prev || detected.length >= 2)
   }, [featureColumns])
 
-  const startPolling = useCallback((jobId: string, onDone: (j: Job) => void, onFail?: (j: Job) => void) => {
+  const startPolling = useCallback((jobId: string, onDone: (j: Job) => void, onFail?: (j: Job) => void, trackOpt?: boolean) => {
     stopPolling()
     const tick = async () => {
       try {
         const job = await jobsApi.get(jobId)
         setJobProgress(job.progress ?? 0)
         setJobMsg(job.progress_message ?? '')
+        // 최적화 진행 phase + gen_bests 누적
+        if (trackOpt && job.progress_extra) {
+          const extra = job.progress_extra
+          if (extra.phase) setOptPhase(extra.phase)
+          if (extra.gen_bests && extra.gen_bests.length > 0) {
+            setGenBests((prev) => {
+              const lastGen = prev.length > 0 ? prev[prev.length - 1].gen : -1
+              const newPts = extra.gen_bests!.filter((pt) => pt.gen > lastGen)
+              return newPts.length > 0 ? [...prev, ...newPts] : prev
+            })
+          }
+        }
         if (job.status === 'completed') { stopPolling(); onDone(job) }
         else if (job.status === 'failed' || job.status === 'cancelled') {
           stopPolling()
+          setRunningJobId(null)
           if (onFail) onFail(job)
           else {
             setJobError(job.error_message ?? '작업 실패')
@@ -351,7 +375,8 @@ export default function InverseOptimizationModal({ onClose, variant = 'modal' }:
         feature_ranges: niResult.feature_ranges,
         expand_ratio: expandRatio / 100,
         direction,
-        n_calls: nCalls,
+        n_calls: optMode === 'timed' ? 999999 : nCalls,
+        max_seconds: optMode === 'timed' ? maxMinutes * 60 : undefined,
         model_type: modelType,
         ...(compositionConstraintActive ? {
           composition_constraints: [{
@@ -372,6 +397,9 @@ export default function InverseOptimizationModal({ onClose, variant = 'modal' }:
         } : {}),
       })
       setActiveJob(currentBranchId, res.job_id)
+      setGenBests([])
+      setOptPhase(null)
+      setRunningJobId(res.job_id)
       setStep('running')
       startPolling(
         res.job_id,
@@ -390,22 +418,26 @@ export default function InverseOptimizationModal({ onClose, variant = 'modal' }:
               : [],
             timestamp: new Date().toISOString(),
           })
+          setRunningJobId(null)
           setStep('done')
         },
         (job) => {
+          setRunningJobId(null)
           setJobError(job.error_message ?? '최적화 실패')
-          setStep('target_config')
+          setStep('opt_config')
         },
+        true, // trackOpt
       )
     } catch (e: unknown) { setJobError(e instanceof Error ? e.message : '요청 실패') }
   }
 
   const reset = () => {
     stopPolling()
-      setSelectedSubsetId('')
-      setStep('subset'); setNiResult(null); setInvResult(null)
+    setSelectedSubsetId('')
+    setStep('subset'); setNiResult(null); setInvResult(null)
     setJobError(null); setJobProgress(0); setJobMsg('')
     setFixedValues({}); setFixedEnabled({})
+    setGenBests([])
   }
 
   // ── 단계별 돌아가기 ──────────────────────────────────────────────────────
@@ -415,6 +447,7 @@ export default function InverseOptimizationModal({ onClose, variant = 'modal' }:
     setStep('subset'); setNiResult(null); setInvResult(null)
     setJobError(null); setJobProgress(0); setJobMsg('')
     setFixedValues({}); setFixedEnabled({})
+    setGenBests([])
   }
   const goToStep2 = () => {
     stopPolling()
@@ -430,6 +463,12 @@ export default function InverseOptimizationModal({ onClose, variant = 'modal' }:
     stopPolling()
     setStep('target_config'); setInvResult(null)
     setJobError(null); setJobProgress(0); setJobMsg('')
+  }
+  const goToStep5 = () => {
+    stopPolling()
+    setStep('opt_config'); setInvResult(null)
+    setJobError(null); setJobProgress(0); setJobMsg('')
+    setGenBests([])
   }
 
   // ── Derived ──────────────────────────────────────────────────────────────
@@ -468,6 +507,12 @@ export default function InverseOptimizationModal({ onClose, variant = 'modal' }:
 
   const otherTargets = selectedTargetColumns.filter((t) => t !== optTarget)
 
+  // 계층적 모델 감지 (타겟 중 하나라도 hierarchical이면 스크리닝 탭 표시)
+  const hierarchicalStatus = (availability?.statuses ?? []).find((s) => s.is_hierarchical && s.ready)
+  const hasHierarchical = Boolean(hierarchicalStatus)
+  const [wizardTab, setWizardTab] = useState<'optimization' | 'screening'>('optimization')
+  const screeningTargetColumn = hierarchicalStatus?.target_column ?? selectedTargetColumns[0] ?? ''
+
   const isSidebar = variant === 'sidebar'
 
   return (
@@ -479,19 +524,62 @@ export default function InverseOptimizationModal({ onClose, variant = 'modal' }:
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
-        <div className={`sticky top-0 z-10 flex items-center justify-between bg-white border-b border-gray-200 ${isSidebar ? 'px-4 py-3' : 'px-5 py-4'}`}>
-          <div>
-            <h2 className="text-sm font-semibold text-gray-800">모델기반 최적화 위저드</h2>
-            <p className="text-xs text-gray-500 mt-0.5">
-              좌측에서 조건을 가이드하고, 실제 작업 진행과 결과는 중앙 채팅 영역에서 이어집니다.
-            </p>
+        <div className={`sticky top-0 z-10 bg-white border-b border-gray-200 ${isSidebar ? 'px-4 py-3' : 'px-5 py-4'}`}>
+          <div className="flex items-center justify-between">
+            <div>
+              <h2 className="text-sm font-semibold text-gray-800">
+                {wizardTab === 'screening' ? '계층적 모델 가상 스크리닝' : '모델기반 최적화 위저드'}
+              </h2>
+              <p className="text-xs text-gray-500 mt-0.5">
+                {wizardTab === 'screening'
+                  ? 'x 슬라이더 조정 → y₁/y₂ 실시간 예측'
+                  : '좌측에서 조건을 가이드하고, 실제 작업 진행과 결과는 중앙 채팅 영역에서 이어집니다.'}
+              </p>
+            </div>
+            <button onClick={onClose} className="text-gray-400 hover:text-gray-600 transition-colors">
+              <X className="h-5 w-5" />
+            </button>
           </div>
-          <button onClick={onClose} className="text-gray-400 hover:text-gray-600 transition-colors">
-            <X className="h-5 w-5" />
-          </button>
+          {/* 계층적 모델 탭 토글 */}
+          {hasHierarchical && (
+            <div className="flex mt-2 rounded-lg border border-gray-200 overflow-hidden text-xs font-medium">
+              <button
+                onClick={() => setWizardTab('optimization')}
+                className={`flex-1 py-1.5 transition-colors ${
+                  wizardTab === 'optimization'
+                    ? 'bg-brand-red text-white'
+                    : 'bg-white text-gray-500 hover:bg-gray-50'
+                }`}
+              >
+                최적화 위저드
+              </button>
+              <button
+                onClick={() => setWizardTab('screening')}
+                className={`flex-1 flex items-center justify-center gap-1 py-1.5 transition-colors ${
+                  wizardTab === 'screening'
+                    ? 'bg-indigo-600 text-white'
+                    : 'bg-white text-gray-500 hover:bg-gray-50'
+                }`}
+              >
+                <Activity className="h-3 w-3" />
+                가상 스크리닝
+              </button>
+            </div>
+          )}
         </div>
 
-        <div className={`${isSidebar ? 'p-4' : 'p-5'} space-y-4`}>
+        {/* 가상 스크리닝 탭 */}
+        {wizardTab === 'screening' && hasHierarchical && (
+          <div className={`${isSidebar ? 'p-4' : 'p-5'}`}>
+            <HierarchicalScreeningPanel
+              targetColumn={screeningTargetColumn}
+              sourceArtifactId={sourceArtifactId}
+            />
+          </div>
+        )}
+
+        {/* 최적화 위저드 탭 */}
+        {wizardTab === 'optimization' && <div className={`${isSidebar ? 'p-4' : 'p-5'} space-y-4`}>
           <div className="rounded-lg border border-sky-200 bg-sky-50 px-3 py-2.5">
             <div className="flex items-start gap-2">
               <MessageSquare className="mt-0.5 h-4 w-4 shrink-0 text-sky-600" />
@@ -861,12 +949,12 @@ export default function InverseOptimizationModal({ onClose, variant = 'modal' }:
             </WizardSection>
           )}
 
-          {/* ── STEP 4: 타겟 설정 + 실행 ────────────────────────────── */}
-          {['target_config', 'running', 'done'].includes(step) && (
+          {/* ── STEP 4: 최적화 목표 수립 및 모델링 ─────────────────── */}
+          {['target_config', 'opt_config', 'running', 'done'].includes(step) && (
             <WizardSection
-              num={4} title="최적화 목표 및 실행"
-              done={step === 'done'}
-              onBack={step === 'done' ? goToStep4 : undefined}
+              num={4} title="최적화 목표 수립 및 모델링"
+              done={['opt_config', 'running', 'done'].includes(step)}
+              onBack={['opt_config', 'running', 'done'].includes(step) ? goToStep4 : undefined}
             >
               {step === 'target_config' && (
                 <div className="space-y-4">
@@ -991,28 +1079,133 @@ export default function InverseOptimizationModal({ onClose, variant = 'modal' }:
                     )}
                   </div>
 
+                  <button onClick={() => setStep('opt_config')}
+                    className="w-full rounded-lg bg-brand-red py-2 text-sm text-white font-medium hover:bg-red-700 transition-colors"
+                  >
+                    다음 →
+                  </button>
+                </div>
+              )}
+
+              {['opt_config', 'running', 'done'].includes(step) && (
+                <p className="text-xs text-gray-500">
+                  {optTarget} {direction === 'maximize' ? '최대화' : '최소화'} · {modelType === 'bcm' ? 'BCM' : 'LGBM'}
+                  {useConstraint && otherTargets.some((t) => constraintConfigs[t]?.enabled)
+                    ? ` · 제약 ${otherTargets.filter((t) => constraintConfigs[t]?.enabled).map((t) => `${t}${constraintConfigs[t]?.type === 'gte' ? '≥' : '≤'}${constraintConfigs[t]?.threshold ?? 0}`).join(', ')}`
+                    : ''}
+                </p>
+              )}
+            </WizardSection>
+          )}
+
+          {/* ── STEP 5: 최적화 실행 ──────────────────────────────────── */}
+          {['opt_config', 'running', 'done'].includes(step) && (
+            <WizardSection
+              num={5} title="최적화"
+              done={step === 'done'}
+              onBack={step === 'done' ? goToStep5 : undefined}
+            >
+              {step === 'opt_config' && (
+                <div className="space-y-4">
+                  {/* 실행 모드 */}
                   <div>
-                    <label className="text-xs font-medium text-gray-600 block mb-1">탐색 횟수</label>
-                    <input type="number" min={100} max={2000} step={100} value={nCalls}
-                      onChange={(e) => setNCalls(Number(e.target.value))}
-                      className="w-40 rounded border border-gray-300 px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-brand-red/30"
-                    />
+                    <label className="text-xs font-medium text-gray-600 block mb-2">실행 방식</label>
+                    <div className="flex gap-2">
+                      {([
+                        { value: 'fixed', label: '고정 횟수', desc: '탐색 횟수로 제한' },
+                        { value: 'timed', label: '고정 시간', desc: '시간으로 제한' },
+                      ] as const).map(({ value, label, desc }) => (
+                        <button key={value} onClick={() => setOptMode(value)}
+                          className={`flex-1 rounded-lg border-2 py-2.5 text-xs font-medium transition-all ${
+                            optMode === value
+                              ? 'border-brand-red bg-brand-red/5 text-brand-red'
+                              : 'border-gray-200 text-gray-500 hover:border-gray-300'
+                          }`}
+                        >
+                          <div className="font-semibold">{label}</div>
+                          <div className="font-normal opacity-70 mt-0.5">{desc}</div>
+                        </button>
+                      ))}
+                    </div>
                   </div>
+
+                  {optMode === 'fixed' && (
+                    <div>
+                      <label className="text-xs font-medium text-gray-600 block mb-1">탐색 횟수</label>
+                      <input type="number" min={100} max={5000} step={100} value={nCalls}
+                        onChange={(e) => setNCalls(Number(e.target.value))}
+                        className="w-40 rounded border border-gray-300 px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-brand-red/30"
+                      />
+                      <p className="mt-1 text-xs text-gray-400">권장: 300~1000회</p>
+                    </div>
+                  )}
+
+                  {optMode === 'timed' && (
+                    <div>
+                      <label className="text-xs font-medium text-gray-600 block mb-1">실행 시간 (분)</label>
+                      <div className="flex items-center gap-2">
+                        <input type="number" min={0.5} max={60} step={0.5} value={maxMinutes}
+                          onChange={(e) => setMaxMinutes(Number(e.target.value))}
+                          className="w-28 rounded border border-gray-300 px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-brand-red/30"
+                        />
+                        <span className="text-xs text-gray-500">분 ({(maxMinutes * 60).toFixed(0)}초)</span>
+                      </div>
+                      <p className="mt-1 text-xs text-gray-400">지정한 시간이 지나면 자동으로 결과를 반환합니다.</p>
+                    </div>
+                  )}
 
                   <button onClick={runOpt}
                     className="w-full flex items-center justify-center gap-2 rounded-lg bg-brand-red py-2.5 text-sm text-white font-semibold hover:bg-red-700 transition-colors"
                   >
-                    <Play className="h-4 w-4" /> 모델기반 최적화 실행
+                    <Play className="h-4 w-4" /> 최적화 실행
                   </button>
                 </div>
               )}
 
               {step === 'running' && (
-                <ProgressBar progress={jobProgress} message={jobMsg || '모델기반 최적화 탐색 중...'} />
+                <div className="space-y-3">
+                  {/* 단계 표시 */}
+                  {optPhase === 'modeling' && (
+                    <div className="flex items-center gap-2 rounded-lg bg-purple-50 border border-purple-200 px-3 py-2">
+                      <Loader2 className="h-3.5 w-3.5 text-purple-500 animate-spin shrink-0" />
+                      <span className="text-xs text-purple-700 font-medium">BCM 모델 학습 중 — 완료 후 최적화가 시작됩니다</span>
+                    </div>
+                  )}
+                  <ProgressBar progress={jobProgress} message={jobMsg || '최적화 탐색 중...'} />
+                  {optPhase === 'optimizing' && (
+                    <ConvergenceChart
+                      genBests={genBests}
+                      direction={direction}
+                      target={optTarget}
+                    />
+                  )}
+                  {/* 중단 버튼 */}
+                  {runningJobId && (
+                    <button
+                      onClick={async () => {
+                        try { await jobsApi.cancel(runningJobId) } catch { /* ignore */ }
+                        setRunningJobId(null)
+                      }}
+                      className="w-full flex items-center justify-center gap-2 rounded-lg border border-red-300 bg-red-50 py-2 text-xs text-red-600 font-medium hover:bg-red-100 transition-colors"
+                    >
+                      ⏹ 최적화 중단
+                    </button>
+                  )}
+                </div>
               )}
 
               {step === 'done' && invResult && (
-                <InverseResult result={invResult} />
+                <div className="space-y-4">
+                  {genBests.length > 1 && (
+                    <ConvergenceChart
+                      genBests={genBests}
+                      direction={direction}
+                      target={optTarget}
+                      done
+                    />
+                  )}
+                  <InverseResult result={invResult} />
+                </div>
               )}
             </WizardSection>
           )}
@@ -1024,7 +1217,7 @@ export default function InverseOptimizationModal({ onClose, variant = 'modal' }:
               <RotateCcw className="h-3.5 w-3.5" /> 다시 설정
             </button>
           )}
-        </div>
+        </div>}
       </div>
     </div>
   )
@@ -1061,6 +1254,146 @@ function WizardSection({
       </div>
       <div className="p-4">{children}</div>
     </section>
+  )
+}
+
+function ConvergenceChart({
+  genBests,
+  direction,
+  target,
+  done = false,
+}: {
+  genBests: { gen: number; n: number; v: number }[]
+  direction: 'maximize' | 'minimize'
+  target: string
+  done?: boolean
+}) {
+  if (genBests.length === 0) {
+    return (
+      <div className="flex items-center justify-center h-24 rounded-lg border border-dashed border-gray-200 text-xs text-gray-400">
+        세대 탐색 시작 후 목표값 변화가 표시됩니다
+      </div>
+    )
+  }
+
+  const W = 380, H = 140
+  const PAD = { t: 16, r: 14, b: 30, l: 52 }
+  const cw = W - PAD.l - PAD.r
+  const ch = H - PAD.t - PAD.b
+
+  const xMin = genBests[0].gen
+  const xMax = Math.max(genBests[genBests.length - 1].gen, xMin + 1)
+  const vals = genBests.map((p) => p.v)
+  const yMin = Math.min(...vals)
+  const yMax = Math.max(...vals)
+  const yRange = yMax - yMin || 1
+  const yPad = yRange * 0.12
+
+  const toX = (gen: number) => PAD.l + ((gen - xMin) / (xMax - xMin)) * cw
+  const toY = (v: number) => PAD.t + ch - ((v - (yMin - yPad)) / (yRange + 2 * yPad)) * ch
+
+  // 세대별 최적값 꺾은선
+  const linePts = genBests.map((p) => `${toX(p.gen).toFixed(1)},${toY(p.v).toFixed(1)}`).join(' L ')
+  const linePath = `M ${linePts}`
+
+  // 누적 최적값 (running best line)
+  let runningBest = genBests[0].v
+  const runningLine = genBests.map((p) => {
+    if (direction === 'maximize') runningBest = Math.max(runningBest, p.v)
+    else runningBest = Math.min(runningBest, p.v)
+    return { gen: p.gen, v: runningBest }
+  })
+  const runPts = runningLine.map((p) => `${toX(p.gen).toFixed(1)},${toY(p.v).toFixed(1)}`).join(' L ')
+  const runPath = `M ${runPts}`
+
+  // 글로벌 최적 항목
+  const bestEntry = direction === 'maximize'
+    ? genBests.reduce((a, b) => a.v >= b.v ? a : b)
+    : genBests.reduce((a, b) => a.v <= b.v ? a : b)
+
+  const yTicks = [yMin, (yMin + yMax) / 2, yMax]
+  const xTicks = genBests.length <= 6
+    ? genBests.map((p) => p.gen)
+    : [xMin, Math.round((xMin + xMax) / 2), xMax]
+
+  const accentColor = done ? '#16a34a' : '#e11d48'
+  const fmtV = (v: number) => Math.abs(v) >= 10000 ? v.toExponential(2) : v.toFixed(4)
+
+  return (
+    <div className="rounded-lg border border-gray-200 bg-gray-50 p-2.5 space-y-1.5">
+      {/* 헤더 */}
+      <div className="flex items-start justify-between gap-2">
+        <span className="text-[11px] font-medium text-gray-500">
+          {done ? '완료 · ' : ''}세대별 목표값 ({target})
+        </span>
+        <div className="text-right shrink-0">
+          <div className="text-[11px] font-semibold" style={{ color: accentColor }}>
+            최적 {fmtV(bestEntry.v)}
+          </div>
+          <div className="text-[10px] text-gray-400">
+            세대 {bestEntry.gen} · {bestEntry.n}회째
+          </div>
+        </div>
+      </div>
+
+      {/* SVG 차트 */}
+      <svg width={W} height={H} className="w-full" viewBox={`0 0 ${W} ${H}`}>
+        {/* 수평 그리드 + Y축 레이블 */}
+        {yTicks.map((y, i) => (
+          <g key={i}>
+            <line x1={PAD.l} y1={toY(y)} x2={PAD.l + cw} y2={toY(y)}
+              stroke="#e5e7eb" strokeWidth="1" />
+            <text x={PAD.l - 4} y={toY(y) + 3.5}
+              textAnchor="end" fontSize="9" fill="#9ca3af">
+              {fmtV(y)}
+            </text>
+          </g>
+        ))}
+        {/* X축 레이블 */}
+        {xTicks.map((x, i) => (
+          <text key={i} x={toX(x)} y={PAD.t + ch + 16}
+            textAnchor="middle" fontSize="9" fill="#9ca3af">{x}</text>
+        ))}
+        <text x={PAD.l + cw / 2} y={H - 2} textAnchor="middle" fontSize="9" fill="#9ca3af">세대</text>
+
+        {/* 세대별 값 꺾은선 (회색) */}
+        <path d={linePath} fill="none" stroke="#d1d5db" strokeWidth="1.2" strokeLinejoin="round" />
+        {/* 세대별 점 */}
+        {genBests.map((p, i) => (
+          <circle key={i}
+            cx={toX(p.gen)} cy={toY(p.v)}
+            r="2.2" fill={p.gen === bestEntry.gen ? accentColor : '#9ca3af'} />
+        ))}
+
+        {/* 누적 최적 라인 (강조색) */}
+        <path d={runPath} fill="none" stroke={accentColor} strokeWidth="2"
+          strokeLinejoin="round" strokeDasharray={done ? 'none' : '5,3'} />
+
+        {/* 최적점 강조 */}
+        <circle
+          cx={toX(bestEntry.gen)} cy={toY(bestEntry.v)}
+          r="4.5" fill={accentColor} opacity="0.9" />
+
+        {/* 방향 표시 */}
+        <text x={PAD.l + cw} y={PAD.t + 10}
+          textAnchor="end" fontSize="9" fill={accentColor} fontWeight="600">
+          {direction === 'maximize' ? '▲ 최대화' : '▼ 최소화'}
+        </text>
+      </svg>
+
+      {/* 범례 */}
+      <div className="flex items-center gap-3 text-[10px] text-gray-400">
+        <span className="flex items-center gap-1">
+          <span className="inline-block w-4 h-0.5 bg-gray-300" />세대별 최적
+        </span>
+        <span className="flex items-center gap-1">
+          <span className="inline-block w-4 h-0.5" style={{ background: accentColor }} />누적 최적
+        </span>
+        <span className="flex items-center gap-1">
+          <span className="inline-block w-2 h-2 rounded-full" style={{ background: accentColor }} />글로벌 최적
+        </span>
+      </div>
+    </div>
   )
 }
 
@@ -1131,6 +1464,9 @@ function ImportanceTable({
 }
 
 function InverseResult({ result }: { result: InverseRunResult }) {
+  const isHierarchical = result.is_hierarchical ?? false
+  const y1Columns = result.y1_columns ?? []
+  const optimalY1 = result.optimal_y1_predictions ?? {}
   const optFeats = result.optimal_features ?? {}
   const baseFeats = result.baseline_features ?? {}
   const fixedFeats = result.fixed_features ?? {}
@@ -1166,6 +1502,30 @@ function InverseResult({ result }: { result: InverseRunResult }) {
           {result.convergence ? '✓ 수렴' : '⚠ 미수렴'} · 탐색 {result.n_evaluations}회
         </span>
       </div>
+
+      {/* 계층적 모델 사용 배지 */}
+      {isHierarchical && (
+        <div className="flex items-center gap-2 rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-2">
+          <Activity className="h-3.5 w-3.5 text-indigo-600 shrink-0" />
+          <div className="text-xs text-indigo-700">
+            <span className="font-semibold">계층적 모델 사용</span>
+            <span className="text-indigo-500 ml-1">x → y₁({y1Columns.join(', ')}) → {result.target_column}</span>
+          </div>
+        </div>
+      )}
+
+      {/* 계층적 y₁ 최적 예측값 */}
+      {isHierarchical && Object.keys(optimalY1).length > 0 && (
+        <div className="rounded-lg border border-indigo-100 bg-indigo-50/50 px-3 py-2.5 space-y-1">
+          <p className="text-xs font-semibold text-indigo-700 mb-1.5">중간 물성 y₁ 최적값</p>
+          {Object.entries(optimalY1).map(([col, val]) => (
+            <div key={col} className="flex items-center justify-between text-xs">
+              <span className="text-gray-600">{col}</span>
+              <span className="font-mono font-semibold text-indigo-600">{typeof val === 'number' ? val.toFixed(4) : val}</span>
+            </div>
+          ))}
+        </div>
+      )}
 
       <div className={`grid gap-3 ${hasConstraint ? 'grid-cols-2' : 'grid-cols-2'}`}>
         <MetricCard label={`최적 예측 (${result.target_column})`} value={result.optimal_prediction?.toFixed(4) ?? '-'} highlight />

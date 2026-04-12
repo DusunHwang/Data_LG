@@ -30,7 +30,7 @@ class ProgressReporter:
         self.job_run_id = str(job_run_id)
         self._current_progress = 0
 
-    def update(self, progress: int, message: str | None = None) -> None:
+    def update(self, progress: int, message: str | None = None, extra: dict | None = None) -> None:
         self._current_progress = progress
-        set_progress(self.job_run_id, progress, message)
+        set_progress(self.job_run_id, progress, message, extra)
         logger.debug("작업 진행률 업데이트", job_run_id=self.job_run_id, progress=progress, message=message)
