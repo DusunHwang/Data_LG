@@ -1,6 +1,5 @@
 import { useState } from 'react'
-import { CheckCircle2, Download, ZoomIn, Target, X, Columns, Check, MousePointerClick } from 'lucide-react'
-import { artifactsApi } from '@/api'
+import { CheckCircle2, ZoomIn, Target, X, Columns, Check, MousePointerClick } from 'lucide-react'
 import { useSessionStore } from '@/store'
 import type { Artifact } from '@/types'
 import Badge from '@/components/ui/Badge'
@@ -23,10 +22,6 @@ export default function ArtifactCard({ artifact }: ArtifactCardProps) {
   // 로컬 임시 선택 상태 (완료 버튼 누르기 전)
   const [pendingTargetCols, setPendingTargetCols] = useState<string[]>([])
   const [pendingFeatureCols, setPendingFeatureCols] = useState<string[]>([])
-
-  const downloadUrl = sessionId
-    ? artifactsApi.downloadUrl(sessionId, artifact.id)
-    : '#'
 
   // 이 카드가 타겟 데이터프레임인지 판단
   const isBaseDataset = artifact.id === `dataset-${datasetId}`
@@ -311,16 +306,6 @@ export default function ArtifactCard({ artifact }: ArtifactCardProps) {
               </button>
             )}
 
-            <a
-              href={downloadUrl}
-              download
-              target="_blank"
-              rel="noreferrer"
-              className="flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs text-gray-600 border border-gray-200 hover:border-gray-400 hover:bg-gray-100 transition-colors ml-auto"
-            >
-              <Download className="h-3.5 w-3.5" />
-              다운로드
-            </a>
           </div>
         </>
       )}
@@ -385,7 +370,7 @@ function PlotRenderer({ artifact, onToggleZoom }: { artifact: Artifact; onToggle
         <p className="text-xs font-medium text-gray-600">
           {typeof title === 'string' ? title : artifact.name}
         </p>
-        <p className="text-xs text-gray-400 mt-1">Plotly 차트 — 다운로드 후 확인</p>
+        <p className="text-xs text-gray-400 mt-1">Plotly 차트</p>
       </div>
     )
   }
