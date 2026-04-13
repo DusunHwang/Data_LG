@@ -359,7 +359,8 @@ def _default_eda_plan(df: pd.DataFrame) -> dict:
 
 def _try_run_scalar_aggregation(df: pd.DataFrame, user_message: str, state: GraphState) -> dict | None:
     """최대/최소/평균 같은 단순 집계 질의는 차트 생성 없이 즉시 계산한다."""
-    msg = user_message.lower()
+    query_message = _strip_analysis_context(user_message)
+    msg = query_message.lower()
     plot_keywords = [
         "그래프", "차트", "시각화", "그려", "plot", "chart", "graph",
         "histogram", "scatter", "heatmap", "boxplot", "분포",
@@ -389,7 +390,7 @@ def _try_run_scalar_aggregation(df: pd.DataFrame, user_message: str, state: Grap
     if not numeric_cols and operation != "count":
         return None
 
-    column = _resolve_aggregation_column(df, user_message, state, numeric_cols)
+    column = _resolve_aggregation_column(df, query_message, state, numeric_cols)
     if column:
         result = _aggregate_column(df, column, operation)
         return {
@@ -428,6 +429,19 @@ def _try_run_scalar_aggregation(df: pd.DataFrame, user_message: str, state: Grap
         "metrics": {row["column"]: row["value"] for row in rows},
         "message": f"컬럼이 명시되지 않아 수치형 컬럼 {len(rows)}개의 {operation} 값을 계산했습니다.",
     }
+
+
+def _strip_analysis_context(user_message: str) -> str:
+    """내부에서 덧붙인 컬럼 제약 문구가 사용자 질의 컬럼 탐지를 오염시키지 않게 제거한다."""
+    message = user_message or ""
+    markers = [
+        "\n\n[분석 대상/컬럼 제약]",
+        "\n\n[Column constraints for analysis]",
+    ]
+    for marker in markers:
+        if marker in message:
+            return message.split(marker, 1)[0]
+    return message
 
 
 def _resolve_aggregation_column(

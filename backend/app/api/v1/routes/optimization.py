@@ -1,5 +1,6 @@
 """최적화 API 라우터"""
 
+from pathlib import Path
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -25,6 +26,99 @@ def _extract_model_dataset_info(model_run) -> tuple[str | None, str | None]:
     return getattr(model_run, "dataset_path", None), (
         str(model_run.source_artifact_id) if getattr(model_run, "source_artifact_id", None) else None
     )
+
+
+def _normalize_path(value: str | None) -> str | None:
+    """DB에 './data/..'와 'data/..'가 섞여 저장된 경우를 같은 경로로 비교한다."""
+    if not value:
+        return None
+    try:
+        path = Path(str(value)).expanduser()
+        if not path.is_absolute():
+            path = Path.cwd() / path
+        return str(path.resolve(strict=False))
+    except Exception:
+        return str(value)
+
+
+def _paths_match(left: str | None, right: str | None) -> bool:
+    if not left or not right:
+        return False
+    return str(left) == str(right) or _normalize_path(left) == _normalize_path(right)
+
+
+def _path_exists(value: str | None) -> bool:
+    normalized = _normalize_path(value)
+    return bool(normalized and Path(normalized).exists())
+
+
+def _first_existing_path(*paths: str | None) -> str | None:
+    """존재하는 데이터 경로를 우선 반환하고, 없으면 첫 번째 비어 있지 않은 경로를 반환."""
+    for path in paths:
+        if _path_exists(path):
+            return path
+    return next((path for path in paths if path), None)
+
+
+async def _find_champion_model(
+    model_repo: ModelRunRepository,
+    branch_id: UUID,
+    target_column: str | None = None,
+    dataset_path: str | None = None,
+    source_artifact_id: str | UUID | None = None,
+    allow_any_fallback: bool = False,
+):
+    """source id 저장 누락/경로 표기 차이를 흡수해서 챔피언 모델을 찾는다.
+
+    과거 계층적 모델링 결과는 같은 데이터프레임으로 학습됐더라도 source_artifact_id가
+    비어 있거나 dataset_path가 './data/..'와 'data/..'처럼 다르게 저장될 수 있다.
+    최적화에서는 먼저 정확히 찾고, 실패하면 정규화된 dataset_path 기준으로 한 번 더 찾는다.
+    """
+    source_uuid = UUID(str(source_artifact_id)) if source_artifact_id else None
+
+    if target_column:
+        if source_uuid or dataset_path:
+            exact = await model_repo.get_champion_by_target(
+                branch_id,
+                target_column,
+                dataset_path,
+                source_uuid,
+            )
+            if exact:
+                return exact
+        if not source_uuid and dataset_path:
+            exact = await model_repo.get_champion_by_target(branch_id, target_column, dataset_path)
+            if exact:
+                return exact
+        candidates = await model_repo.get_champions_by_target(branch_id, target_column)
+    else:
+        if source_uuid or dataset_path:
+            exact = await model_repo.get_champion(branch_id, dataset_path, source_uuid)
+            if exact:
+                return exact
+        if not source_uuid and dataset_path:
+            exact = await model_repo.get_champion(branch_id, dataset_path)
+            if exact:
+                return exact
+        candidates = await model_repo.get_champions(branch_id)
+
+    requested_source = str(source_artifact_id) if source_artifact_id else None
+    if requested_source:
+        for candidate in candidates:
+            candidate_source = (
+                str(candidate.source_artifact_id)
+                if getattr(candidate, "source_artifact_id", None)
+                else None
+            )
+            if candidate_source == requested_source:
+                return candidate
+
+    if dataset_path:
+        for candidate in candidates:
+            if _paths_match(getattr(candidate, "dataset_path", None), dataset_path):
+                return candidate
+
+    return candidates[0] if allow_any_fallback and candidates else None
 
 
 @router.post("/model-availability", response_model=dict)
@@ -63,16 +157,14 @@ async def get_model_availability(
 
     statuses = []
     for target_column in target_columns:
-        champion = None
-        if source_artifact_id or desired_dataset_path:
-            champion = await model_repo.get_champion_by_target(
-                branch_id,
-                target_column,
-                desired_dataset_path,
-                UUID(source_artifact_id) if source_artifact_id else None,
-            )
-        if not champion and not source_artifact_id:
-            champion = await model_repo.get_champion_by_target(branch_id, target_column)
+        champion = await _find_champion_model(
+            model_repo,
+            branch_id,
+            target_column,
+            desired_dataset_path,
+            source_artifact_id,
+            allow_any_fallback=True,
+        )
         if not champion:
             statuses.append({
                 "target_column": target_column,
@@ -99,8 +191,13 @@ async def get_model_availability(
 
         dataset_matches = bool(
             (source_artifact_id and model_source_artifact_id == source_artifact_id) or
-            (model_dataset_path and model_dataset_path == desired_dataset_path)
+            (model_dataset_path and _paths_match(model_dataset_path, desired_dataset_path))
         )
+        # 최적화는 모델 피처 순서와 전처리 메타데이터를 기준으로 입력을 구성하므로,
+        # 같은 branch/target의 챔피언이 존재하면 source_artifact_id 저장 누락이나
+        # 데이터 경로 변경 때문에 UI에서 막지 않는다. 실제 최적화 worker는 모델에
+        # 저장된 dataset_path를 우선 사용한다.
+        ready = True
         # 계층적 모델 여부 감지
         is_hierarchical = (
             isinstance(meta, dict) and meta.get("type") == "lgbm_hierarchical_model"
@@ -110,14 +207,14 @@ async def get_model_availability(
 
         statuses.append({
             "target_column": target_column,
-            "ready": dataset_matches,
-            "reason": "ready" if dataset_matches else "dataset_mismatch",
+            "ready": ready,
+            "reason": "ready" if dataset_matches else "ready_with_dataset_fallback",
             "message": (
                 (f"'{target_column}' 타겟 계층적 챔피언 모델 준비 완료 (y₁: {', '.join(y1_columns_info)})"
                  if is_hierarchical else
                  f"'{target_column}' 타겟 챔피언 모델 준비 완료")
                 if dataset_matches else
-                f"'{target_column}' 타겟 챔피언 모델은 현재 선택 데이터 기준이 아닙니다."
+                f"'{target_column}' 타겟 챔피언 모델을 찾았습니다. 현재 선택 데이터와 저장 경로가 달라 모델 학습 데이터 기준으로 최적화를 진행합니다."
             ),
             "model_run_id": str(champion.id),
             "model_dataset_path": model_dataset_path,
@@ -281,15 +378,13 @@ async def run_null_importance(
     source_artifact = await artifact_repo.get(UUID(source_artifact_id)) if source_artifact_id else None
     source_dataset_path = source_artifact.file_path if source_artifact and source_artifact.file_path else None
 
-    champion = None
-    if source_artifact_id or source_dataset_path:
-        champion = await model_repo.get_champion(
-            branch_id,
-            source_dataset_path,
-            UUID(source_artifact_id) if source_artifact_id else None,
-        )
-    if not champion and not source_artifact_id:
-        champion = await model_repo.get_champion(branch_id)
+    champion = await _find_champion_model(
+        model_repo,
+        branch_id,
+        dataset_path=source_dataset_path,
+        source_artifact_id=source_artifact_id,
+        allow_any_fallback=True,
+    )
     if not champion:
         raise HTTPException(
             status_code=400,
@@ -315,16 +410,14 @@ async def run_null_importance(
     missing_targets: list[str] = []
 
     for target_column in target_columns:
-        target_champion = None
-        if source_artifact_id or source_dataset_path:
-            target_champion = await model_repo.get_champion_by_target(
-                branch_id,
-                target_column,
-                source_dataset_path,
-                UUID(source_artifact_id) if source_artifact_id else None,
-            )
-        if not target_champion and not source_artifact_id:
-            target_champion = await model_repo.get_champion_by_target(branch_id, target_column)
+        target_champion = await _find_champion_model(
+            model_repo,
+            branch_id,
+            target_column,
+            source_dataset_path,
+            source_artifact_id,
+            allow_any_fallback=True,
+        )
         if not target_champion:
             missing_targets.append(target_column)
             continue
@@ -337,7 +430,12 @@ async def run_null_importance(
         if isinstance(meta, str):
             import json as _json
             meta = _json.loads(meta)
-        dataset_path = source_dataset_path or meta.get("dataset_path") or target_champion.dataset_path or (active_dataset.file_path if active_dataset else None)
+        dataset_path = _first_existing_path(
+            source_dataset_path,
+            meta.get("dataset_path"),
+            target_champion.dataset_path,
+            active_dataset.file_path if active_dataset else None,
+        )
         if not dataset_path:
             raise HTTPException(status_code=400, detail=error_response("NO_DATASET", f"데이터셋이 없습니다. ({target_column})"))
 
@@ -412,12 +510,21 @@ async def run_inverse_optimization(
     branch_id = UUID(body["branch_id"])
 
     model_repo = ModelRunRepository(db)
-    champion = await model_repo.get_champion(branch_id)
+    source_artifact_id = body.get("source_artifact_id")
+    target_column_hint = body.get("target_column")
+    artifact_repo = ArtifactRepository(db)
+    source_artifact = await artifact_repo.get(UUID(source_artifact_id)) if source_artifact_id else None
+    champion = await _find_champion_model(
+        model_repo,
+        branch_id,
+        target_column_hint,
+        source_artifact.file_path if source_artifact and source_artifact.file_path else None,
+        source_artifact_id,
+        allow_any_fallback=not bool(target_column_hint or source_artifact_id),
+    )
     if not champion:
         raise HTTPException(status_code=400, detail=error_response("NO_CHAMPION_MODEL", "챔피언 모델이 없습니다."))
 
-    from app.db.repositories.artifact import ArtifactRepository
-    artifact_repo = ArtifactRepository(db)
     model_artifact = await artifact_repo.get(champion.model_artifact_id)
     if not model_artifact or not model_artifact.file_path:
         raise HTTPException(status_code=400, detail=error_response("NO_MODEL_FILE", "모델 파일을 찾을 수 없습니다."))
@@ -440,7 +547,7 @@ async def run_inverse_optimization(
     x_feature_names = meta.get("x_feature_names", feature_names) if is_hierarchical else feature_names
 
     dataset_path = meta.get("dataset_path")
-    if not dataset_path:
+    if not dataset_path or not _path_exists(dataset_path):
         session_obj = await validate_user_session(session_id, current_user.id, db)
         dataset_repo = DatasetRepository(db)
         dataset = await dataset_repo.get(session_obj.active_dataset_id)
@@ -527,27 +634,14 @@ async def run_constrained_inverse_optimization(
 
     async def _get_model_info(target_col: str | None):
         """타겟별 챔피언 모델 정보 반환"""
-        if target_col:
-            champion_model = None
-            if source_artifact_id or (source_artifact and source_artifact.file_path):
-                champion_model = await model_repo.get_champion_by_target(
-                    branch_id,
-                    target_col,
-                    source_artifact.file_path if source_artifact and source_artifact.file_path else None,
-                    UUID(source_artifact_id) if source_artifact_id else None,
-                )
-            if not champion_model and not source_artifact_id:
-                champion_model = await model_repo.get_champion_by_target(branch_id, target_col)
-        else:
-            champion_model = None
-            if source_artifact_id or (source_artifact and source_artifact.file_path):
-                champion_model = await model_repo.get_champion(
-                    branch_id,
-                    source_artifact.file_path if source_artifact and source_artifact.file_path else None,
-                    UUID(source_artifact_id) if source_artifact_id else None,
-                )
-            if not champion_model and not source_artifact_id:
-                champion_model = await model_repo.get_champion(branch_id)
+        champion_model = await _find_champion_model(
+            model_repo,
+            branch_id,
+            target_col,
+            source_artifact.file_path if source_artifact and source_artifact.file_path else None,
+            source_artifact_id,
+            allow_any_fallback=True,
+        )
         if not champion_model:
             raise HTTPException(
                 status_code=400,
@@ -575,7 +669,10 @@ async def run_constrained_inverse_optimization(
             "categorical_encoders": artifact_metadata.get("categorical_encoders", {}),
             "model_kind": artifact_metadata.get("type", "baseline_model"),
             "target_column": artifact_metadata.get("target_column") or champion_model.target_column or target_col or "",
-            "dataset_path": artifact_metadata.get("dataset_path") or champion_model.dataset_path,
+            "dataset_path": _first_existing_path(
+                artifact_metadata.get("dataset_path"),
+                champion_model.dataset_path,
+            ),
             "is_hierarchical": is_hier,
             "stage1_model_paths": artifact_metadata.get("stage1_model_paths") if is_hier else None,
             "stage1_feature_names": artifact_metadata.get("stage1_feature_names") if is_hier else None,
@@ -600,10 +697,17 @@ async def run_constrained_inverse_optimization(
             "categorical_features": info["categorical_features"],
             "categorical_encoders": info["categorical_encoders"],
             "model_kind": info.get("model_kind", "baseline_model"),
+            "is_hierarchical": info.get("is_hierarchical", False),
+            "stage1_model_paths": info.get("stage1_model_paths"),
+            "stage1_feature_names": info.get("stage1_feature_names"),
+            "y1_columns": info.get("y1_columns"),
         })
 
     # 데이터셋: 모델이 학습된 데이터셋 우선 사용
-    dataset_path = source_artifact.file_path if source_artifact and source_artifact.file_path else opt_info.get("dataset_path")
+    dataset_path = _first_existing_path(
+        source_artifact.file_path if source_artifact and source_artifact.file_path else None,
+        opt_info.get("dataset_path"),
+    )
     if not dataset_path:
         session_obj = await validate_user_session(session_id, current_user.id, db)
         dataset_repo = DatasetRepository(db)
@@ -689,16 +793,14 @@ async def pretrain_bcm_model(
     artifact_repo = ArtifactRepository(db)
     source_artifact = await artifact_repo.get(UUID(source_artifact_id)) if source_artifact_id else None
 
-    champion_model = None
-    if source_artifact_id or (source_artifact and source_artifact.file_path):
-        champion_model = await model_repo.get_champion_by_target(
-            branch_id,
-            target_column,
-            source_artifact.file_path if source_artifact and source_artifact.file_path else None,
-            UUID(source_artifact_id) if source_artifact_id else None,
-        )
-    if not champion_model and not source_artifact_id:
-        champion_model = await model_repo.get_champion_by_target(branch_id, target_column)
+    champion_model = await _find_champion_model(
+        model_repo,
+        branch_id,
+        target_column,
+        source_artifact.file_path if source_artifact and source_artifact.file_path else None,
+        source_artifact_id,
+        allow_any_fallback=True,
+    )
     if not champion_model:
         raise HTTPException(status_code=400, detail=error_response("NO_CHAMPION_MODEL", f"챔피언 모델이 없습니다 (target={target_column})."))
 
@@ -712,12 +814,12 @@ async def pretrain_bcm_model(
         artifact_metadata = _json.loads(artifact_metadata)
 
     is_hierarchical = isinstance(artifact_metadata, dict) and artifact_metadata.get("type") == "lgbm_hierarchical_model"
-    dataset_path = (
-        source_artifact.file_path
-        if source_artifact and source_artifact.file_path
-        else artifact_metadata.get("dataset_path") or champion_model.dataset_path
+    dataset_path = _first_existing_path(
+        source_artifact.file_path if source_artifact and source_artifact.file_path else None,
+        artifact_metadata.get("dataset_path"),
+        champion_model.dataset_path,
     )
-    if not dataset_path:
+    if not dataset_path or not _path_exists(dataset_path):
         dataset_repo = DatasetRepository(db)
         dataset = await dataset_repo.get(session_obj.active_dataset_id)
         dataset_path = dataset.file_path if dataset else None
@@ -783,12 +885,13 @@ async def hierarchical_feature_stats(
 
     source_artifact = await artifact_repo.get(UUID(source_artifact_id)) if source_artifact_id else None
     source_path = source_artifact.file_path if source_artifact else None
-    champion = await model_repo.get_champion_by_target(
-        branch_id, target_column, source_path,
-        UUID(source_artifact_id) if source_artifact_id else None,
+    champion = await _find_champion_model(
+        model_repo,
+        branch_id,
+        target_column,
+        source_path,
+        source_artifact_id,
     )
-    if not champion and not source_artifact_id:
-        champion = await model_repo.get_champion_by_target(branch_id, target_column)
     if not champion:
         raise HTTPException(status_code=400, detail=error_response("NO_CHAMPION_MODEL", "챔피언 모델이 없습니다."))
 
@@ -803,7 +906,7 @@ async def hierarchical_feature_stats(
 
     x_feature_names: list = meta.get("x_feature_names", meta.get("feature_names", []))
     dataset_path: str = meta.get("dataset_path", "")
-    if not dataset_path:
+    if not dataset_path or not _path_exists(dataset_path):
         session_obj = await validate_user_session(UUID(body["session_id"]), current_user.id, db)
         dataset_repo = DatasetRepository(db)
         dataset = await dataset_repo.get(session_obj.active_dataset_id) if session_obj.active_dataset_id else None
@@ -813,7 +916,7 @@ async def hierarchical_feature_stats(
     if dataset_path and x_feature_names:
         try:
             import pandas as pd
-            df = pd.read_csv(dataset_path)
+            df = pd.read_csv(dataset_path) if str(dataset_path).lower().endswith(".csv") else pd.read_parquet(dataset_path)
             for feat in x_feature_names:
                 if feat in df.columns:
                     col = df[feat].dropna()
@@ -851,17 +954,16 @@ async def hierarchical_predict(
     artifact_repo = ArtifactRepository(db)
 
     # 챔피언 모델 조회
-    if source_artifact_id or target_column:
-        source_artifact = await artifact_repo.get(UUID(source_artifact_id)) if source_artifact_id else None
-        source_path = source_artifact.file_path if source_artifact else None
-        champion = await model_repo.get_champion_by_target(
-            branch_id, target_column, source_path,
-            UUID(source_artifact_id) if source_artifact_id else None,
-        )
-        if not champion and not source_artifact_id:
-            champion = await model_repo.get_champion_by_target(branch_id, target_column)
-    else:
-        champion = await model_repo.get_champion(branch_id)
+    source_artifact = await artifact_repo.get(UUID(source_artifact_id)) if source_artifact_id else None
+    source_path = source_artifact.file_path if source_artifact else None
+    champion = await _find_champion_model(
+        model_repo,
+        branch_id,
+        target_column or None,
+        source_path,
+        source_artifact_id,
+        allow_any_fallback=not bool(target_column or source_artifact_id),
+    )
 
     if not champion:
         raise HTTPException(status_code=400, detail=error_response("NO_CHAMPION_MODEL", "챔피언 모델이 없습니다."))

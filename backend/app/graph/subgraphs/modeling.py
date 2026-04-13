@@ -633,7 +633,11 @@ def _save_decision_tree_classification_artifacts(
     threshold = float(spec["threshold"])
     target_name = spec["target_name"]
     dataset_path = state.get("dataset_path")
-    source_artifact_id = state.get("selected_artifact_id")
+    branch_config = (state.get("active_branch") or {}).get("config", {}) or {}
+    source_artifact_id = (
+        state.get("selected_artifact_id")
+        or branch_config.get("source_artifact_id")
+    )
     if source_artifact_id and str(source_artifact_id).startswith("dataset-"):
         source_artifact_id = None
 
@@ -1069,7 +1073,11 @@ def _save_hierarchical_artifacts(
     plot_dir   = get_artifact_dir(session_id, "plot")
 
     dataset_path = state.get("dataset_path")
-    source_artifact_id = state.get("selected_artifact_id")
+    branch_config = (state.get("active_branch") or {}).get("config", {}) or {}
+    source_artifact_id = (
+        state.get("selected_artifact_id")
+        or branch_config.get("source_artifact_id")
+    )
     if source_artifact_id and str(source_artifact_id).startswith("dataset-"):
         source_artifact_id = None
 
@@ -1416,7 +1424,11 @@ def _save_modeling_artifacts(
     plot_dir = get_artifact_dir(session_id, "plot")
 
     dataset_path = state.get("dataset_path")
-    source_artifact_id = state.get("selected_artifact_id")
+    branch_config = (state.get("active_branch") or {}).get("config", {}) or {}
+    source_artifact_id = (
+        state.get("selected_artifact_id")
+        or branch_config.get("source_artifact_id")
+    )
     if source_artifact_id and str(source_artifact_id).startswith("dataset-"):
         source_artifact_id = None
 
