@@ -248,6 +248,7 @@ async def get_dataset_preview(
             "name": "분석 데이터프레임",
             "preview_json": {
                 "columns": columns,
+                "all_columns": all_columns,
                 "rows": _dataframe_to_matrix(preview),
                 "total_rows": total_rows,
                 "total_cols": total_cols,
@@ -271,7 +272,7 @@ async def get_dataset_columns(
     session_id: UUID,
     dataset_id: UUID,
     q: str | None = Query(default=None),
-    limit: int = Query(default=100, ge=1, le=1000),
+    limit: int = Query(default=1000, ge=1, le=10000),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):

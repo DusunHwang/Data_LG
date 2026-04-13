@@ -29,6 +29,8 @@ export default function ArtifactCard({ artifact }: ArtifactCardProps) {
   const [pendingFeatureCols, setPendingFeatureCols] = useState<string[]>([])
   const [featureAllSelected, setFeatureAllSelected] = useState(true)
   const [y1Candidates, setY1Candidates] = useState<{ column: string; corr_with_y2: number; recommendation: string }[]>([])
+  const [datasetColumns, setDatasetColumns] = useState<string[] | null>(null)
+  const [datasetColumnsLoading, setDatasetColumnsLoading] = useState(false)
 
   // 이 카드가 타겟 데이터프레임인지 판단
   const isBaseDataset = artifact.id === `dataset-${datasetId}`
@@ -43,6 +45,27 @@ export default function ArtifactCard({ artifact }: ArtifactCardProps) {
 
   const isDataframe = ['dataframe', 'table', 'leaderboard', 'feature_importance'].includes(artifact.type)
   const availableColumns = artifact.data?.columns ?? []
+  const allColumnsFromArtifact = artifact.data?.all_columns ?? availableColumns
+  const selectorColumns = datasetColumns ?? allColumnsFromArtifact
+
+  useEffect(() => {
+    if (!sessionId || !artifact.id.startsWith('dataset-')) {
+      setDatasetColumns(null)
+      setDatasetColumnsLoading(false)
+      return
+    }
+    const sourceDatasetId = artifact.id.replace(/^dataset-/, '')
+    setDatasetColumnsLoading(true)
+    datasetTableApi.columns(sessionId, sourceDatasetId, { limit: 10000 })
+      .then((res) => {
+        const names = res.columns
+          .map((col) => col.name)
+          .filter((name): name is string => typeof name === 'string')
+        setDatasetColumns(names.length > 0 ? names : null)
+      })
+      .catch(() => setDatasetColumns(null))
+      .finally(() => setDatasetColumnsLoading(false))
+  }, [artifact.id, sessionId])
 
   // 이름/배지
   const targetMatch = !isEffectiveTarget ? artifact.name.match(/\[([^\]]+)\]/) : null
@@ -71,7 +94,7 @@ export default function ArtifactCard({ artifact }: ArtifactCardProps) {
 
   // x(feature) = 전체 - target - y₁ 자동 계산
   const deriveFeatureCols = (targetCols: string[], y1Cols: string[]) =>
-    availableColumns.filter((c) => !targetCols.includes(c) && !y1Cols.includes(c))
+    selectorColumns.filter((c) => !targetCols.includes(c) && !y1Cols.includes(c))
 
   // "타겟 설정" 패널 열기
   const openTargetSelector = () => {
@@ -219,7 +242,7 @@ export default function ArtifactCard({ artifact }: ArtifactCardProps) {
           </div>
 
           {/* 타겟 컬럼 선택 패널 */}
-          {showTargetSelector && isEffectiveTarget && isDataframe && availableColumns.length > 0 && (
+          {showTargetSelector && isEffectiveTarget && isDataframe && selectorColumns.length > 0 && (
             <div className="border-t border-amber-100 bg-amber-50 px-3 py-3">
               <div className="flex items-center justify-between mb-2">
                 <span className="text-xs font-semibold text-amber-800 flex items-center gap-1">
@@ -230,14 +253,17 @@ export default function ArtifactCard({ artifact }: ArtifactCardProps) {
                   <X className="h-3.5 w-3.5 text-amber-600" />
                 </button>
               </div>
+              {datasetColumnsLoading && (
+                <p className="mb-2 text-[11px] text-amber-700">전체 컬럼 목록을 불러오는 중입니다.</p>
+              )}
               <VirtualColumnPicker
-                columns={availableColumns}
+                columns={selectorColumns}
                 renderColumn={(col) => {
                   const selected = pendingTargetCols.includes(col)
                   return (
                     <button
                       onClick={() => togglePendingTarget(col)}
-                      className={`w-full rounded px-2.5 py-1 text-left text-xs border transition-colors ${
+                      className={`max-w-full rounded-full px-2.5 py-1 text-xs border transition-colors ${
                         selected
                           ? 'bg-amber-500 border-amber-500 text-white font-medium'
                           : 'bg-white border-gray-300 text-gray-600 hover:border-amber-400 hover:text-amber-700'
@@ -256,7 +282,7 @@ export default function ArtifactCard({ artifact }: ArtifactCardProps) {
                   <button
                     onClick={() => {
                       setPendingTargetCols([])
-                      setDataframeConfig(currentBranchId, artifact.id, [], availableColumns)
+                      setDataframeConfig(currentBranchId, artifact.id, [], selectorColumns)
                       setDataframeY1Columns(currentBranchId, artifact.id, [])
                       setShowTargetSelector(false)
                     }}
@@ -277,7 +303,7 @@ export default function ArtifactCard({ artifact }: ArtifactCardProps) {
           )}
 
           {/* 중간 변수(y₁) 선택 패널 */}
-          {showY1Selector && isEffectiveTarget && isDataframe && availableColumns.length > 0 && (
+          {showY1Selector && isEffectiveTarget && isDataframe && selectorColumns.length > 0 && (
             <div className="border-t border-green-100 bg-green-50 px-3 py-3">
               <div className="flex items-center justify-between mb-2">
                 <span className="text-xs font-semibold text-green-800 flex items-center gap-1">
@@ -292,7 +318,7 @@ export default function ArtifactCard({ artifact }: ArtifactCardProps) {
                 선택한 컬럼을 x→y₁→y₂ 계층적 경로의 중간 변수로 사용합니다. 타겟(y₂) 컬럼은 선택 불가합니다.
               </p>
               <VirtualColumnPicker
-                columns={availableColumns}
+                columns={selectorColumns}
                 renderColumn={(col) => {
                   const isTarget = targetColumns.includes(col)
                   const selected = !isTarget && pendingY1Cols.includes(col)
@@ -305,7 +331,7 @@ export default function ArtifactCard({ artifact }: ArtifactCardProps) {
                       onClick={() => togglePendingY1(col)}
                       disabled={isTarget}
                       title={candidate ? `y2와 상관계수: ${candidate.corr_with_y2}` : undefined}
-                      className={`w-full rounded px-2.5 py-1 text-left text-xs border transition-colors ${
+                      className={`max-w-full rounded-full px-2.5 py-1 text-xs border transition-colors ${
                         isTarget
                           ? 'bg-gray-100 border-gray-200 text-gray-400 cursor-not-allowed'
                           : selected
@@ -346,7 +372,7 @@ export default function ArtifactCard({ artifact }: ArtifactCardProps) {
           )}
 
           {/* 변수(x) 선택 패널 */}
-          {showFeatureSelector && isEffectiveTarget && isDataframe && availableColumns.length > 0 && (
+          {showFeatureSelector && isEffectiveTarget && isDataframe && selectorColumns.length > 0 && (
             <div className="border-t border-blue-100 bg-blue-50 px-3 py-3">
               <div className="flex items-center justify-between mb-2">
                 <span className="text-xs font-semibold text-blue-800 flex items-center gap-1">
@@ -358,7 +384,7 @@ export default function ArtifactCard({ artifact }: ArtifactCardProps) {
                 </button>
               </div>
               <VirtualColumnPicker
-                columns={availableColumns}
+                columns={selectorColumns}
                 renderColumn={(col) => {
                   const isTarget = targetColumns.includes(col)
                   const isY1 = y1Columns.includes(col)
@@ -368,7 +394,7 @@ export default function ArtifactCard({ artifact }: ArtifactCardProps) {
                     <button
                       onClick={() => togglePendingFeature(col)}
                       disabled={disabled}
-                      className={`w-full rounded px-2.5 py-1 text-left text-xs border transition-colors ${
+                      className={`max-w-full rounded-full px-2.5 py-1 text-xs border transition-colors ${
                         disabled
                           ? 'bg-gray-100 border-gray-200 text-gray-400 cursor-not-allowed'
                           : selected
@@ -540,10 +566,12 @@ function VirtualColumnPicker({
   renderColumn: (column: string) => ReactNode
 }) {
   const parentRef = useRef<HTMLDivElement | null>(null)
+  const columnsPerRow = 4
+  const rowCount = Math.ceil(columns.length / columnsPerRow)
   const rowVirtualizer = useVirtualizer({
-    count: columns.length,
+    count: rowCount,
     getScrollElement: () => parentRef.current,
-    estimateSize: () => 30,
+    estimateSize: () => 34,
     overscan: 8,
   })
 
@@ -551,17 +579,22 @@ function VirtualColumnPicker({
     <div ref={parentRef} className="mb-2 max-h-36 overflow-y-auto scrollbar-thin">
       <div className="relative" style={{ height: rowVirtualizer.getTotalSize() }}>
         {rowVirtualizer.getVirtualItems().map((virtualRow) => {
-          const col = columns[virtualRow.index]
+          const startIndex = virtualRow.index * columnsPerRow
+          const rowColumns = columns.slice(startIndex, startIndex + columnsPerRow)
           return (
             <div
               key={virtualRow.key}
-              className="absolute left-0 right-0 pr-1"
+              className="absolute left-0 right-0 flex flex-wrap gap-1.5 pr-1"
               style={{
                 height: virtualRow.size,
                 transform: `translateY(${virtualRow.start}px)`,
               }}
             >
-              {renderColumn(col)}
+              {rowColumns.map((col) => (
+                <div key={col} className="min-w-0 max-w-full">
+                  {renderColumn(col)}
+                </div>
+              ))}
             </div>
           )
         })}

@@ -373,6 +373,7 @@ def dataframe_to_preview(df: pd.DataFrame, max_rows: int = 20) -> dict:
     preview_df = df.head(max_rows)
     return {
         "columns": list(preview_df.columns),
+        "all_columns": list(df.columns),
         "data": preview_df.to_dict(orient="records"),
         "total_rows": len(df),
         "total_cols": len(df.columns),

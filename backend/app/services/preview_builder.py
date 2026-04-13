@@ -27,6 +27,7 @@ def build_dataframe_preview(
     return {
         "type": "dataframe",
         "columns": list(preview_df.columns),
+        "all_columns": list(df.columns),
         "dtypes": {col: str(dtype) for col, dtype in preview_df.dtypes.items()},
         "rows": preview_df.fillna("").values.tolist(),
         "total_rows": len(df),

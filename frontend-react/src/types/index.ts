@@ -161,6 +161,7 @@ export interface ArtifactData {
   html?: string
   rows?: Record<string, unknown>[] | unknown[][]
   columns?: string[]
+  all_columns?: string[]
   total_rows?: number
   total_cols?: number
   preview_rows?: number

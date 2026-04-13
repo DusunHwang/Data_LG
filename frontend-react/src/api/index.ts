@@ -282,6 +282,7 @@ function mapArtifactPreview(raw: Record<string, unknown>, sessionId: string): Ar
       data = {
         rows,
         columns,
+        all_columns: (pj.all_columns ?? pj.columns ?? []) as string[],
         total_rows: pj.total_rows as number | undefined,
         total_cols: pj.total_cols as number | undefined,
         preview_rows: pj.preview_rows as number | undefined,
