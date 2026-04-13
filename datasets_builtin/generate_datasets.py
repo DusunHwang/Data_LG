@@ -284,6 +284,52 @@ def generate_large_sampling_regression() -> pd.DataFrame:
     return df
 
 
+def generate_wide_missingness_stress() -> pd.DataFrame:
+    """
+    Wide table UI/결측 처리 스트레스 테스트 데이터셋
+    - 5,000행 × 800열
+    - 560개 컬럼: 약 80% 결측
+    - 160개 컬럼: 약 70% 결측
+    - 80개 컬럼: 결측 없음 (타깃 wide_target 포함)
+    """
+    np.random.seed(SEED + 4)
+    n = 5000
+    n_high_missing = 560
+    n_medium_missing = 160
+    n_complete_features = 79
+
+    data: dict[str, np.ndarray] = {}
+
+    for i in range(1, n_high_missing + 1):
+        values = np.random.normal(loc=0.0, scale=1.0, size=n)
+        mask = np.random.random(n) < 0.80
+        values[mask] = np.nan
+        data[f"high_missing_feature_{i:03d}"] = values
+
+    for i in range(1, n_medium_missing + 1):
+        values = np.random.normal(loc=5.0, scale=2.0, size=n)
+        mask = np.random.random(n) < 0.70
+        values[mask] = np.nan
+        data[f"medium_missing_feature_{i:03d}"] = values
+
+    complete_matrix = np.random.normal(loc=10.0, scale=3.0, size=(n, n_complete_features))
+    for i in range(1, n_complete_features + 1):
+        data[f"complete_feature_{i:03d}"] = complete_matrix[:, i - 1]
+
+    target = (
+        0.35 * complete_matrix[:, 0]
+        - 0.20 * complete_matrix[:, 1]
+        + 0.15 * complete_matrix[:, 2]
+        + 0.10 * np.sin(complete_matrix[:, 3])
+        + np.random.normal(0, 0.5, n)
+    )
+    data["wide_target"] = target
+
+    df = pd.DataFrame(data)
+    print(f"wide_missingness_stress: {df.shape}, 결측 {df.isna().sum().sum()} cells")
+    return df
+
+
 def main():
     """데이터셋 생성 및 저장"""
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
@@ -293,6 +339,7 @@ def main():
         "instrument_measurement": generate_instrument_measurement,
         "general_tabular_regression": generate_general_tabular_regression,
         "large_sampling_regression": generate_large_sampling_regression,
+        "wide_missingness_stress": generate_wide_missingness_stress,
     }
 
     for name, generator_func in generators.items():

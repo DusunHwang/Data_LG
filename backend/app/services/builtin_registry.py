@@ -44,6 +44,14 @@ BUILTIN_DATASETS: dict[str, BuiltinDatasetInfo] = {
         col_count=25,
         tags=["대용량", "샘플링", "회귀"],
     ),
+    "wide_missingness_stress": BuiltinDatasetInfo(
+        key="wide_missingness_stress",
+        name="Wide 결측 스트레스 테스트 데이터",
+        description="UI 가상 렌더링과 결측 처리 테스트용 wide 데이터. 5,000행 × 800열. 70% 컬럼은 80% 결측, 20% 컬럼은 70% 결측, 10% 컬럼은 결측 없음.",
+        row_count=5000,
+        col_count=800,
+        tags=["wide", "결측값", "UI테스트", "스트레스테스트"],
+    ),
     "mpea_alloy": BuiltinDatasetInfo(
         key="mpea_alloy",
         name="MPEA 합금 물성 데이터",
