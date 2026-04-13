@@ -244,23 +244,22 @@ export const branchesApi = {
 // ─── Artifacts ────────────────────────────────────────────────────────────────
 
 function normalizeTableRows(
-  columns: string[],
   previewJson: Record<string, unknown>,
-): Record<string, unknown>[] {
+): Record<string, unknown>[] | unknown[][] {
+  const matrixRows = previewJson.rows
+  if (Array.isArray(matrixRows)) {
+    if (matrixRows.length === 0 || Array.isArray(matrixRows[0])) {
+      return matrixRows as unknown[][]
+    }
+    return (matrixRows as unknown[]).map((row) => {
+      if (row && typeof row === 'object' && !Array.isArray(row)) return row as Record<string, unknown>
+      return {}
+    })
+  }
+
   const recordRows = previewJson.data
   if (Array.isArray(recordRows)) {
     return recordRows as Record<string, unknown>[]
-  }
-
-  const matrixRows = previewJson.rows
-  if (Array.isArray(matrixRows)) {
-    return matrixRows.map((row) => {
-      if (!Array.isArray(row)) return {} as Record<string, unknown>
-      return columns.reduce<Record<string, unknown>>((acc, col, index) => {
-        acc[col] = row[index]
-        return acc
-      }, {})
-    })
   }
 
   return []
@@ -279,12 +278,18 @@ function mapArtifactPreview(raw: Record<string, unknown>, sessionId: string): Ar
     case 'feature_importance':
       {
         const columns = (pj.columns ?? []) as string[]
-        const rows = normalizeTableRows(columns, pj)
+        const rows = normalizeTableRows(pj)
       data = {
         rows,
         columns,
         total_rows: pj.total_rows as number | undefined,
         total_cols: pj.total_cols as number | undefined,
+        preview_rows: pj.preview_rows as number | undefined,
+        preview_cols: pj.preview_cols as number | undefined,
+        row_start: pj.row_start as number | undefined,
+        col_start: pj.col_start as number | undefined,
+        is_truncated: pj.is_truncated as boolean | undefined,
+        dataset_name: pj.dataset_name as string | undefined,
       }
       }
       break
@@ -336,6 +341,56 @@ export const artifactsApi = {
   },
   downloadUrl: (sessionId: string, artifactId: string): string =>
     `${BASE_URL}/sessions/${sessionId}/artifacts/${artifactId}/download`,
+}
+
+export interface DatasetWindowResponse {
+  dataset_id: string
+  columns: string[]
+  rows: unknown[][]
+  total_rows: number
+  total_cols: number
+  row_start: number
+  col_start: number
+  preview_rows: number
+  preview_cols: number
+}
+
+export interface DatasetColumnSearchResponse {
+  dataset_id: string
+  total_cols?: number
+  columns: Array<Record<string, unknown>>
+  returned: number
+  matched: number
+}
+
+export const datasetTableApi = {
+  window: async (
+    sessionId: string,
+    datasetId: string,
+    params: {
+      row_start?: number
+      row_count?: number
+      col_start?: number
+      col_count?: number
+    },
+  ): Promise<DatasetWindowResponse> => {
+    const res = await http.get<ApiSuccess<DatasetWindowResponse>>(
+      `/sessions/${sessionId}/datasets/${datasetId}/window`,
+      { params },
+    )
+    return unwrap(res)
+  },
+  columns: async (
+    sessionId: string,
+    datasetId: string,
+    params: { q?: string; limit?: number } = {},
+  ): Promise<DatasetColumnSearchResponse> => {
+    const res = await http.get<ApiSuccess<DatasetColumnSearchResponse>>(
+      `/sessions/${sessionId}/datasets/${datasetId}/columns`,
+      { params },
+    )
+    return unwrap(res)
+  },
 }
 
 // ─── Analysis ─────────────────────────────────────────────────────────────────

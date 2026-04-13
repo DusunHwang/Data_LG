@@ -1,7 +1,8 @@
-import { useState } from 'react'
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { useVirtualizer } from '@tanstack/react-virtual'
 import { CheckCircle2, ZoomIn, Target, X, Check, MousePointerClick, GitBranch, Columns } from 'lucide-react'
 import { useSessionStore } from '@/store'
-import { modelingApi } from '@/api'
+import { datasetTableApi, modelingApi } from '@/api'
 import type { Artifact } from '@/types'
 import Badge from '@/components/ui/Badge'
 import ErrorBoundary from '@/components/ui/ErrorBoundary'
@@ -229,14 +230,14 @@ export default function ArtifactCard({ artifact }: ArtifactCardProps) {
                   <X className="h-3.5 w-3.5 text-amber-600" />
                 </button>
               </div>
-              <div className="flex flex-wrap gap-1.5 max-h-36 overflow-y-auto scrollbar-thin mb-2">
-                {availableColumns.map((col) => {
+              <VirtualColumnPicker
+                columns={availableColumns}
+                renderColumn={(col) => {
                   const selected = pendingTargetCols.includes(col)
                   return (
                     <button
-                      key={col}
                       onClick={() => togglePendingTarget(col)}
-                      className={`rounded-full px-2.5 py-1 text-xs border transition-colors ${
+                      className={`w-full rounded px-2.5 py-1 text-left text-xs border transition-colors ${
                         selected
                           ? 'bg-amber-500 border-amber-500 text-white font-medium'
                           : 'bg-white border-gray-300 text-gray-600 hover:border-amber-400 hover:text-amber-700'
@@ -245,8 +246,8 @@ export default function ArtifactCard({ artifact }: ArtifactCardProps) {
                       {col}
                     </button>
                   )
-                })}
-              </div>
+                }}
+              />
               <div className="flex items-center justify-between gap-2">
                 <span className="text-xs text-amber-700 min-w-0 truncate">
                   {pendingTargetCols.length > 0 ? `선택: ${pendingTargetCols.join(', ')}` : '선택 없음'}
@@ -290,21 +291,21 @@ export default function ArtifactCard({ artifact }: ArtifactCardProps) {
               <p className="text-xs text-green-700 mb-2 leading-tight">
                 선택한 컬럼을 x→y₁→y₂ 계층적 경로의 중간 변수로 사용합니다. 타겟(y₂) 컬럼은 선택 불가합니다.
               </p>
-              <div className="flex flex-wrap gap-1.5 max-h-36 overflow-y-auto scrollbar-thin mb-2">
-                {availableColumns.map((col) => {
+              <VirtualColumnPicker
+                columns={availableColumns}
+                renderColumn={(col) => {
                   const isTarget = targetColumns.includes(col)
                   const selected = !isTarget && pendingY1Cols.includes(col)
                   const candidate = y1Candidates.find((c) => c.column === col)
-                  const signal = candidate?.recommendation === 'green' ? '🟢'
-                    : candidate?.recommendation === 'yellow' ? '🟡'
-                    : candidate ? '🔴' : ''
+                  const signal = candidate?.recommendation === 'green' ? 'G'
+                    : candidate?.recommendation === 'yellow' ? 'Y'
+                    : candidate ? 'R' : ''
                   return (
                     <button
-                      key={col}
                       onClick={() => togglePendingY1(col)}
                       disabled={isTarget}
-                      title={candidate ? `y₂와 상관계수: ${candidate.corr_with_y2}` : undefined}
-                      className={`rounded-full px-2.5 py-1 text-xs border transition-colors ${
+                      title={candidate ? `y2와 상관계수: ${candidate.corr_with_y2}` : undefined}
+                      className={`w-full rounded px-2.5 py-1 text-left text-xs border transition-colors ${
                         isTarget
                           ? 'bg-gray-100 border-gray-200 text-gray-400 cursor-not-allowed'
                           : selected
@@ -312,12 +313,12 @@ export default function ArtifactCard({ artifact }: ArtifactCardProps) {
                           : 'bg-white border-gray-300 text-gray-600 hover:border-green-400 hover:text-green-700'
                       }`}
                     >
-                      {signal && <span className="mr-1">{signal}</span>}{col}
+                      {signal && <span className="mr-1 font-semibold">{signal}</span>}{col}
                       {isTarget && <span className="ml-1 opacity-50">(T)</span>}
                     </button>
                   )
-                })}
-              </div>
+                }}
+              />
               <div className="flex items-center justify-between gap-2">
                 <span className="text-xs text-green-700 min-w-0 truncate">
                   {pendingY1Cols.length > 0 ? `선택: ${pendingY1Cols.join(', ')}` : '미선택 (일반 모델링)'}
@@ -356,18 +357,18 @@ export default function ArtifactCard({ artifact }: ArtifactCardProps) {
                   <X className="h-3.5 w-3.5 text-blue-600" />
                 </button>
               </div>
-              <div className="flex flex-wrap gap-1.5 max-h-36 overflow-y-auto scrollbar-thin mb-2">
-                {availableColumns.map((col) => {
+              <VirtualColumnPicker
+                columns={availableColumns}
+                renderColumn={(col) => {
                   const isTarget = targetColumns.includes(col)
                   const isY1 = y1Columns.includes(col)
                   const disabled = isTarget || isY1
                   const selected = !disabled && pendingFeatureCols.includes(col)
                   return (
                     <button
-                      key={col}
                       onClick={() => togglePendingFeature(col)}
                       disabled={disabled}
-                      className={`rounded-full px-2.5 py-1 text-xs border transition-colors ${
+                      className={`w-full rounded px-2.5 py-1 text-left text-xs border transition-colors ${
                         disabled
                           ? 'bg-gray-100 border-gray-200 text-gray-400 cursor-not-allowed'
                           : selected
@@ -376,12 +377,12 @@ export default function ArtifactCard({ artifact }: ArtifactCardProps) {
                       }`}
                     >
                       {col}
-                      {isTarget && <span className="ml-1 opacity-50">(y₂)</span>}
-                      {isY1 && <span className="ml-1 opacity-50">(y₁)</span>}
+                      {isTarget && <span className="ml-1 opacity-50">(y2)</span>}
+                      {isY1 && <span className="ml-1 opacity-50">(y1)</span>}
                     </button>
                   )
-                })}
-              </div>
+                }}
+              />
               <div className="flex items-center justify-between gap-2">
                 <span className="text-xs text-blue-700">
                   {pendingFeatureCols.length > 0 ? `${pendingFeatureCols.length}개 선택` : '미선택 (전체 사용)'}
@@ -531,6 +532,44 @@ function ArtifactContent({
   }
 }
 
+function VirtualColumnPicker({
+  columns,
+  renderColumn,
+}: {
+  columns: string[]
+  renderColumn: (column: string) => ReactNode
+}) {
+  const parentRef = useRef<HTMLDivElement | null>(null)
+  const rowVirtualizer = useVirtualizer({
+    count: columns.length,
+    getScrollElement: () => parentRef.current,
+    estimateSize: () => 30,
+    overscan: 8,
+  })
+
+  return (
+    <div ref={parentRef} className="mb-2 max-h-36 overflow-y-auto scrollbar-thin">
+      <div className="relative" style={{ height: rowVirtualizer.getTotalSize() }}>
+        {rowVirtualizer.getVirtualItems().map((virtualRow) => {
+          const col = columns[virtualRow.index]
+          return (
+            <div
+              key={virtualRow.key}
+              className="absolute left-0 right-0 pr-1"
+              style={{
+                height: virtualRow.size,
+                transform: `translateY(${virtualRow.start}px)`,
+              }}
+            >
+              {renderColumn(col)}
+            </div>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
 function PlotRenderer({ artifact, onToggleZoom }: { artifact: Artifact; onToggleZoom: () => void }) {
   if (artifact.data?.plotly_json) {
     const title = (artifact.data.plotly_json.layout as Record<string, unknown> | undefined)?.title
@@ -568,79 +607,229 @@ function PlotRenderer({ artifact, onToggleZoom }: { artifact: Artifact; onToggle
 }
 
 function TableRenderer({ artifact, targetColumns = [] }: { artifact: Artifact; targetColumns?: string[] }) {
-  const [showAll, setShowAll] = useState(false)
-  if (!artifact.data) return <p className="text-xs text-gray-400">데이터 없음</p>
+  const { sessionId } = useSessionStore()
+  const parentRef = useRef<HTMLDivElement | null>(null)
+  const [windowState, setWindowState] = useState<{
+    rows: unknown[][]
+    columns: string[]
+    rowStart: number
+    colStart: number
+    totalRows?: number
+    totalCols?: number
+  } | null>(null)
+  const [loadingWindow, setLoadingWindow] = useState(false)
+  const [windowError, setWindowError] = useState<string | null>(null)
+  const data = artifact.data ?? {}
+  const rawRows = data.rows ?? []
+  const rawColumns = data.columns ?? (
+    rawRows[0] && !Array.isArray(rawRows[0]) ? Object.keys(rawRows[0] as Record<string, unknown>) : []
+  )
+  const initialMatrixRows = useMemo(
+    () => normalizeRowsToMatrix(rawRows, rawColumns),
+    [rawRows, rawColumns],
+  )
+  const isDatasetArtifact = artifact.id.startsWith('dataset-')
+  const datasetId = isDatasetArtifact ? artifact.id.replace(/^dataset-/, '') : null
 
-  if (artifact.data.html) {
+  useEffect(() => {
+    setWindowState(null)
+    setWindowError(null)
+  }, [artifact.id])
+
+  const rows = windowState?.rows ?? initialMatrixRows
+  const columns = windowState?.columns ?? rawColumns
+  const rowStart = windowState?.rowStart ?? (data.row_start as number | undefined) ?? 0
+  const colStart = windowState?.colStart ?? (data.col_start as number | undefined) ?? 0
+  const totalRows = windowState?.totalRows ?? data.total_rows
+  const totalCols = windowState?.totalCols ?? data.total_cols
+
+  const rowHeight = 30
+  const columnWidth = 140
+  const headerHeight = 34
+  const rowVirtualizer = useVirtualizer({
+    count: rows.length,
+    getScrollElement: () => parentRef.current,
+    estimateSize: () => rowHeight,
+    overscan: 8,
+  })
+  const columnVirtualizer = useVirtualizer({
+    horizontal: true,
+    count: columns.length,
+    getScrollElement: () => parentRef.current,
+    estimateSize: () => columnWidth,
+    overscan: 4,
+  })
+  const virtualRows = rowVirtualizer.getVirtualItems()
+  const virtualColumns = columnVirtualizer.getVirtualItems()
+  const hasHiddenRows = typeof totalRows === 'number' && rowStart + rows.length < totalRows
+  const hasPreviousRows = rowStart > 0
+  const hasHiddenCols = typeof totalCols === 'number' && colStart + columns.length < totalCols
+  const hasPreviousCols = colStart > 0
+  const isTruncated = data.is_truncated || hasHiddenRows || hasHiddenCols || hasPreviousRows || hasPreviousCols
+
+  const loadWindow = async (nextRowStart: number, nextColStart: number) => {
+    if (!sessionId || !datasetId) return
+    setLoadingWindow(true)
+    setWindowError(null)
+    try {
+      const next = await datasetTableApi.window(sessionId, datasetId, {
+        row_start: Math.max(0, nextRowStart),
+        row_count: 100,
+        col_start: Math.max(0, nextColStart),
+        col_count: 50,
+      })
+      setWindowState({
+        rows: next.rows,
+        columns: next.columns,
+        rowStart: next.row_start,
+        colStart: next.col_start,
+        totalRows: next.total_rows,
+        totalCols: next.total_cols,
+      })
+      parentRef.current?.scrollTo({ top: 0, left: 0 })
+    } catch (err) {
+      setWindowError(err instanceof Error ? err.message : '테이블 영역을 불러오지 못했습니다.')
+    } finally {
+      setLoadingWindow(false)
+    }
+  }
+
+  if (data.html) {
     return (
       <div
         className="overflow-auto max-h-72 text-xs scrollbar-thin"
-        dangerouslySetInnerHTML={{ __html: artifact.data.html }}
+        dangerouslySetInnerHTML={{ __html: data.html }}
       />
     )
   }
 
-  const rows = artifact.data.rows ?? []
-  const columns = artifact.data.columns ?? (rows[0] ? Object.keys(rows[0]) : [])
-
-  if (rows.length === 0) return <p className="text-xs text-gray-400">데이터 없음</p>
-
-  // 초기 렌더링 최적화: 100개 중 20개만 먼저 보여줌 (DOM 노드 급증 방지)
-  const displayRows = showAll ? rows : rows.slice(0, 20)
-  const hasMore = rows.length > 20 && !showAll
+  if (rows.length === 0 || columns.length === 0) return <p className="text-xs text-gray-400">데이터 없음</p>
 
   return (
-    <div className="overflow-x-auto overflow-y-auto max-h-72 scrollbar-thin border border-gray-100 rounded">
-      <table className="min-w-max w-full text-xs border-collapse table-auto">
-        <thead className="z-10 sticky top-0">
-          <tr>
-            {columns.map((col) => {
+    <div className="space-y-2">
+      <div className="flex items-center justify-between gap-2 text-[11px] text-gray-500">
+        <span>
+          전체 {formatCount(totalRows)}행 × {formatCount(totalCols)}열
+          {isTruncated && (
+            <span className="ml-1 text-amber-700">
+              / 현재 {rowStart + 1}-{rowStart + rows.length}행, {colStart + 1}-{colStart + columns.length}열
+            </span>
+          )}
+        </span>
+        {isDatasetArtifact && (
+          <div className="flex shrink-0 items-center gap-1">
+            <button
+              onClick={() => loadWindow(rowStart, colStart - 50)}
+              disabled={!hasPreviousCols || loadingWindow}
+              className="rounded border border-gray-200 px-1.5 py-0.5 disabled:opacity-40"
+            >
+              이전 열
+            </button>
+            <button
+              onClick={() => loadWindow(rowStart, colStart + 50)}
+              disabled={!hasHiddenCols || loadingWindow}
+              className="rounded border border-gray-200 px-1.5 py-0.5 disabled:opacity-40"
+            >
+              다음 열
+            </button>
+            <button
+              onClick={() => loadWindow(rowStart - 100, colStart)}
+              disabled={!hasPreviousRows || loadingWindow}
+              className="rounded border border-gray-200 px-1.5 py-0.5 disabled:opacity-40"
+            >
+              이전 행
+            </button>
+            <button
+              onClick={() => loadWindow(rowStart + 100, colStart)}
+              disabled={!hasHiddenRows || loadingWindow}
+              className="rounded border border-gray-200 px-1.5 py-0.5 disabled:opacity-40"
+            >
+              다음 행
+            </button>
+          </div>
+        )}
+      </div>
+      {windowError && <p className="text-[11px] text-red-600">{windowError}</p>}
+      <div
+        ref={parentRef}
+        className="relative h-72 overflow-auto scrollbar-thin border border-gray-100 rounded bg-white"
+      >
+        <div
+          className="relative"
+          style={{
+            width: columnVirtualizer.getTotalSize(),
+            height: rowVirtualizer.getTotalSize() + headerHeight,
+          }}
+        >
+          <div
+            className="sticky top-0 z-20 bg-gray-50 border-b border-gray-200"
+            style={{ height: headerHeight, width: columnVirtualizer.getTotalSize() }}
+          >
+            {virtualColumns.map((virtualColumn) => {
+              const col = columns[virtualColumn.index]
               const isTarget = targetColumns.includes(col)
               return (
-                <th
-                  key={col}
-                  className={`border border-gray-200 px-2 py-1.5 text-left font-semibold whitespace-nowrap ${
+                <div
+                  key={virtualColumn.key}
+                  className={`absolute top-0 flex items-center border-r border-gray-200 px-2 text-left text-xs font-semibold ${
                     isTarget ? 'bg-amber-100 text-amber-800' : 'bg-gray-50 text-gray-600'
                   }`}
-                  style={{ minWidth: columns.length > 5 ? '120px' : 'max-content' }}
+                  style={{
+                    left: virtualColumn.start,
+                    width: virtualColumn.size,
+                    height: headerHeight,
+                  }}
+                  title={col}
                 >
-                  {col}
-                </th>
+                  <span className="truncate">{col}</span>
+                </div>
               )
             })}
-          </tr>
-        </thead>
-        <tbody className="divide-y divide-gray-100">
-          {displayRows.map((row, i) => (
-            <tr key={i} className={i % 2 === 0 ? 'bg-white hover:bg-gray-50' : 'bg-gray-50/50 hover:bg-gray-50'}>
-              {columns.map((col) => {
-                const isTarget = targetColumns.includes(col)
-                return (
-                  <td
-                    key={col}
-                    className={`border-x border-gray-100 px-2 py-1.5 align-top whitespace-nowrap ${
-                      isTarget ? 'bg-amber-50/50 text-amber-900 font-medium' : 'text-gray-700'
-                    }`}
-                    style={{ minWidth: columns.length > 5 ? '120px' : 'max-content', maxWidth: 320 }}
-                  >
-                    {String(row[col] ?? '')}
-                  </td>
-                )
-              })}
-            </tr>
-          ))}
-        </tbody>
-      </table>
-      {hasMore && (
-        <button
-          onClick={() => setShowAll(true)}
-          className="w-full py-2 bg-gray-50 text-gray-500 hover:text-brand-red text-[11px] font-medium transition-colors border-t border-gray-100"
-        >
-          {rows.length - 20}개 더 보기...
-        </button>
-      )}
+          </div>
+          {virtualRows.map((virtualRow) => {
+            const row = rows[virtualRow.index]
+            const absoluteRow = rowStart + virtualRow.index
+            return virtualColumns.map((virtualColumn) => {
+              const col = columns[virtualColumn.index]
+              const isTarget = targetColumns.includes(col)
+              return (
+                <div
+                  key={`${virtualRow.key}-${virtualColumn.key}`}
+                  className={`absolute flex items-center border-r border-b border-gray-100 px-2 text-xs ${
+                    absoluteRow % 2 === 0 ? 'bg-white' : 'bg-gray-50/50'
+                  } ${isTarget ? 'bg-amber-50/80 text-amber-900 font-medium' : 'text-gray-700'}`}
+                  style={{
+                    left: virtualColumn.start,
+                    top: virtualRow.start + headerHeight,
+                    width: virtualColumn.size,
+                    height: virtualRow.size,
+                  }}
+                  title={String(row[virtualColumn.index] ?? '')}
+                >
+                  <span className="truncate">{String(row[virtualColumn.index] ?? '')}</span>
+                </div>
+              )
+            })
+          })}
+        </div>
+        {loadingWindow && (
+          <div className="absolute inset-x-0 top-0 z-30 bg-white/80 px-3 py-2 text-xs text-gray-500">
+            테이블 영역 로딩 중...
+          </div>
+        )}
+      </div>
     </div>
   )
+}
+
+function normalizeRowsToMatrix(rows: Record<string, unknown>[] | unknown[][], columns: string[]): unknown[][] {
+  if (rows.length === 0) return []
+  if (Array.isArray(rows[0])) return rows as unknown[][]
+  return (rows as Record<string, unknown>[]).map((row) => columns.map((col) => row[col]))
+}
+
+function formatCount(value: number | undefined): string {
+  return typeof value === 'number' ? value.toLocaleString() : '-'
 }
 
 function MetricRenderer({ artifact }: { artifact: Artifact }) {

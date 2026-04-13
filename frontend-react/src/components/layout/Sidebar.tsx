@@ -168,6 +168,7 @@ export default function Sidebar({ children }: SidebarProps) {
     try {
       const dataset = await datasetsApi.upload(sessionId, file, setUploadProgress)
       qc.invalidateQueries({ queryKey: ['datasets', sessionId] })
+      clearArtifacts()
       setDatasetId(dataset.id)
     } catch (err) {
       alert('업로드 실패: ' + (err instanceof Error ? err.message : '알 수 없는 오류'))
@@ -181,6 +182,7 @@ export default function Sidebar({ children }: SidebarProps) {
     mutationFn: (key: string) => datasetsApi.addBuiltin(sessionId!, key),
     onSuccess: (dataset) => {
       qc.invalidateQueries({ queryKey: ['datasets', sessionId] })
+      clearArtifacts()
       setDatasetId(dataset.id)
       setShowBuiltin(false)
     },

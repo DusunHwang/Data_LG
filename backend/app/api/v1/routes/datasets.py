@@ -1,6 +1,7 @@
 """데이터셋 API 라우터"""
 
 import math
+from typing import Any
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
@@ -17,6 +18,32 @@ from app.services.dataset_service import DatasetService
 
 logger = get_logger(__name__)
 router = APIRouter(prefix="/sessions/{session_id}/datasets", tags=["데이터셋"])
+
+DEFAULT_PREVIEW_ROWS = 100
+DEFAULT_PREVIEW_COLS = 50
+MAX_PREVIEW_ROWS = 500
+MAX_PREVIEW_COLS = 200
+MAX_WINDOW_ROWS = 500
+MAX_WINDOW_COLS = 200
+
+
+def _json_safe_value(value: Any) -> Any:
+    """Convert pandas/numpy scalar values into JSON-safe values."""
+    if hasattr(value, "item"):
+        value = value.item()
+    if isinstance(value, float) and (math.isnan(value) or math.isinf(value)):
+        return None
+    if value is None:
+        return None
+    if isinstance(value, str | int | float | bool):
+        return value
+    if hasattr(value, "isoformat"):
+        return value.isoformat()
+    return str(value)
+
+
+def _dataframe_to_matrix(df) -> list[list[Any]]:
+    return [[_json_safe_value(value) for value in row] for row in df.itertuples(index=False, name=None)]
 
 
 @router.post("/upload", response_model=dict)
@@ -176,7 +203,8 @@ async def get_target_candidates(
 async def get_dataset_preview(
     session_id: UUID,
     dataset_id: UUID,
-    n_rows: int = Query(default=100, ge=1, le=500),
+    n_rows: int = Query(default=DEFAULT_PREVIEW_ROWS, ge=1, le=MAX_PREVIEW_ROWS),
+    n_cols: int = Query(default=DEFAULT_PREVIEW_COLS, ge=1, le=MAX_PREVIEW_COLS),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -203,21 +231,16 @@ async def get_dataset_preview(
 
     try:
         import pandas as pd
-        df = pd.read_parquet(dataset.file_path)
-        preview = df.head(n_rows)
+        import pyarrow.parquet as pq
 
+        parquet_file = pq.ParquetFile(dataset.file_path)
+        all_columns = parquet_file.schema.names
+        total_rows = parquet_file.metadata.num_rows
+        total_cols = len(all_columns)
+        selected_columns = all_columns[:n_cols]
+        df = pd.read_parquet(dataset.file_path, columns=selected_columns, engine="pyarrow")
+        preview = df.iloc[:n_rows]
         columns = list(preview.columns)
-        rows = []
-        for _, row in preview.iterrows():
-            record = {}
-            for col in columns:
-                val = row[col]
-                if hasattr(val, 'item'):          # numpy scalar
-                    val = val.item()
-                if isinstance(val, float) and (math.isnan(val) or math.isinf(val)):
-                    val = None
-                record[col] = val
-            rows.append(record)
 
         return success_response({
             "id": f"dataset-{dataset_id}",
@@ -225,16 +248,115 @@ async def get_dataset_preview(
             "name": "분석 데이터프레임",
             "preview_json": {
                 "columns": columns,
-                "data": rows,
-                "total_rows": len(df),
-                "total_cols": len(columns),
+                "rows": _dataframe_to_matrix(preview),
+                "total_rows": total_rows,
+                "total_cols": total_cols,
+                "preview_rows": len(preview),
+                "preview_cols": len(columns),
+                "row_start": 0,
+                "col_start": 0,
                 "dataset_name": dataset.name,
+                "is_truncated": total_rows > len(preview) or total_cols > len(columns),
             },
         })
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=error_response(ErrorCode.INTERNAL_ERROR, f"데이터 로드 실패: {e}"),
+        )
+
+
+@router.get("/{dataset_id}/columns", response_model=dict)
+async def get_dataset_columns(
+    session_id: UUID,
+    dataset_id: UUID,
+    q: str | None = Query(default=None),
+    limit: int = Query(default=100, ge=1, le=1000),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """데이터셋 컬럼 메타데이터를 검색/조회한다."""
+    await validate_user_session(session_id, current_user.id, db)
+
+    repo = DatasetRepository(db)
+    dataset = await repo.get(dataset_id)
+    if not dataset or dataset.session_id != session_id:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=error_response(ErrorCode.DATASET_NOT_FOUND, ERROR_MESSAGES[ErrorCode.DATASET_NOT_FOUND]),
+        )
+
+    columns_meta = dataset.schema_profile.get("columns", []) if dataset.schema_profile else []
+    query = (q or "").strip().lower()
+    if query:
+        columns_meta = [c for c in columns_meta if query in str(c.get("name", "")).lower()]
+
+    return success_response({
+        "dataset_id": str(dataset_id),
+        "total_cols": dataset.col_count,
+        "columns": columns_meta[:limit],
+        "returned": min(len(columns_meta), limit),
+        "matched": len(columns_meta),
+    })
+
+
+@router.get("/{dataset_id}/window", response_model=dict)
+async def get_dataset_window(
+    session_id: UUID,
+    dataset_id: UUID,
+    row_start: int = Query(default=0, ge=0),
+    row_count: int = Query(default=100, ge=1, le=MAX_WINDOW_ROWS),
+    col_start: int = Query(default=0, ge=0),
+    col_count: int = Query(default=50, ge=1, le=MAX_WINDOW_COLS),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """프론트 가상 테이블용 행/열 window를 반환한다."""
+    await validate_user_session(session_id, current_user.id, db)
+
+    repo = DatasetRepository(db)
+    dataset = await repo.get(dataset_id)
+    if not dataset or dataset.session_id != session_id:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=error_response(ErrorCode.DATASET_NOT_FOUND, ERROR_MESSAGES[ErrorCode.DATASET_NOT_FOUND]),
+        )
+    if not dataset.file_path:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=error_response(ErrorCode.DATASET_NOT_FOUND, "데이터 파일을 찾을 수 없습니다."),
+        )
+
+    try:
+        import pandas as pd
+        import pyarrow.parquet as pq
+
+        parquet_file = pq.ParquetFile(dataset.file_path)
+        all_columns = parquet_file.schema.names
+        total_cols = len(all_columns)
+        total_rows = parquet_file.metadata.num_rows
+        selected_columns = all_columns[col_start:col_start + col_count]
+        if selected_columns:
+            df = pd.read_parquet(dataset.file_path, columns=selected_columns, engine="pyarrow")
+            window = df.iloc[row_start:row_start + row_count]
+        else:
+            window = pd.DataFrame()
+
+        return success_response({
+            "dataset_id": str(dataset_id),
+            "columns": selected_columns,
+            "rows": _dataframe_to_matrix(window),
+            "total_rows": total_rows,
+            "total_cols": total_cols,
+            "row_start": row_start,
+            "col_start": col_start,
+            "preview_rows": len(window),
+            "preview_cols": len(selected_columns),
+        })
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=error_response(ErrorCode.INTERNAL_ERROR, f"데이터 window 로드 실패: {e}"),
         )
 
 

@@ -47,7 +47,7 @@ function DragDivider({ onDrag }: { onDrag: (delta: number) => void }) {
 export default function WorkspacePage() {
   const { sessionId, branchId, datasetId, targetDataframeArtifactId, setTargetDataframeArtifactId } = useSessionStore()
   const { histories, addMessage } = useChatStore()
-  const { cacheArtifact, artifacts: cachedArtifacts } = useArtifactStore()
+  const { cacheArtifact, artifacts: cachedArtifacts, removeDatasetArtifacts } = useArtifactStore()
 
   const [externalInput, setExternalInput] = useState<{ text: string; immediate: boolean }>({
     text: '',
@@ -60,9 +60,14 @@ export default function WorkspacePage() {
   // ─── 데이터셋 → 채팅 자동 표시 ─────────────────────────────────────────────
 
   const addedKeys = useRef<Set<string>>(new Set())
+  const previousDatasetId = useRef<string | null>(null)
 
   useEffect(() => {
     if (!datasetId || !branchId || !sessionId) return
+    if (previousDatasetId.current && previousDatasetId.current !== datasetId) {
+      removeDatasetArtifacts(previousDatasetId.current)
+    }
+    previousDatasetId.current = datasetId
     const key = `${datasetId}-${branchId}`
     if (addedKeys.current.has(key)) return
     addedKeys.current.add(key)
@@ -90,7 +95,7 @@ export default function WorkspacePage() {
     if (!targetDataframeArtifactId) {
       setTargetDataframeArtifactId(null)
     }
-  }, [datasetId, branchId, sessionId, histories, cachedArtifacts, targetDataframeArtifactId, addMessage, cacheArtifact, setTargetDataframeArtifactId])
+  }, [datasetId, branchId, sessionId, histories, cachedArtifacts, targetDataframeArtifactId, addMessage, cacheArtifact, removeDatasetArtifacts, setTargetDataframeArtifactId])
 
   // ─── 패널 리사이즈 ─────────────────────────────────────────────────────────
 

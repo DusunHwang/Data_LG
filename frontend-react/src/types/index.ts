@@ -159,10 +159,16 @@ export interface Artifact {
 export interface ArtifactData {
   data_url?: string
   html?: string
-  rows?: Record<string, unknown>[]
+  rows?: Record<string, unknown>[] | unknown[][]
   columns?: string[]
   total_rows?: number
   total_cols?: number
+  preview_rows?: number
+  preview_cols?: number
+  row_start?: number
+  col_start?: number
+  is_truncated?: boolean
+  dataset_name?: string
   metrics?: Record<string, number | string>
   code?: string
   text?: string

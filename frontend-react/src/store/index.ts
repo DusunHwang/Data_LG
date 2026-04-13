@@ -307,10 +307,13 @@ interface ArtifactCacheState {
   artifacts: Record<string, Artifact>
   order: string[] // 아티팩트 ID 로드 순서 (LRU)
   cacheArtifact: (artifact: Artifact) => void
+  removeArtifacts: (ids: string[]) => void
+  removeDatasetArtifacts: (datasetId: string) => void
   clearArtifacts: () => void
 }
 
-const MAX_ARTIFACT_CACHE = 50
+const MAX_ARTIFACT_CACHE = 30
+const MAX_DATAFRAME_ARTIFACT_CACHE = 5
 
 export const useArtifactStore = create<ArtifactCacheState>((set) => ({
   artifacts: {},
@@ -328,9 +331,45 @@ export const useArtifactStore = create<ArtifactCacheState>((set) => ({
         }
       }
 
+      const dataframeIds = nextOrder.filter((id) => {
+        const item = nextArtifacts[id]
+        return item && ['dataframe', 'table', 'leaderboard', 'feature_importance'].includes(item.type)
+      })
+      for (const id of dataframeIds.slice(MAX_DATAFRAME_ARTIFACT_CACHE)) {
+        if (id !== artifact.id) {
+          delete nextArtifacts[id]
+          const index = nextOrder.indexOf(id)
+          if (index >= 0) nextOrder.splice(index, 1)
+        }
+      }
+
       return {
         artifacts: nextArtifacts,
         order: nextOrder,
+      }
+    }),
+  removeArtifacts: (ids) =>
+    set((state) => {
+      if (ids.length === 0) return state
+      const removeSet = new Set(ids)
+      const artifacts = { ...state.artifacts }
+      ids.forEach((id) => {
+        delete artifacts[id]
+      })
+      return {
+        artifacts,
+        order: state.order.filter((id) => !removeSet.has(id)),
+      }
+    }),
+  removeDatasetArtifacts: (datasetId) =>
+    set((state) => {
+      const datasetArtifactId = `dataset-${datasetId}`
+      if (!state.artifacts[datasetArtifactId]) return state
+      const artifacts = { ...state.artifacts }
+      delete artifacts[datasetArtifactId]
+      return {
+        artifacts,
+        order: state.order.filter((id) => id !== datasetArtifactId),
       }
     }),
   clearArtifacts: () => set({ artifacts: {}, order: [] }),
