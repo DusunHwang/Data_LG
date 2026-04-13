@@ -44,7 +44,7 @@ def _run_vllm_sync(prompt: str) -> str:
         return asyncio.run(_call())
     except RuntimeError:
         import concurrent.futures
-        with concurrent.futures.ThreadPoolExecutor() as pool:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
             future = pool.submit(asyncio.run, _call())
             return future.result()
 

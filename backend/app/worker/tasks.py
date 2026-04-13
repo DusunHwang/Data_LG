@@ -2,6 +2,7 @@
 
 
 from app.core.logging import get_logger
+from app.core.config import settings
 from app.worker.cancellation import CancellationToken, clear_cancellation
 from app.worker.job_runner import update_job_status_sync
 from app.worker.progress import ProgressReporter, clear_progress
@@ -386,16 +387,26 @@ def _train_single_model(
             num_leaves=31,
             random_state=42,
             verbose=-1,
+            n_jobs=settings.compute_threads,
         )
     elif model_name == "rf":
         from sklearn.ensemble import RandomForestRegressor
-        model = RandomForestRegressor(n_estimators=100, random_state=42, n_jobs=-1)
+        model = RandomForestRegressor(
+            n_estimators=100,
+            random_state=42,
+            n_jobs=settings.compute_threads,
+        )
     elif model_name == "ridge":
         from sklearn.linear_model import Ridge
         model = Ridge(alpha=1.0)
     elif model_name == "xgboost":
         import xgboost as xgb
-        model = xgb.XGBRegressor(n_estimators=200, learning_rate=0.05, random_state=42)
+        model = xgb.XGBRegressor(
+            n_estimators=200,
+            learning_rate=0.05,
+            random_state=42,
+            n_jobs=settings.compute_threads,
+        )
     else:
         from sklearn.ensemble import GradientBoostingRegressor
         model = GradientBoostingRegressor(random_state=42)
@@ -405,15 +416,15 @@ def _train_single_model(
     kf = KFold(n_splits=cv_folds, shuffle=True, random_state=42)
     cv_rmse_scores = np.sqrt(-cross_val_score(
         model, X_train, y_train, cv=kf,
-        scoring="neg_mean_squared_error", n_jobs=-1
+        scoring="neg_mean_squared_error", n_jobs=1
     ))
     cv_mae_scores = -cross_val_score(
         model, X_train, y_train, cv=kf,
-        scoring="neg_mean_absolute_error", n_jobs=-1
+        scoring="neg_mean_absolute_error", n_jobs=1
     )
     cv_r2_scores = cross_val_score(
         model, X_train, y_train, cv=kf,
-        scoring="r2", n_jobs=-1
+        scoring="r2", n_jobs=1
     )
 
     # 전체 훈련 및 테스트 평가
@@ -612,6 +623,7 @@ def run_optimization_task(
                 "reg_lambda": trial.suggest_float("reg_lambda", 1e-8, 10.0, log=True),
                 "random_state": 42,
                 "verbose": -1,
+                "n_jobs": settings.compute_threads,
             }
 
             model = lgb.LGBMRegressor(**params)
@@ -619,14 +631,14 @@ def run_optimization_task(
 
             if metric == "rmse":
                 scores = np.sqrt(-cross_val_score(
-                    model, X, y, cv=kf, scoring="neg_mean_squared_error", n_jobs=-1
+                    model, X, y, cv=kf, scoring="neg_mean_squared_error", n_jobs=1
                 ))
             elif metric == "mae":
                 scores = -cross_val_score(
-                    model, X, y, cv=kf, scoring="neg_mean_absolute_error", n_jobs=-1
+                    model, X, y, cv=kf, scoring="neg_mean_absolute_error", n_jobs=1
                 )
             else:
-                scores = cross_val_score(model, X, y, cv=kf, scoring="r2", n_jobs=-1)
+                scores = cross_val_score(model, X, y, cv=kf, scoring="r2", n_jobs=1)
                 scores = -scores  # Optuna는 minimize
 
             score = float(scores.mean())

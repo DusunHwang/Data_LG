@@ -9,6 +9,7 @@ import joblib
 import numpy as np
 import pandas as pd
 
+from app.core.config import settings
 from app.core.logging import get_logger
 from app.graph.helpers import (
     check_cancellation,
@@ -33,7 +34,7 @@ LGBM_PARAMS = {
     "bagging_fraction": 0.8,
     "bagging_freq": 5,
     "verbose": -1,
-    "n_jobs": -1,
+    "num_threads": settings.compute_threads,
 }
 NUM_BOOST_ROUND = 200
 EARLY_STOPPING_ROUNDS = 30

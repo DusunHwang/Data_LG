@@ -84,6 +84,8 @@ mkdir -p "$SCRIPT_DIR/datasets_builtin"
 set_env_var "$BACKEND_ENV" "BUILTIN_DATASET_PATH" "$SCRIPT_DIR/datasets_builtin"
 set_env_var "$BACKEND_ENV" "ARTIFACT_STORE_ROOT" "./data/artifacts"
 set_env_var "$BACKEND_ENV" "DATABASE_PATH" "./data/app.db"
+set_env_var "$BACKEND_ENV" "COMPUTE_THREADS" "8"
+set_env_var "$BACKEND_ENV" "WORKER_MAX_WORKERS" "1"
 
 CURRENT_EP=$(grep -E '^VLLM_ENDPOINT_SMALL=' "$BACKEND_ENV" 2>/dev/null | cut -d'=' -f2- || echo "$DEFAULT_ENDPOINT")
 CURRENT_MODEL=$(grep -E '^VLLM_MODEL_SMALL=' "$BACKEND_ENV" 2>/dev/null | cut -d'=' -f2- || echo "$DEFAULT_MODEL")
@@ -110,6 +112,13 @@ set_env_var "$BACKEND_ENV" "VLLM_ENDPOINT_SMALL" "$VLLM_ENDPOINT"
 set_env_var "$BACKEND_ENV" "VLLM_MODEL_SMALL" "$VLLM_MODEL"
 success "vLLM: ${VLLM_ENDPOINT}  /  ${VLLM_MODEL}"
 success "내장 데이터셋 경로: $SCRIPT_DIR/datasets_builtin"
+success "계산 스레드 제한: 8 threads / worker 1개"
+
+export OMP_NUM_THREADS=8
+export OPENBLAS_NUM_THREADS=8
+export MKL_NUM_THREADS=8
+export NUMEXPR_NUM_THREADS=8
+export VECLIB_MAXIMUM_THREADS=8
 
 # ── 4. 백엔드 의존성 설치 ─────────────────────────────────────────────────────
 info "백엔드 의존성 설치 중..."

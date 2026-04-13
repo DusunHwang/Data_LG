@@ -130,7 +130,7 @@ def classify_intent(state: GraphState) -> GraphState:
     except RuntimeError:
         # 이미 실행 중인 이벤트 루프가 있는 경우
         import concurrent.futures
-        with concurrent.futures.ThreadPoolExecutor() as pool:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
             future = pool.submit(asyncio.run, _classify_with_llm(state, user_message))
             return future.result()
 

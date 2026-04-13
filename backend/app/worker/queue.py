@@ -6,11 +6,15 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
+from app.core.config import settings
 from app.core.logging import get_logger
 
 logger = get_logger(__name__)
 
-_executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="worker")
+_executor = ThreadPoolExecutor(
+    max_workers=max(1, settings.worker_max_workers),
+    thread_name_prefix="worker",
+)
 _jobs: dict[str, Any] = {}
 _lock = threading.Lock()
 

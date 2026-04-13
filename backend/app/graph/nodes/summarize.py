@@ -98,7 +98,7 @@ def summarize_final_response(state: GraphState) -> GraphState:
         assistant_message = asyncio.run(_generate_summary(summary_context))
     except RuntimeError:
         import concurrent.futures
-        with concurrent.futures.ThreadPoolExecutor() as pool:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
             future = pool.submit(asyncio.run, _generate_summary(summary_context))
             assistant_message = future.result()
     except Exception as e:

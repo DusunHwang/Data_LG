@@ -4,6 +4,16 @@ import os
 from functools import lru_cache
 from typing import Literal
 
+# Keep numerical libraries from automatically using every core on large servers.
+for _thread_env in (
+    "OMP_NUM_THREADS",
+    "OPENBLAS_NUM_THREADS",
+    "MKL_NUM_THREADS",
+    "NUMEXPR_NUM_THREADS",
+    "VECLIB_MAXIMUM_THREADS",
+):
+    os.environ.setdefault(_thread_env, "8")
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -53,6 +63,8 @@ class Settings(BaseSettings):
     default_session_ttl_days: int = 7
     default_subset_limit: int = 5
     job_timeout_seconds: int = 600
+    compute_threads: int = 8
+    worker_max_workers: int = 1
 
     @property
     def max_upload_bytes(self) -> int:

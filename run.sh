@@ -42,6 +42,14 @@ echo "========================================================"
 set_env_var "$SCRIPT_DIR/backend/.env" "BUILTIN_DATASET_PATH" "$SCRIPT_DIR/datasets_builtin"
 set_env_var "$SCRIPT_DIR/backend/.env" "ARTIFACT_STORE_ROOT" "./data/artifacts"
 set_env_var "$SCRIPT_DIR/backend/.env" "DATABASE_PATH" "./data/app.db"
+set_env_var "$SCRIPT_DIR/backend/.env" "COMPUTE_THREADS" "8"
+set_env_var "$SCRIPT_DIR/backend/.env" "WORKER_MAX_WORKERS" "1"
+
+export OMP_NUM_THREADS=8
+export OPENBLAS_NUM_THREADS=8
+export MKL_NUM_THREADS=8
+export NUMEXPR_NUM_THREADS=8
+export VECLIB_MAXIMUM_THREADS=8
 
 [[ ! -f "$SCRIPT_DIR/datasets_builtin/mpea_alloy.csv" ]] && \
   warn "MPEA 내장 데이터셋 파일이 없습니다: datasets_builtin/mpea_alloy.csv"

@@ -50,6 +50,8 @@ async def get_config(
         "plot_sampling_threshold_rows": settings.plot_sampling_threshold_rows,
         "default_session_ttl_days": settings.default_session_ttl_days,
         "job_timeout_seconds": settings.job_timeout_seconds,
+        "compute_threads": settings.compute_threads,
+        "worker_max_workers": settings.worker_max_workers,
         "vllm_model": settings.vllm_model_small,
         "artifact_store_root": settings.artifact_store_root,
     })

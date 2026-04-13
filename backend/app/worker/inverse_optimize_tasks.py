@@ -13,6 +13,7 @@ import joblib
 import numpy as np
 import pandas as pd
 
+from app.core.config import settings
 from app.core.logging import get_logger
 from app.worker.job_runner import get_sync_db_connection, update_job_status_sync
 from app.worker.progress import ProgressReporter
@@ -437,6 +438,7 @@ def _compute_null_importance_for_target(
         "n_estimators": 50,
         "verbosity": -1,
         "random_state": 42,
+        "n_jobs": settings.compute_threads,
     }
     # 저장된 인코더를 적용한 경우 범주형 열도 수치형으로 변환되므로,
     # 실제 category dtype 인 열만 LightGBM의 categorical_feature로 넘긴다.

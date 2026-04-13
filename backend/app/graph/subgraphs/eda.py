@@ -35,7 +35,7 @@ def _run_async(coro):
         return asyncio.run(coro)
     except RuntimeError:
         import concurrent.futures
-        with concurrent.futures.ThreadPoolExecutor() as pool:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
             future = pool.submit(asyncio.run, coro)
             return future.result()
 
