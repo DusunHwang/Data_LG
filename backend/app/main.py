@@ -12,11 +12,13 @@ from pydantic import ValidationError
 from app.api.v1.router import api_router
 from app.core.config import settings
 from app.core.logging import get_logger, setup_logging
+from app.core.version import get_app_version
 from app.schemas.common import error_response, ErrorCode
 
 # 로깅 초기화
 setup_logging()
 logger = get_logger(__name__)
+APP_VERSION = get_app_version()
 
 
 async def _cleanup_stale_jobs_on_startup() -> None:
@@ -104,7 +106,7 @@ async def lifespan(app: FastAPI):
     logger.info(
         "애플리케이션 시작",
         env=settings.app_env,
-        version="0.1.0",
+        version=APP_VERSION,
     )
 
     # 아티팩트 저장소 초기화
@@ -129,7 +131,7 @@ def create_app() -> FastAPI:
     app = FastAPI(
         title="회귀 분석 플랫폼 API",
         description="다중 턴 테이블형 회귀 분석 플랫폼",
-        version="0.1.0",
+        version=APP_VERSION,
         lifespan=lifespan,
         docs_url="/docs" if settings.is_development else None,
         redoc_url="/redoc" if settings.is_development else None,
@@ -183,7 +185,7 @@ def create_app() -> FastAPI:
     # 루트 엔드포인트
     @app.get("/", include_in_schema=False)
     async def root():
-        return {"message": "회귀 분석 플랫폼 API", "version": "0.1.0", "docs": "/docs"}
+        return {"message": "회귀 분석 플랫폼 API", "version": APP_VERSION, "docs": "/docs"}
 
     return app
 

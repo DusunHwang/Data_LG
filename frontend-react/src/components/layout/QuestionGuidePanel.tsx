@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { BookOpen, ChevronDown, ChevronRight, FlaskConical, MessageSquare } from 'lucide-react'
 import InverseOptimizationModal from '@/components/optimization/InverseOptimizationModal'
+import { APP_VERSION } from '@/config/version'
 
 interface QuestionGuidePanelProps {
   onQuestionSelect: (text: string, immediate?: boolean) => void
@@ -136,6 +137,17 @@ export default function QuestionGuidePanel({
   return (
     <aside className="flex h-full flex-col bg-white border-l border-gray-200 overflow-hidden">
       <div className="shrink-0 border-b border-gray-200 bg-white px-3 py-2.5">
+        <div className="mb-2 flex items-center justify-between px-1 text-xs">
+          <a
+            href="/documentation_user.md"
+            target="_blank"
+            rel="noreferrer"
+            className="font-semibold text-brand-red hover:underline"
+          >
+            설명
+          </a>
+          <span className="font-medium text-gray-500">version {APP_VERSION}</span>
+        </div>
         <div className="grid grid-cols-2 rounded-lg bg-gray-100 p-1">
           <button
             onClick={() => selectTab('questions')}

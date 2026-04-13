@@ -6,11 +6,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import get_admin_user, get_db
 from app.core.config import settings
 from app.core.logging import get_logger
+from app.core.version import get_app_version
 from app.db.models.user import User
 from app.schemas.common import success_response
 
 logger = get_logger(__name__)
 router = APIRouter(prefix="/admin", tags=["관리자"])
+APP_VERSION = get_app_version()
 
 
 @router.get("/health", response_model=dict)
@@ -31,7 +33,7 @@ async def health_check(
         "environment": settings.app_env,
         "database": db_status,
         "queue": "in-process thread pool",
-        "version": "0.1.0",
+        "version": APP_VERSION,
     })
 
 
