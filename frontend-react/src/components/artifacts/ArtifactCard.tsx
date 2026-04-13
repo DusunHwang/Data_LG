@@ -31,6 +31,9 @@ export default function ArtifactCard({ artifact }: ArtifactCardProps) {
   const [y1Candidates, setY1Candidates] = useState<{ column: string; corr_with_y2: number; recommendation: string }[]>([])
   const [datasetColumns, setDatasetColumns] = useState<string[] | null>(null)
   const [datasetColumnsLoading, setDatasetColumnsLoading] = useState(false)
+  const [targetSearch, setTargetSearch] = useState('')
+  const [y1Search, setY1Search] = useState('')
+  const [featureSearch, setFeatureSearch] = useState('')
 
   // 이 카드가 타겟 데이터프레임인지 판단
   const isBaseDataset = artifact.id === `dataset-${datasetId}`
@@ -47,6 +50,14 @@ export default function ArtifactCard({ artifact }: ArtifactCardProps) {
   const availableColumns = artifact.data?.columns ?? []
   const allColumnsFromArtifact = artifact.data?.all_columns ?? availableColumns
   const selectorColumns = datasetColumns ?? allColumnsFromArtifact
+  const filterColumns = (query: string) => {
+    const normalized = query.trim().toLowerCase()
+    if (!normalized) return selectorColumns
+    return selectorColumns.filter((col) => col.toLowerCase().includes(normalized))
+  }
+  const filteredTargetColumns = filterColumns(targetSearch)
+  const filteredY1Columns = filterColumns(y1Search)
+  const filteredFeatureColumns = filterColumns(featureSearch)
 
   useEffect(() => {
     if (!sessionId || !artifact.id.startsWith('dataset-')) {
@@ -188,6 +199,43 @@ export default function ArtifactCard({ artifact }: ArtifactCardProps) {
     )
   }
 
+  const selectFilteredTargets = () => {
+    setPendingTargetCols((prev) => Array.from(new Set([...prev, ...filteredTargetColumns])))
+  }
+
+  const clearFilteredTargets = () => {
+    const filtered = new Set(filteredTargetColumns)
+    setPendingTargetCols((prev) => prev.filter((col) => !filtered.has(col)))
+  }
+
+  const selectFilteredY1 = () => {
+    const eligible = filteredY1Columns.filter((col) => !targetColumns.includes(col))
+    setPendingY1Cols((prev) => Array.from(new Set([...prev, ...eligible])))
+  }
+
+  const clearFilteredY1 = () => {
+    const filtered = new Set(filteredY1Columns)
+    setPendingY1Cols((prev) => prev.filter((col) => !filtered.has(col)))
+  }
+
+  const selectFilteredFeatures = () => {
+    const eligible = filteredFeatureColumns.filter((col) => !targetColumns.includes(col) && !y1Columns.includes(col))
+    setPendingFeatureCols((prev) => {
+      const next = Array.from(new Set([...prev, ...eligible]))
+      setFeatureAllSelected(next.length === deriveFeatureCols(targetColumns, y1Columns).length)
+      return next
+    })
+  }
+
+  const clearFilteredFeatures = () => {
+    const filtered = new Set(filteredFeatureColumns)
+    setPendingFeatureCols((prev) => {
+      const next = prev.filter((col) => !filtered.has(col))
+      setFeatureAllSelected(next.length === deriveFeatureCols(targetColumns, y1Columns).length)
+      return next
+    })
+  }
+
   // 헤더 배경색
   const headerBg = isEffectiveTarget ? 'bg-amber-50' : 'bg-gray-50'
   const borderColor = isEffectiveTarget ? 'border-amber-300' : 'border-gray-200'
@@ -256,8 +304,16 @@ export default function ArtifactCard({ artifact }: ArtifactCardProps) {
               {datasetColumnsLoading && (
                 <p className="mb-2 text-[11px] text-amber-700">전체 컬럼 목록을 불러오는 중입니다.</p>
               )}
+              <ColumnFilterBar
+                value={targetSearch}
+                onChange={setTargetSearch}
+                totalCount={selectorColumns.length}
+                filteredCount={filteredTargetColumns.length}
+                onSelectFiltered={selectFilteredTargets}
+                onClearFiltered={clearFilteredTargets}
+              />
               <VirtualColumnPicker
-                columns={selectorColumns}
+                columns={filteredTargetColumns}
                 renderColumn={(col) => {
                   const selected = pendingTargetCols.includes(col)
                   return (
@@ -317,8 +373,16 @@ export default function ArtifactCard({ artifact }: ArtifactCardProps) {
               <p className="text-xs text-green-700 mb-2 leading-tight">
                 선택한 컬럼을 x→y₁→y₂ 계층적 경로의 중간 변수로 사용합니다. 타겟(y₂) 컬럼은 선택 불가합니다.
               </p>
+              <ColumnFilterBar
+                value={y1Search}
+                onChange={setY1Search}
+                totalCount={selectorColumns.length}
+                filteredCount={filteredY1Columns.length}
+                onSelectFiltered={selectFilteredY1}
+                onClearFiltered={clearFilteredY1}
+              />
               <VirtualColumnPicker
-                columns={selectorColumns}
+                columns={filteredY1Columns}
                 renderColumn={(col) => {
                   const isTarget = targetColumns.includes(col)
                   const selected = !isTarget && pendingY1Cols.includes(col)
@@ -383,8 +447,16 @@ export default function ArtifactCard({ artifact }: ArtifactCardProps) {
                   <X className="h-3.5 w-3.5 text-blue-600" />
                 </button>
               </div>
+              <ColumnFilterBar
+                value={featureSearch}
+                onChange={setFeatureSearch}
+                totalCount={selectorColumns.length}
+                filteredCount={filteredFeatureColumns.length}
+                onSelectFiltered={selectFilteredFeatures}
+                onClearFiltered={clearFilteredFeatures}
+              />
               <VirtualColumnPicker
-                columns={selectorColumns}
+                columns={filteredFeatureColumns}
                 renderColumn={(col) => {
                   const isTarget = targetColumns.includes(col)
                   const isY1 = y1Columns.includes(col)
@@ -599,6 +671,61 @@ function VirtualColumnPicker({
           )
         })}
       </div>
+    </div>
+  )
+}
+
+function ColumnFilterBar({
+  value,
+  onChange,
+  totalCount,
+  filteredCount,
+  onSelectFiltered,
+  onClearFiltered,
+}: {
+  value: string
+  onChange: (value: string) => void
+  totalCount: number
+  filteredCount: number
+  onSelectFiltered: () => void
+  onClearFiltered: () => void
+}) {
+  return (
+    <div className="mb-2 flex flex-wrap items-center gap-1.5">
+      <input
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder="컬럼명 검색"
+        className="h-7 min-w-40 rounded-md border border-gray-300 bg-white px-2 text-xs text-gray-700 outline-none focus:border-gray-500"
+      />
+      <span className="text-[11px] text-gray-500">
+        {filteredCount.toLocaleString()} / {totalCount.toLocaleString()}
+      </span>
+      <button
+        type="button"
+        onClick={onSelectFiltered}
+        disabled={filteredCount === 0}
+        className="rounded-md border border-gray-300 bg-white px-2 py-1 text-[11px] text-gray-600 hover:border-gray-500 disabled:opacity-40"
+      >
+        검색 결과 선택
+      </button>
+      <button
+        type="button"
+        onClick={onClearFiltered}
+        disabled={filteredCount === 0}
+        className="rounded-md border border-gray-300 bg-white px-2 py-1 text-[11px] text-gray-600 hover:border-red-400 hover:text-red-600 disabled:opacity-40"
+      >
+        검색 결과 해제
+      </button>
+      {value && (
+        <button
+          type="button"
+          onClick={() => onChange('')}
+          className="text-[11px] text-gray-500 underline"
+        >
+          검색 초기화
+        </button>
+      )}
     </div>
   )
 }
