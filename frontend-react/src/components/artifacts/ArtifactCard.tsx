@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import { CheckCircle2, ZoomIn, Target, X, Check, MousePointerClick, GitBranch, Columns } from 'lucide-react'
 import { useSessionStore } from '@/store'
-import { datasetTableApi, modelingApi } from '@/api'
+import { artifactTableApi, datasetTableApi, modelingApi } from '@/api'
 import type { Artifact } from '@/types'
 import Badge from '@/components/ui/Badge'
 import ErrorBoundary from '@/components/ui/ErrorBoundary'
@@ -765,6 +765,9 @@ function TableRenderer({ artifact, targetColumns = [] }: { artifact: Artifact; t
   )
   const isDatasetArtifact = artifact.id.startsWith('dataset-')
   const datasetId = isDatasetArtifact ? artifact.id.replace(/^dataset-/, '') : null
+  // 생성된 dataframe 아티팩트: parquet 파일이 있으면 window 탐색 가능
+  const isGeneratedDataframe = !isDatasetArtifact && artifact.type === 'dataframe'
+  const canNavigate = !!(isDatasetArtifact || isGeneratedDataframe)
 
   useEffect(() => {
     setWindowState(null)
@@ -803,16 +806,19 @@ function TableRenderer({ artifact, targetColumns = [] }: { artifact: Artifact; t
   const isTruncated = data.is_truncated || hasHiddenRows || hasHiddenCols || hasPreviousRows || hasPreviousCols
 
   const loadWindow = async (nextRowStart: number, nextColStart: number) => {
-    if (!sessionId || !datasetId) return
+    if (!sessionId || !canNavigate) return
     setLoadingWindow(true)
     setWindowError(null)
     try {
-      const next = await datasetTableApi.window(sessionId, datasetId, {
+      const params = {
         row_start: Math.max(0, nextRowStart),
         row_count: 100,
         col_start: Math.max(0, nextColStart),
         col_count: 50,
-      })
+      }
+      const next = isDatasetArtifact
+        ? await datasetTableApi.window(sessionId, datasetId!, params)
+        : await artifactTableApi.window(sessionId, artifact.id, params)
       setWindowState({
         rows: next.rows,
         columns: next.columns,
@@ -851,7 +857,7 @@ function TableRenderer({ artifact, targetColumns = [] }: { artifact: Artifact; t
             </span>
           )}
         </span>
-        {isDatasetArtifact && (
+        {canNavigate && (
           <div className="flex shrink-0 items-center gap-1">
             <button
               onClick={() => loadWindow(rowStart, colStart - 50)}

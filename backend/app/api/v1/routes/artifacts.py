@@ -2,7 +2,7 @@
 
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, get_db, validate_user_session
@@ -65,6 +65,73 @@ async def get_artifact_preview(
         )
 
     return success_response(ArtifactPreviewResponse.model_validate(artifact).model_dump())
+
+
+@router.get("/{artifact_id}/window", response_model=dict)
+async def get_artifact_window(
+    session_id: UUID,
+    artifact_id: UUID,
+    row_start: int = Query(default=0, ge=0),
+    row_count: int = Query(default=100, ge=1, le=500),
+    col_start: int = Query(default=0, ge=0),
+    col_count: int = Query(default=50, ge=1, le=200),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """생성된 데이터프레임 아티팩트의 행/열 window를 반환한다."""
+    await validate_user_session(session_id, current_user.id, db)
+
+    repo = ArtifactRepository(db)
+    artifact = await repo.get(artifact_id)
+
+    if not artifact:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=error_response(ErrorCode.ARTIFACT_NOT_FOUND, ERROR_MESSAGES[ErrorCode.ARTIFACT_NOT_FOUND]),
+        )
+    if not artifact.file_path:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=error_response(ErrorCode.ARTIFACT_NOT_FOUND, "아티팩트 파일을 찾을 수 없습니다."),
+        )
+
+    try:
+        import pandas as pd
+        import pyarrow.parquet as pq
+
+        parquet_file = pq.ParquetFile(artifact.file_path)
+        all_columns = parquet_file.schema.names
+        total_cols = len(all_columns)
+        total_rows = parquet_file.metadata.num_rows
+        selected_columns = all_columns[col_start:col_start + col_count]
+        if selected_columns:
+            df = pd.read_parquet(artifact.file_path, columns=selected_columns, engine="pyarrow")
+            window = df.iloc[row_start:row_start + row_count]
+        else:
+            window = pd.DataFrame()
+
+        def _to_matrix(df_: pd.DataFrame) -> list:
+            return [
+                [None if (isinstance(v, float) and __import__("math").isnan(v)) else v for v in row]
+                for row in df_.values.tolist()
+            ]
+
+        return success_response({
+            "artifact_id": str(artifact_id),
+            "columns": list(selected_columns),
+            "rows": _to_matrix(window),
+            "total_rows": total_rows,
+            "total_cols": total_cols,
+            "row_start": row_start,
+            "col_start": col_start,
+            "preview_rows": len(window),
+            "preview_cols": len(selected_columns),
+        })
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=error_response(ErrorCode.INTERNAL_ERROR, f"아티팩트 window 로드 실패: {e}"),
+        )
 
 
 @router.get("/{artifact_id}/download")

@@ -394,6 +394,25 @@ export const datasetTableApi = {
   },
 }
 
+export const artifactTableApi = {
+  window: async (
+    sessionId: string,
+    artifactId: string,
+    params: {
+      row_start?: number
+      row_count?: number
+      col_start?: number
+      col_count?: number
+    },
+  ): Promise<DatasetWindowResponse> => {
+    const res = await http.get<ApiSuccess<DatasetWindowResponse>>(
+      `/sessions/${sessionId}/artifacts/${artifactId}/window`,
+      { params },
+    )
+    return unwrap(res)
+  },
+}
+
 // ─── Analysis ─────────────────────────────────────────────────────────────────
 
 export const analysisApi = {
