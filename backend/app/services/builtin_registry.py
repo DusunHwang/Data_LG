@@ -44,6 +44,18 @@ BUILTIN_DATASETS: dict[str, BuiltinDatasetInfo] = {
         col_count=25,
         tags=["대용량", "샘플링", "회귀"],
     ),
+    "mpea_alloy": BuiltinDatasetInfo(
+        key="mpea_alloy",
+        name="MPEA 합금 물성 데이터",
+        description="다주원소 합금 조성, 공정, 구조 및 기계적 물성 데이터. 724행 × 27열.",
+        row_count=724,
+        col_count=27,
+        tags=["합금", "MPEA", "물성", "분류", "회귀"],
+    ),
+}
+
+BUILTIN_DATASET_FILES: dict[str, str] = {
+    "mpea_alloy": "mpea_alloy.csv",
 }
 
 
@@ -60,7 +72,7 @@ def list_builtin_datasets() -> list[BuiltinDatasetInfo]:
 def get_builtin_dataset_path(key: str) -> Path:
     """내장 데이터셋 파일 경로 반환"""
     base_path = Path(settings.builtin_dataset_path)
-    return base_path / f"{key}.parquet"
+    return base_path / BUILTIN_DATASET_FILES.get(key, f"{key}.parquet")
 
 
 def load_builtin_dataset(key: str) -> pd.DataFrame:
@@ -76,6 +88,8 @@ def load_builtin_dataset(key: str) -> pd.DataFrame:
         )
 
     logger.info("내장 데이터셋 로드", key=key, path=str(file_path))
+    if file_path.suffix.lower() == ".csv":
+        return pd.read_csv(file_path)
     return pd.read_parquet(file_path)
 
 

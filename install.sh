@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # =============================================================================
 #  Data_LG — 설치 스크립트
-#  최초 1회만 실행. 의존성 설치, DB 초기화, 시드 데이터 입력까지 수행.
+#  최초 1회 또는 배포 갱신 시 실행. 의존성 설치, DB 마이그레이션,
+#  내장 데이터셋 경로 설정, 시드 데이터 입력까지 수행.
 #  사용법: bash install.sh [--vllm-endpoint URL] [--vllm-model MODEL]
 # =============================================================================
 set -euo pipefail
@@ -11,6 +12,16 @@ info()    { echo -e "${CYAN}[INFO]${NC}  $*"; }
 success() { echo -e "${GREEN}[OK]${NC}    $*"; }
 warn()    { echo -e "${YELLOW}[WARN]${NC}  $*"; }
 error()   { echo -e "${RED}[ERROR]${NC} $*" >&2; exit 1; }
+set_env_var() {
+  local file="$1"
+  local key="$2"
+  local value="$3"
+  if grep -qE "^${key}=" "$file"; then
+    sed -i "s|^${key}=.*|${key}=${value}|" "$file"
+  else
+    printf '\n%s=%s\n' "$key" "$value" >> "$file"
+  fi
+}
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
@@ -49,7 +60,7 @@ if [[ "$NODE_MAJOR" -lt 18 ]]; then
 fi
 success "node: $(node --version)  /  npm: $(npm --version)"
 
-# ── 3. vLLM 설정 입력 ─────────────────────────────────────────────────────────
+# ── 3. backend/.env 준비 및 vLLM 설정 입력 ───────────────────────────────────
 DEFAULT_ENDPOINT="http://your-vllm-server/v1"
 DEFAULT_MODEL="your-model-name"
 
@@ -57,9 +68,22 @@ DEFAULT_MODEL="your-model-name"
 BACKEND_ENV="$SCRIPT_DIR/backend/.env"
 
 if [[ ! -f "$BACKEND_ENV" ]]; then
-  cp "$SCRIPT_DIR/.env.simple" "$BACKEND_ENV"
-  info ".env.simple → backend/.env 복사됨"
+  if [[ -f "$SCRIPT_DIR/.env.simple" ]]; then
+    cp "$SCRIPT_DIR/.env.simple" "$BACKEND_ENV"
+    info ".env.simple → backend/.env 복사됨"
+  else
+    touch "$BACKEND_ENV"
+    warn ".env.simple이 없어 빈 backend/.env를 생성했습니다."
+  fi
 fi
+
+# 백엔드는 backend 디렉터리에서 실행되지만 내장 데이터셋은 repo 루트의
+# datasets_builtin을 사용한다. 절대 경로로 고정해 배포 위치 변경 시에도
+# mpea_alloy.csv와 parquet built-in 파일을 같은 registry에서 찾게 한다.
+mkdir -p "$SCRIPT_DIR/datasets_builtin"
+set_env_var "$BACKEND_ENV" "BUILTIN_DATASET_PATH" "$SCRIPT_DIR/datasets_builtin"
+set_env_var "$BACKEND_ENV" "ARTIFACT_STORE_ROOT" "./data/artifacts"
+set_env_var "$BACKEND_ENV" "DATABASE_PATH" "./data/app.db"
 
 CURRENT_EP=$(grep -E '^VLLM_ENDPOINT_SMALL=' "$BACKEND_ENV" 2>/dev/null | cut -d'=' -f2- || echo "$DEFAULT_ENDPOINT")
 CURRENT_MODEL=$(grep -E '^VLLM_MODEL_SMALL=' "$BACKEND_ENV" 2>/dev/null | cut -d'=' -f2- || echo "$DEFAULT_MODEL")
@@ -79,32 +103,37 @@ if [[ -z "$VLLM_ENDPOINT" && -z "$VLLM_MODEL" ]]; then
     VLLM_MODEL="$CURRENT_MODEL"
   fi
 fi
+VLLM_ENDPOINT="${VLLM_ENDPOINT:-$CURRENT_EP}"
+VLLM_MODEL="${VLLM_MODEL:-$CURRENT_MODEL}"
 
-# backend/.env 에 직접 기록 (백엔드가 실제로 읽는 파일)
-sed -i "s|^VLLM_ENDPOINT_SMALL=.*|VLLM_ENDPOINT_SMALL=${VLLM_ENDPOINT}|" "$BACKEND_ENV"
-sed -i "s|^VLLM_MODEL_SMALL=.*|VLLM_MODEL_SMALL=${VLLM_MODEL}|"         "$BACKEND_ENV"
+set_env_var "$BACKEND_ENV" "VLLM_ENDPOINT_SMALL" "$VLLM_ENDPOINT"
+set_env_var "$BACKEND_ENV" "VLLM_MODEL_SMALL" "$VLLM_MODEL"
 success "vLLM: ${VLLM_ENDPOINT}  /  ${VLLM_MODEL}"
+success "내장 데이터셋 경로: $SCRIPT_DIR/datasets_builtin"
 
-# ── 4. 내장 데이터셋 생성 ─────────────────────────────────────────────────────
-PARQUET_COUNT=$(ls "$SCRIPT_DIR/datasets_builtin/"*.parquet 2>/dev/null | wc -l || echo 0)
-if [[ "$PARQUET_COUNT" -lt 1 ]]; then
-  info "내장 데이터셋 생성 중..."
-  # backend venv의 python으로 실행 (numpy/pandas 의존)
-  cd "$SCRIPT_DIR/backend"
-  uv run python "$SCRIPT_DIR/datasets_builtin/generate_datasets.py" || \
-    warn "데이터셋 생성 실패 — 나중에 수동 실행: cd backend && uv run python ../datasets_builtin/generate_datasets.py"
-  cd "$SCRIPT_DIR"
-else
-  success "내장 데이터셋 이미 존재 (${PARQUET_COUNT}개)"
-fi
-
-# ── 5. 백엔드 의존성 설치 ─────────────────────────────────────────────────────
+# ── 4. 백엔드 의존성 설치 ─────────────────────────────────────────────────────
 info "백엔드 의존성 설치 중..."
 cd "$SCRIPT_DIR/backend"
 uv sync --extra dev
 success "백엔드 의존성 설치 완료"
 
-# ── 6. DB 초기화 ──────────────────────────────────────────────────────────────
+# ── 5. 내장 데이터셋 확인/생성 ────────────────────────────────────────────────
+PARQUET_COUNT=$(find "$SCRIPT_DIR/datasets_builtin" -maxdepth 1 -name '*.parquet' 2>/dev/null | wc -l | tr -d ' ')
+if [[ "$PARQUET_COUNT" -lt 4 ]]; then
+  info "기본 parquet 내장 데이터셋 생성 중..."
+  uv run python "$SCRIPT_DIR/datasets_builtin/generate_datasets.py" || \
+    warn "데이터셋 생성 실패 — 나중에 수동 실행: cd backend && uv run python ../datasets_builtin/generate_datasets.py"
+else
+  success "기본 parquet 내장 데이터셋 이미 존재 (${PARQUET_COUNT}개)"
+fi
+
+if [[ -f "$SCRIPT_DIR/datasets_builtin/mpea_alloy.csv" ]]; then
+  success "MPEA 내장 데이터셋 확인: datasets_builtin/mpea_alloy.csv"
+else
+  warn "MPEA 내장 데이터셋 파일 없음: datasets_builtin/mpea_alloy.csv"
+fi
+
+# ── 6. DB 초기화/마이그레이션 ─────────────────────────────────────────────────
 info "DB 초기화 중..."
 mkdir -p data
 uv run alembic upgrade head
@@ -118,7 +147,11 @@ uv run python -m app.db.seed && success "시드 데이터 완료" || \
 # ── 8. 프론트엔드 의존성 설치 ─────────────────────────────────────────────────
 info "프론트엔드 의존성 설치 중..."
 cd "$SCRIPT_DIR/frontend-react"
-npm install
+if [[ -f package-lock.json ]]; then
+  npm ci
+else
+  npm install
+fi
 success "프론트엔드 의존성 설치 완료"
 
 # ── 완료 ──────────────────────────────────────────────────────────────────────

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # =============================================================================
 #  Data_LG — 실행 스크립트
-#  install.sh 실행 후 사용. 백엔드 + 프론트엔드를 시작.
+#  install.sh 실행 후 사용. DB 마이그레이션 확인 후 백엔드 + 프론트엔드를 시작.
 #  사용법: bash run.sh
 # =============================================================================
 set -euo pipefail
@@ -11,6 +11,16 @@ info()    { echo -e "${CYAN}[INFO]${NC}  $*"; }
 success() { echo -e "${GREEN}[OK]${NC}    $*"; }
 warn()    { echo -e "${YELLOW}[WARN]${NC}  $*"; }
 error()   { echo -e "${RED}[ERROR]${NC} $*" >&2; exit 1; }
+set_env_var() {
+  local file="$1"
+  local key="$2"
+  local value="$3"
+  if grep -qE "^${key}=" "$file"; then
+    sed -i "s|^${key}=.*|${key}=${value}|" "$file"
+  else
+    printf '\n%s=%s\n' "$key" "$value" >> "$file"
+  fi
+}
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
@@ -25,6 +35,16 @@ echo "========================================================"
 [[ ! -d frontend-react/node_modules ]] && error "프론트엔드 패키지 없음. 먼저 bash install.sh를 실행해주세요."
 [[ ! -f backend/data/app.db ]]         && error "DB 없음. 먼저 bash install.sh를 실행해주세요."
 [[ ! -f backend/.env ]]                && error "backend/.env 없음. 먼저 bash install.sh를 실행해주세요."
+
+# ── 실행 환경 보정 ────────────────────────────────────────────────────────────
+# backend는 backend/를 cwd로 실행되므로, repo 루트 datasets_builtin을 절대 경로로
+# 주입해 parquet built-in과 mpea_alloy.csv를 같은 경로에서 사용할 수 있게 한다.
+set_env_var "$SCRIPT_DIR/backend/.env" "BUILTIN_DATASET_PATH" "$SCRIPT_DIR/datasets_builtin"
+set_env_var "$SCRIPT_DIR/backend/.env" "ARTIFACT_STORE_ROOT" "./data/artifacts"
+set_env_var "$SCRIPT_DIR/backend/.env" "DATABASE_PATH" "./data/app.db"
+
+[[ ! -f "$SCRIPT_DIR/datasets_builtin/mpea_alloy.csv" ]] && \
+  warn "MPEA 내장 데이터셋 파일이 없습니다: datasets_builtin/mpea_alloy.csv"
 
 # ── 로그 디렉토리 ─────────────────────────────────────────────────────────────
 mkdir -p "$SCRIPT_DIR/logs"
@@ -50,9 +70,14 @@ for PORT in 8000 3000; do
   fi
 done
 
+# ── DB 마이그레이션 확인 ─────────────────────────────────────────────────────
+info "DB 마이그레이션 확인 중..."
+cd "$SCRIPT_DIR/backend"
+uv run alembic upgrade head
+success "DB 마이그레이션 확인 완료"
+
 # ── 백엔드 시작 ───────────────────────────────────────────────────────────────
 info "백엔드 시작 중..."
-cd "$SCRIPT_DIR/backend"
 uv run uvicorn app.main:app \
   --host 0.0.0.0 --port 8000 \
   --log-level info \
@@ -96,4 +121,8 @@ echo "========================================================"
 echo ""
 
 # ── 포그라운드 대기 (Ctrl+C → cleanup) ───────────────────────────────────────
-wait $BACKEND_PID || true
+if wait -n "$BACKEND_PID" "$FRONTEND_PID"; then
+  warn "서비스 프로세스가 종료되었습니다."
+else
+  warn "서비스 프로세스 중 하나가 오류로 종료되었습니다. 로그를 확인하세요."
+fi
