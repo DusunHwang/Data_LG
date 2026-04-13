@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useCallback, useMemo, memo } from 'react'
-import { Send, ChevronDown, ChevronRight, Zap, BarChart2, BrainCircuit, Target, ChevronsUpDown, FlaskConical, X, GitBranch } from 'lucide-react'
+import { Send, ChevronDown, ChevronRight, Zap, BarChart2, BrainCircuit, Target, ChevronsUpDown, FlaskConical, X, GitBranch, Activity } from 'lucide-react'
 import { analysisApi, artifactsApi } from '@/api'
 import { useChatStore, useSessionStore, useArtifactStore, genId } from '@/store'
 import type { ChatMessage } from '@/types'
@@ -44,6 +44,7 @@ const QUICK_ACTIONS = [
   { icon: Target, label: '핵심인자 추출', message: '핵심인자를 추출해줘' },
   { icon: BrainCircuit, label: '인자 최소화', message: '인자를 최소화해줘' },
 ]
+
 
 export default function ChatPanel({
   externalInput,
@@ -165,6 +166,57 @@ export default function ChatPanel({
     },
     [sessionId, branchId, currentBranchId, sending, mode, datasetId, targetColumns, featureColumns, y1Columns, targetDataframeArtifactId, addMessage, setActiveJob],
   )
+
+  const handleOFAT = useCallback(async () => {
+    if (!sessionId || !branchId || sending || activeJobId) return
+    if (targetColumns.length === 0) {
+      addMessage(currentBranchId, {
+        id: genId(),
+        role: 'assistant',
+        content: '⚠️ OFAT 분석을 위해 타겟(y₂) 컬럼을 먼저 설정해 주세요.',
+        timestamp: new Date().toISOString(),
+      })
+      return
+    }
+    if (featureColumns.length < 2) {
+      addMessage(currentBranchId, {
+        id: genId(),
+        role: 'assistant',
+        content: '⚠️ OFAT 분석에는 2개 이상의 피처(x) 컬럼이 필요합니다.',
+        timestamp: new Date().toISOString(),
+      })
+      return
+    }
+
+    addMessage(currentBranchId, {
+      id: genId(),
+      role: 'user',
+      content: `OFAT 일관성 분석 — 타겟: ${targetColumns.join(', ')} / 피처: ${featureColumns.length}개`,
+      timestamp: new Date().toISOString(),
+      targetDataframeId: targetDataframeArtifactId ?? undefined,
+    })
+    setSending(true)
+
+    try {
+      const result = await analysisApi.ofat({
+        session_id: sessionId,
+        branch_id: branchId,
+        target_columns: targetColumns,
+        feature_columns: featureColumns,
+        source_artifact_id: targetDataframeArtifactId ?? undefined,
+      })
+      setActiveJob(currentBranchId, result.job_id)
+    } catch (err) {
+      addMessage(currentBranchId, {
+        id: genId(),
+        role: 'assistant',
+        content: `오류: ${err instanceof Error ? err.message : 'OFAT 분석 요청 실패'}`,
+        timestamp: new Date().toISOString(),
+      })
+    } finally {
+      setSending(false)
+    }
+  }, [sessionId, branchId, currentBranchId, sending, activeJobId, targetColumns, featureColumns, targetDataframeArtifactId, addMessage, setActiveJob])
 
   // 외부에서 입력 삽입 (질문 템플릿 클릭/더블클릭)
   useEffect(() => {
@@ -543,7 +595,37 @@ export default function ChatPanel({
 
         {/* Quick actions row */}
         <div className="flex gap-1.5 mb-2 overflow-x-auto scrollbar-thin pb-1">
-          {QUICK_ACTIONS.map((qa) => (
+          {QUICK_ACTIONS.slice(0, 2).map((qa) => (
+            <button
+              key={qa.label}
+              onClick={() => handleSend(qa.message)}
+              disabled={sending || !!activeJobId}
+              className="flex shrink-0 items-center gap-1.5 rounded-full border border-gray-200 px-3 py-1 text-xs text-gray-600 hover:border-brand-red hover:text-brand-red hover:bg-red-50 transition-colors disabled:opacity-50"
+            >
+              <qa.icon className="h-3 w-3" />
+              {qa.label}
+            </button>
+          ))}
+          <button
+            onClick={handleOFAT}
+            disabled={!!(sending || activeJobId) || targetColumns.length === 0 || featureColumns.length < 2}
+            title={
+              targetColumns.length === 0
+                ? '타겟(y₂) 설정 후 사용 가능'
+                : featureColumns.length < 2
+                ? '피처(x) 2개 이상 설정 후 사용 가능'
+                : 'OFAT 일관성 분석 실행'
+            }
+            className={`flex shrink-0 items-center gap-1.5 rounded-full border px-3 py-1 text-xs transition-colors ${
+              targetColumns.length > 0 && featureColumns.length >= 2 && !sending && !activeJobId
+                ? 'border-orange-300 text-orange-700 hover:border-orange-400 hover:bg-orange-50'
+                : 'border-gray-200 text-gray-400 cursor-not-allowed opacity-50'
+            }`}
+          >
+            <Activity className="h-3 w-3" />
+            OFAT 분석
+          </button>
+          {QUICK_ACTIONS.slice(2).map((qa) => (
             <button
               key={qa.label}
               onClick={() => handleSend(qa.message)}

@@ -31,3 +31,12 @@ class DataFrameFollowupRequest(BaseModel):
     subset_columns: list[str] | None = Field(None, description="특정 컬럼만 조회")
     filter_expr: str | None = Field(None, description="필터 표현식 (pandas query)")
     limit: int = Field(100, ge=1, le=1000, description="최대 행 수")
+
+
+class OFATRequest(BaseModel):
+    """OFAT 일관성 분석 요청"""
+    session_id: str = Field(..., description="세션 ID")
+    branch_id: str = Field(..., description="브랜치 ID")
+    target_columns: list[str] = Field(..., description="타겟 컬럼 목록")
+    feature_columns: list[str] = Field(..., description="피처 컬럼 목록")
+    source_artifact_id: str | None = Field(None, description="분석 대상 데이터프레임 아티팩트 ID")

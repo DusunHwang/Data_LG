@@ -30,6 +30,7 @@ class JobType(str, enum.Enum):
     shap = "shap"
     plot_followup = "plot_followup"
     dataframe_followup = "dataframe_followup"
+    ofat = "ofat"
 
 
 class JobRun(BaseModel):

@@ -760,3 +760,323 @@ def _update_optimization_sync(
         logger.error("최적화 DB 업데이트 실패", error=str(e))
     finally:
         conn.close()
+
+
+def run_ofat_task(
+    job_run_id: str,
+    session_id: str,
+    branch_id: str,
+    dataset_path: str,
+    target_columns: list[str],
+    feature_columns: list[str],
+    source_artifact_id: str | None = None,
+) -> dict:
+    """OFAT(One-Factor-at-a-Time) 일관성 분석 작업"""
+    reporter = ProgressReporter(job_run_id)
+    token = CancellationToken(job_run_id)
+
+    try:
+        update_job_status_sync(job_run_id, "running", 0, "OFAT 분석 준비 중...")
+
+        import base64
+        import io
+        import json
+        import math
+        import os
+        import uuid as uuid_module
+        from datetime import datetime, timezone
+
+        import matplotlib
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+        import numpy as np
+        import pandas as pd
+
+        from app.graph.helpers import (
+            dataframe_to_preview,
+            get_artifact_dir,
+            save_artifact_to_db,
+            setup_korean_font,
+        )
+        from app.worker.job_runner import get_sync_db_connection
+
+        setup_korean_font()
+        reporter.update(5, "데이터 로드 중...")
+
+        with open(dataset_path, "rb") as f:
+            df = pd.read_parquet(io.BytesIO(f.read()))
+
+        token.check()
+
+        available = set(df.columns)
+        feat_cols = [c for c in feature_columns if c in available]
+        tgt_cols = [c for c in target_columns if c in available]
+
+        if not feat_cols:
+            raise ValueError("유효한 피처 컬럼이 없습니다.")
+        if not tgt_cols:
+            raise ValueError("유효한 타겟 컬럼이 없습니다.")
+
+        reporter.update(15, "유효한 OFAT 그룹 탐색 중...")
+        token.check()
+
+        # --- OFAT 그룹 탐색 ---
+        # categorical 포함 groupby를 위해 문자열 변환 키 사용
+        def build_group_keys(df_: pd.DataFrame, cols: list[str]) -> pd.Series:
+            return df_[cols].astype(str).apply(lambda r: "\x00".join(r), axis=1)
+
+        valid_ofat: dict[str, dict[str, pd.DataFrame]] = {}
+        summary_rows: list[dict] = []
+
+        for x_col in feat_cols:
+            other_cols = [c for c in feat_cols if c != x_col]
+            if not other_cols:
+                continue
+
+            keys = build_group_keys(df, other_cols)
+            groups_map: dict[str, list[int]] = {}
+            for idx, k in keys.items():
+                groups_map.setdefault(k, []).append(int(idx))
+
+            valid_groups: dict[str, pd.DataFrame] = {}
+            for k, idxs in groups_map.items():
+                if len(idxs) < 2:
+                    continue
+                gdf = df.loc[idxs]
+                if gdf[x_col].nunique(dropna=True) < 2:
+                    continue
+                valid_groups[k] = gdf
+
+            if not valid_groups:
+                continue
+
+            valid_ofat[x_col] = {}
+            for gid_idx, (k, gdf) in enumerate(valid_groups.items()):
+                group_id = f"G{gid_idx + 1}"
+                valid_ofat[x_col][group_id] = gdf.reset_index(drop=True)
+
+                # 고정 조건 (최대 15컬럼)
+                fixed_vals: dict[str, str] = {}
+                for oc in other_cols[:15]:
+                    uniq = gdf[oc].dropna().unique()
+                    fixed_vals[oc] = str(uniq[0]) if len(uniq) == 1 else f"{uniq[0]}…"
+
+                for y_col in tgt_cols:
+                    row: dict = {
+                        "Target_Variable": y_col,
+                        "Test_Variable": x_col,
+                        "Group_ID": group_id,
+                        "Group_Size": len(gdf),
+                    }
+                    row.update({f"Fixed_{oc}": v for oc, v in fixed_vals.items()})
+                    summary_rows.append(row)
+
+        if not valid_ofat:
+            raise ValueError(
+                "유효한 OFAT 그룹을 찾을 수 없습니다. "
+                "나머지 변수가 동일하게 고정된 상태에서 해당 변수만 달라지는 행 쌍이 존재하지 않습니다."
+            )
+
+        reporter.update(30, "지표 계산 및 시각화 중...")
+        token.check()
+
+        plot_dir = get_artifact_dir(session_id, "plot")
+        df_dir = get_artifact_dir(session_id, "dataframe")
+        conn = get_sync_db_connection()
+        created_ids: list[str] = []
+        step_id = str(uuid_module.uuid4())
+        now = datetime.now(timezone.utc)
+
+        cur = conn.cursor()
+        if branch_id:
+            cur.execute(
+                """
+                INSERT INTO steps (
+                    id, branch_id, step_type, status, sequence_no, title,
+                    input_data, output_data, created_at, updated_at
+                ) VALUES (?, ?, 'analysis', 'completed', 0, ?, ?, ?, ?, ?)
+                """,
+                (
+                    step_id,
+                    branch_id,
+                    "OFAT 일관성 분석",
+                    json.dumps({
+                        "target_columns": tgt_cols,
+                        "feature_columns": feat_cols,
+                        "source_artifact_id": source_artifact_id,
+                    }),
+                    json.dumps({"valid_features": list(valid_ofat.keys())}),
+                    now,
+                    now,
+                ),
+            )
+
+        valid_x_cols = list(valid_ofat.keys())
+        n_valid = len(valid_x_cols)
+        n_targets = len(tgt_cols)
+        step_size = 55 / max(n_valid * n_targets, 1)
+        plot_done = 0
+
+        for y_col in tgt_cols:
+            token.check()
+
+            n_cols_plot = min(3, n_valid)
+            n_rows_plot = math.ceil(n_valid / n_cols_plot)
+            fig_w = max(7.0, n_cols_plot * 5.5)
+            fig_h = max(5.0, n_rows_plot * 4.8) + 0.6
+
+            fig, axes = plt.subplots(n_rows_plot, n_cols_plot, figsize=(fig_w, fig_h), squeeze=False)
+            fig.suptitle(
+                f"OFAT 일관성 분석 — 타겟: {y_col}",
+                fontsize=12, fontweight="bold", y=0.99,
+            )
+            tab20 = plt.get_cmap("tab20")
+
+            for xi, x_col in enumerate(valid_x_cols):
+                ax = axes[xi // n_cols_plot][xi % n_cols_plot]
+                groups = valid_ofat[x_col]
+
+                from scipy import stats as sp_stats
+
+                pos_cnt = neg_cnt = 0
+                w_slope_sum = w_sign_sum = total_n = 0.0
+                all_xv: list[np.ndarray] = []
+                all_yv: list[np.ndarray] = []
+
+                for gid_i, (group_id, gdf) in enumerate(groups.items()):
+                    color = tab20(gid_i % 20)
+
+                    x_num = pd.to_numeric(gdf[x_col], errors="coerce")
+                    y_num = pd.to_numeric(gdf[y_col], errors="coerce")
+                    mask = x_num.notna() & y_num.notna()
+                    xv = x_num[mask].to_numpy()
+                    yv = y_num[mask].to_numpy()
+                    n_k = len(xv)
+                    if n_k < 2:
+                        continue
+
+                    ax.scatter(xv, yv, color=color, alpha=0.75, s=28, label=group_id, zorder=3)
+                    all_xv.append(xv)
+                    all_yv.append(yv)
+
+                    try:
+                        res = sp_stats.linregress(xv, yv)
+                        slope = res.slope
+                        x_line = np.linspace(xv.min(), xv.max(), 60)
+                        ax.plot(x_line, slope * x_line + res.intercept, color=color, linewidth=1.3)
+
+                        sign_k = 1 if slope > 0 else (-1 if slope < 0 else 0)
+                        if sign_k > 0:
+                            pos_cnt += 1
+                        elif sign_k < 0:
+                            neg_cnt += 1
+                        w_slope_sum += slope * n_k
+                        w_sign_sum += sign_k * n_k
+                        total_n += n_k
+                    except Exception:
+                        pass
+
+                if total_n > 0:
+                    ci = w_sign_sum / total_n
+                    w_slope = w_slope_sum / total_n
+                    # 전체 풀링 회귀로 p-value 계산
+                    p_str = "n/a"
+                    try:
+                        pooled_x = np.concatenate(all_xv)
+                        pooled_y = np.concatenate(all_yv)
+                        if len(pooled_x) >= 3 and pooled_x.std() > 0:
+                            pool_res = sp_stats.linregress(pooled_x, pooled_y)
+                            pv = pool_res.pvalue
+                            p_str = f"{pv:.2e}" if pv < 0.001 else f"{pv:.3f}"
+                    except Exception:
+                        pass
+                    title_str = (
+                        f"{x_col}\n"
+                        f"[+{pos_cnt}/-{neg_cnt}  CI={ci:+.2f}  Slope={w_slope:.3g}  p={p_str}]"
+                    )
+                else:
+                    title_str = f"{x_col}\n[데이터 부족]"
+
+                ax.set_title(title_str, fontsize=8, pad=4)
+                ax.set_xlabel(x_col, fontsize=7)
+                ax.set_ylabel(y_col, fontsize=7)
+                ax.tick_params(labelsize=6)
+                ax.grid(True, linewidth=0.4, alpha=0.4)
+
+                n_grp = len(groups)
+                if n_grp <= 12:
+                    ax.legend(fontsize=5, loc="best", ncol=2 if n_grp > 6 else 1)
+
+                plot_done += 1
+                reporter.update(30 + int(step_size * plot_done), f"{x_col} → {y_col} 완료")
+
+            # 남은 서브플롯 숨기기
+            for xi in range(n_valid, n_rows_plot * n_cols_plot):
+                axes[xi // n_cols_plot][xi % n_cols_plot].set_visible(False)
+
+            plt.tight_layout(rect=[0, 0, 1, 0.97])
+
+            safe_y = y_col.replace("/", "_").replace("\\", "_")[:40]
+            plot_path = os.path.join(plot_dir, f"ofat_{safe_y}_{step_id}.png")
+            plt.savefig(plot_path, dpi=110, bbox_inches="tight")
+            plt.close(fig)
+
+            with open(plot_path, "rb") as f:
+                data_url = "data:image/png;base64," + base64.b64encode(f.read()).decode()
+
+            art_id = save_artifact_to_db(
+                conn, step_id, session_id,
+                "plot", f"OFAT 분석 [{y_col}]",
+                plot_path, "image/png",
+                os.path.getsize(plot_path),
+                {"data_url": data_url},
+                {"type": "ofat_plot", "target_column": y_col},
+            )
+            created_ids.append(art_id)
+
+        # --- 상수 조건 요약 테이블 ---
+        reporter.update(90, "요약 테이블 저장 중...")
+        token.check()
+
+        if summary_rows:
+            summary_df = pd.DataFrame(summary_rows)
+            table_path = os.path.join(df_dir, f"ofat_summary_{step_id}.parquet")
+            summary_df.to_parquet(table_path, index=False)
+
+            art_id = save_artifact_to_db(
+                conn, step_id, session_id,
+                "dataframe", "OFAT 상수 조건 요약",
+                table_path, "application/parquet",
+                os.path.getsize(table_path),
+                dataframe_to_preview(summary_df, max_rows=100),
+                {"type": "ofat_summary_table"},
+            )
+            created_ids.append(art_id)
+
+        conn.commit()
+        conn.close()
+
+        result = {
+            "status": "completed",
+            "artifact_ids": created_ids,
+            "message": (
+                f"OFAT 분석 완료 — 유효 변수 {len(valid_x_cols)}개 / "
+                f"타겟 {len(tgt_cols)}개 / 차트 {len(tgt_cols)}개 생성"
+            ),
+            "intent": "ofat_analysis",
+        }
+        update_job_status_sync(job_run_id, "completed", 100, "OFAT 분석 완료", result=result)
+        clear_progress(job_run_id)
+        return result
+
+    except InterruptedError:
+        update_job_status_sync(job_run_id, "cancelled", 0, "작업이 취소되었습니다.")
+        clear_cancellation(job_run_id)
+        clear_progress(job_run_id)
+        return {"status": "cancelled"}
+
+    except Exception as e:
+        logger.error("OFAT 분석 작업 실패", job_run_id=job_run_id, error=str(e))
+        update_job_status_sync(job_run_id, "failed", 0, "OFAT 분석 실패", error_message=str(e))
+        clear_progress(job_run_id)
+        raise

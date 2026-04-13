@@ -319,7 +319,7 @@ export default function ArtifactCard({ artifact }: ArtifactCardProps) {
                   return (
                     <button
                       onClick={() => togglePendingTarget(col)}
-                      className={`max-w-full rounded-full px-2.5 py-1 text-xs border transition-colors ${
+                      className={`rounded-full px-2.5 py-1 text-xs border transition-colors ${
                         selected
                           ? 'bg-amber-500 border-amber-500 text-white font-medium'
                           : 'bg-white border-gray-300 text-gray-600 hover:border-amber-400 hover:text-amber-700'
@@ -395,7 +395,7 @@ export default function ArtifactCard({ artifact }: ArtifactCardProps) {
                       onClick={() => togglePendingY1(col)}
                       disabled={isTarget}
                       title={candidate ? `y2와 상관계수: ${candidate.corr_with_y2}` : undefined}
-                      className={`max-w-full rounded-full px-2.5 py-1 text-xs border transition-colors ${
+                      className={`rounded-full px-2.5 py-1 text-xs border transition-colors ${
                         isTarget
                           ? 'bg-gray-100 border-gray-200 text-gray-400 cursor-not-allowed'
                           : selected
@@ -466,7 +466,7 @@ export default function ArtifactCard({ artifact }: ArtifactCardProps) {
                     <button
                       onClick={() => togglePendingFeature(col)}
                       disabled={disabled}
-                      className={`max-w-full rounded-full px-2.5 py-1 text-xs border transition-colors ${
+                      className={`rounded-full px-2.5 py-1 text-xs border transition-colors ${
                         disabled
                           ? 'bg-gray-100 border-gray-200 text-gray-400 cursor-not-allowed'
                           : selected
@@ -637,39 +637,14 @@ function VirtualColumnPicker({
   columns: string[]
   renderColumn: (column: string) => ReactNode
 }) {
-  const parentRef = useRef<HTMLDivElement | null>(null)
-  const columnsPerRow = 4
-  const rowCount = Math.ceil(columns.length / columnsPerRow)
-  const rowVirtualizer = useVirtualizer({
-    count: rowCount,
-    getScrollElement: () => parentRef.current,
-    estimateSize: () => 34,
-    overscan: 8,
-  })
-
   return (
-    <div ref={parentRef} className="mb-2 max-h-36 overflow-y-auto scrollbar-thin">
-      <div className="relative" style={{ height: rowVirtualizer.getTotalSize() }}>
-        {rowVirtualizer.getVirtualItems().map((virtualRow) => {
-          const startIndex = virtualRow.index * columnsPerRow
-          const rowColumns = columns.slice(startIndex, startIndex + columnsPerRow)
-          return (
-            <div
-              key={virtualRow.key}
-              className="absolute left-0 right-0 flex flex-wrap gap-1.5 pr-1"
-              style={{
-                height: virtualRow.size,
-                transform: `translateY(${virtualRow.start}px)`,
-              }}
-            >
-              {rowColumns.map((col) => (
-                <div key={col} className="min-w-0 max-w-full">
-                  {renderColumn(col)}
-                </div>
-              ))}
-            </div>
-          )
-        })}
+    <div className="mb-2 max-h-36 overflow-y-auto scrollbar-thin">
+      <div className="flex flex-wrap gap-1.5 pr-1">
+        {columns.map((col) => (
+          <div key={col} className="min-w-0 shrink-0">
+            {renderColumn(col)}
+          </div>
+        ))}
       </div>
     </div>
   )

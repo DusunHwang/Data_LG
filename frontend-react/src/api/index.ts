@@ -401,6 +401,16 @@ export const analysisApi = {
     const res = await http.post<ApiSuccess<AnalyzeResponse>>('/analysis/analyze', req)
     return unwrap(res)
   },
+  ofat: async (req: {
+    session_id: string
+    branch_id: string
+    target_columns: string[]
+    feature_columns: string[]
+    source_artifact_id?: string
+  }): Promise<AnalyzeResponse> => {
+    const res = await http.post<ApiSuccess<AnalyzeResponse>>('/analysis/ofat', req)
+    return unwrap(res)
+  },
 }
 
 // ─── Jobs ─────────────────────────────────────────────────────────────────────
