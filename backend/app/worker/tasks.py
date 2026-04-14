@@ -50,6 +50,17 @@ def _infer_requested_intent(mode: str, message: str) -> str:
     return _keyword_classify(message)
 
 
+def _format_column_context(label: str, columns: list[str], max_visible: int = 12) -> str:
+    """긴 컬럼 목록이 프롬프트/응답에 그대로 번지는 것을 막는 표시용 요약."""
+    if not columns:
+        return ""
+    visible = ", ".join(columns[:max_visible])
+    hidden = len(columns) - max_visible
+    if hidden > 0:
+        return f"- {label}: {len(columns)}개 선택됨 ({visible} 외 {hidden}개)"
+    return f"- {label}: {visible}"
+
+
 def _augment_message_with_selection_context(
     message: str,
     target_columns: list[str],
@@ -61,9 +72,9 @@ def _augment_message_with_selection_context(
     if selected_artifact_id:
         lines.append(f"- 분석 대상 데이터프레임 ID: {selected_artifact_id}")
     if target_columns:
-        lines.append(f"- 반드시 사용할 타겟 컬럼: {', '.join(target_columns)}")
+        lines.append(_format_column_context("반드시 사용할 타겟 컬럼", target_columns))
     if feature_columns:
-        lines.append(f"- 반드시 사용할 변수(피처) 컬럼: {', '.join(feature_columns)}")
+        lines.append(_format_column_context("반드시 사용할 변수(피처) 컬럼", feature_columns))
         lines.append("- 위 변수 목록에 없는 컬럼은 변수/피처 후보에서 제외")
 
     if not lines:

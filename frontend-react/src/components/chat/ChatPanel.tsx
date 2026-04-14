@@ -22,6 +22,13 @@ function isConfigInheritableDataframe(artifact: import('@/types').Artifact) {
   ].includes(metaType)
 }
 
+function formatColumnSummary(columns: string[], maxVisible = 8) {
+  if (columns.length === 0) return ''
+  const visible = columns.slice(0, maxVisible).join(', ')
+  const hidden = columns.length - maxVisible
+  return hidden > 0 ? `${visible} 외 ${hidden}개` : visible
+}
+
 interface ChatPanelProps {
   externalInput?: string
   immediateExecute?: boolean
@@ -351,7 +358,7 @@ export default function ChatPanel({
                   addMessage(currentBranchId, {
                     id: genId(),
                     role: 'assistant',
-                    content: `새 분석 데이터프레임으로 자동 전환했습니다. 데이터 핸들링 과정에서 제거된 설정 변수는 자동으로 제외했습니다: ${removedFeatures.join(', ')}`,
+                    content: `새 분석 데이터프레임으로 자동 전환했습니다. 데이터 핸들링 과정에서 제거된 설정 변수 ${removedFeatures.length}개는 자동으로 제외했습니다: ${formatColumnSummary(removedFeatures)}`,
                     timestamp: new Date().toISOString(),
                   })
                 } else {
@@ -363,15 +370,6 @@ export default function ChatPanel({
                   })
                 }
                 break
-              }
-
-              if (shouldInheritSubsetConfigs && removedFeatures.length > 0) {
-                addMessage(currentBranchId, {
-                  id: genId(),
-                  role: 'assistant',
-                  content: `${artifact.name}에 설정을 상속하는 과정에서 제거된 변수는 자동 제외했습니다: ${removedFeatures.join(', ')}`,
-                  timestamp: new Date().toISOString(),
-                })
               }
             } catch {
               // noop
