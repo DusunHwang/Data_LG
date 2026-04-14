@@ -625,7 +625,9 @@ def _save_subset_nullity_heatmap(
                 ).tolist()
             else:
                 sampled_non_subset = []
-            plot_index = keep_subset + sampled_non_subset
+            # 원본 행 순서 유지: 선택된 인덱스를 df.index 순서로 정렬
+            selected = set(keep_subset) | set(sampled_non_subset)
+            plot_index = [idx for idx in df.index if idx in selected]
         else:
             plot_index = list(df.index)
 
