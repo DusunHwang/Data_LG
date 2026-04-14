@@ -70,14 +70,15 @@ def run_subset_subgraph(state: GraphState) -> GraphState:
 
     try:
         # 1. 데이터셋 로드
-        df = load_dataframe(dataset_path)
+        df_full = load_dataframe(dataset_path)
+        df = df_full
         if feature_columns:
-            constrained_cols = [c for c in feature_columns if c in df.columns]
+            constrained_cols = [c for c in feature_columns if c in df_full.columns]
             for target in target_columns:
-                if target in df.columns and target not in constrained_cols:
+                if target in df_full.columns and target not in constrained_cols:
                     constrained_cols.append(target)
             if constrained_cols:
-                df = df[constrained_cols].copy()
+                df = df_full[constrained_cols].copy()
         n_rows, n_cols = df.shape
         logger.info("서브셋 탐색 시작", n_rows=n_rows, n_cols=n_cols, target=target_col)
 
@@ -139,7 +140,8 @@ def run_subset_subgraph(state: GraphState) -> GraphState:
         # 8. DB 저장
         artifact_ids = _save_subset_artifacts(
             df, top_subsets, col_classification, missing_structure,
-            session_id, branch_id, dataset, state, target_col
+            session_id, branch_id, dataset, state, target_col,
+            df_full=df_full,
         )
 
         logger.info("서브셋 탐색 완료", n_subsets=len(top_subsets),
@@ -641,7 +643,10 @@ def _save_subset_nullity_heatmap(
                 if c is not None:
                     matrix[r, c] = 2
 
-        fig_w = max(7.5, min(18.0, 0.34 * len(plot_df.columns)))
+        n_plot_cols = len(plot_df.columns)
+        # 컬럼당 0.34인치 기본, 컬럼 수가 많을수록 최대 60인치까지 확보
+        # (120dpi 기준 800컬럼 → 60인치 = 9px/컬럼으로 충분히 구분 가능)
+        fig_w = max(7.5, min(60.0, 0.34 * n_plot_cols))
         fig_h = max(4.5, min(12.0, 0.012 * len(plot_df) + 3.2))
         fig, ax = plt.subplots(figsize=(fig_w, fig_h))
         cmap = ListedColormap(["#ffffff", "#c9c9c9", "#111111"])
@@ -730,6 +735,7 @@ def _save_subset_artifacts(
     dataset: dict,
     state: GraphState,
     target_col: Optional[str] = None,
+    df_full: Optional[pd.DataFrame] = None,
 ) -> dict:
     """서브셋 아티팩트 저장"""
     import uuid as uuid_module
@@ -772,11 +778,14 @@ def _save_subset_artifacts(
             )
 
         # 1. 서브셋별 nullity heatmap 저장 — 결과 해석용이므로 가장 먼저 노출한다.
+        # 히트맵은 전체 컬럼(df_full)을 기준으로 그린다. feature_columns 제한이 있어도
+        # 결측 구조를 전체 컬럼 관점에서 볼 수 있도록 한다.
+        heatmap_df = df_full if df_full is not None else df
         for i, subset in enumerate(top_subsets, 1):
             row_indices = subset.get("row_indices", [])
             cols = subset.get("cols", [])
-            valid_rows = [r for r in row_indices if r in df.index]
-            valid_cols = [c for c in cols if c in df.columns]
+            valid_rows = [r for r in row_indices if r in heatmap_df.index]
+            valid_cols = [c for c in cols if c in heatmap_df.columns]
             if not valid_rows or not valid_cols:
                 continue
 
@@ -785,7 +794,7 @@ def _save_subset_artifacts(
                 step_id=step_id,
                 session_id=session_id,
                 plot_dir=plot_dir,
-                df=df,
+                df=heatmap_df,
                 subset_no=i,
                 subset=subset,
                 valid_rows=valid_rows,
