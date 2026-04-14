@@ -755,6 +755,7 @@ function TableRenderer({ artifact, targetColumns = [] }: { artifact: Artifact; t
   const [loadingWindow, setLoadingWindow] = useState(false)
   const [windowError, setWindowError] = useState<string | null>(null)
   const [wrapHeaders, setWrapHeaders] = useState(false)
+  const [wrapFirstCol, setWrapFirstCol] = useState(false)
   const data = artifact.data ?? {}
   const rawRows = data.rows ?? []
   const rawColumns = data.columns ?? (
@@ -782,7 +783,7 @@ function TableRenderer({ artifact, targetColumns = [] }: { artifact: Artifact; t
   const totalRows = windowState?.totalRows ?? data.total_rows
   const totalCols = windowState?.totalCols ?? data.total_cols
 
-  const rowHeight = 30
+  const rowHeight = wrapFirstCol ? 48 : 30
   const columnWidth = 140
   const headerHeight = wrapHeaders ? 60 : 34
   const rowVirtualizer = useVirtualizer({
@@ -870,6 +871,18 @@ function TableRenderer({ artifact, targetColumns = [] }: { artifact: Artifact; t
           >
             <WrapText className="h-3 w-3" />
           </button>
+          <button
+            onClick={() => setWrapFirstCol((v) => !v)}
+            title={wrapFirstCol ? '1열 한 줄로 표시' : '1열 줄바꿈 (언더스코어 기준)'}
+            className={`rounded border px-1.5 py-0.5 flex items-center gap-0.5 text-[10px] font-medium ${
+              wrapFirstCol
+                ? 'border-violet-300 bg-violet-50 text-violet-700'
+                : 'border-gray-200 text-gray-500 hover:border-gray-400'
+            }`}
+          >
+            <WrapText className="h-3 w-3" />
+            <span>1열</span>
+          </button>
           {canNavigate && (
             <>
               <button
@@ -955,10 +968,12 @@ function TableRenderer({ artifact, targetColumns = [] }: { artifact: Artifact; t
             return virtualColumns.map((virtualColumn) => {
               const col = columns[virtualColumn.index]
               const isTarget = targetColumns.includes(col)
+              const isFirstCol = virtualColumn.index === 0
+              const cellValue = String(row[virtualColumn.index] ?? '')
               return (
                 <div
                   key={`${virtualRow.key}-${virtualColumn.key}`}
-                  className={`absolute flex items-center border-r border-b border-gray-100 px-2 text-xs ${
+                  className={`absolute flex items-center border-r border-b border-gray-100 px-2 text-xs overflow-hidden ${
                     absoluteRow % 2 === 0 ? 'bg-white' : 'bg-gray-50/50'
                   } ${isTarget ? 'bg-amber-50/80 text-amber-900 font-medium' : 'text-gray-700'}`}
                   style={{
@@ -967,9 +982,17 @@ function TableRenderer({ artifact, targetColumns = [] }: { artifact: Artifact; t
                     width: virtualColumn.size,
                     height: virtualRow.size,
                   }}
-                  title={String(row[virtualColumn.index] ?? '')}
+                  title={cellValue}
                 >
-                  <span className="truncate">{String(row[virtualColumn.index] ?? '')}</span>
+                  {isFirstCol && wrapFirstCol ? (
+                    <span className="whitespace-normal leading-tight line-clamp-2">
+                      {cellValue.split('_').flatMap((part, i, arr) =>
+                        i < arr.length - 1 ? [part, '_', <wbr key={i} />] : [part]
+                      )}
+                    </span>
+                  ) : (
+                    <span className="truncate">{cellValue}</span>
+                  )}
                 </div>
               )
             })
