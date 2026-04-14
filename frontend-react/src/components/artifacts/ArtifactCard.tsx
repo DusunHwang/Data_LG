@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useVirtualizer } from '@tanstack/react-virtual'
-import { CheckCircle2, ZoomIn, Target, X, Check, MousePointerClick, GitBranch, Columns } from 'lucide-react'
+import { CheckCircle2, ZoomIn, Target, X, Check, MousePointerClick, GitBranch, Columns, WrapText } from 'lucide-react'
 import { useSessionStore } from '@/store'
 import { artifactTableApi, datasetTableApi, modelingApi } from '@/api'
 import type { Artifact } from '@/types'
@@ -754,6 +754,7 @@ function TableRenderer({ artifact, targetColumns = [] }: { artifact: Artifact; t
   } | null>(null)
   const [loadingWindow, setLoadingWindow] = useState(false)
   const [windowError, setWindowError] = useState<string | null>(null)
+  const [wrapHeaders, setWrapHeaders] = useState(false)
   const data = artifact.data ?? {}
   const rawRows = data.rows ?? []
   const rawColumns = data.columns ?? (
@@ -783,7 +784,7 @@ function TableRenderer({ artifact, targetColumns = [] }: { artifact: Artifact; t
 
   const rowHeight = 30
   const columnWidth = 140
-  const headerHeight = 34
+  const headerHeight = wrapHeaders ? 60 : 34
   const rowVirtualizer = useVirtualizer({
     count: rows.length,
     getScrollElement: () => parentRef.current,
@@ -857,38 +858,51 @@ function TableRenderer({ artifact, targetColumns = [] }: { artifact: Artifact; t
             </span>
           )}
         </span>
-        {canNavigate && (
-          <div className="flex shrink-0 items-center gap-1">
-            <button
-              onClick={() => loadWindow(rowStart, colStart - 50)}
-              disabled={!hasPreviousCols || loadingWindow}
-              className="rounded border border-gray-200 px-1.5 py-0.5 disabled:opacity-40"
-            >
-              이전 열
-            </button>
-            <button
-              onClick={() => loadWindow(rowStart, colStart + 50)}
-              disabled={!hasHiddenCols || loadingWindow}
-              className="rounded border border-gray-200 px-1.5 py-0.5 disabled:opacity-40"
-            >
-              다음 열
-            </button>
-            <button
-              onClick={() => loadWindow(rowStart - 100, colStart)}
-              disabled={!hasPreviousRows || loadingWindow}
-              className="rounded border border-gray-200 px-1.5 py-0.5 disabled:opacity-40"
-            >
-              이전 행
-            </button>
-            <button
-              onClick={() => loadWindow(rowStart + 100, colStart)}
-              disabled={!hasHiddenRows || loadingWindow}
-              className="rounded border border-gray-200 px-1.5 py-0.5 disabled:opacity-40"
-            >
-              다음 행
-            </button>
-          </div>
-        )}
+        <div className="flex shrink-0 items-center gap-1">
+          <button
+            onClick={() => setWrapHeaders((v) => !v)}
+            title={wrapHeaders ? '컬럼명 한 줄로 표시' : '컬럼명 줄바꿈'}
+            className={`rounded border px-1.5 py-0.5 flex items-center gap-0.5 ${
+              wrapHeaders
+                ? 'border-blue-300 bg-blue-50 text-blue-700'
+                : 'border-gray-200 text-gray-500 hover:border-gray-400'
+            }`}
+          >
+            <WrapText className="h-3 w-3" />
+          </button>
+          {canNavigate && (
+            <>
+              <button
+                onClick={() => loadWindow(rowStart, colStart - 50)}
+                disabled={!hasPreviousCols || loadingWindow}
+                className="rounded border border-gray-200 px-1.5 py-0.5 disabled:opacity-40"
+              >
+                이전 열
+              </button>
+              <button
+                onClick={() => loadWindow(rowStart, colStart + 50)}
+                disabled={!hasHiddenCols || loadingWindow}
+                className="rounded border border-gray-200 px-1.5 py-0.5 disabled:opacity-40"
+              >
+                다음 열
+              </button>
+              <button
+                onClick={() => loadWindow(rowStart - 100, colStart)}
+                disabled={!hasPreviousRows || loadingWindow}
+                className="rounded border border-gray-200 px-1.5 py-0.5 disabled:opacity-40"
+              >
+                이전 행
+              </button>
+              <button
+                onClick={() => loadWindow(rowStart + 100, colStart)}
+                disabled={!hasHiddenRows || loadingWindow}
+                className="rounded border border-gray-200 px-1.5 py-0.5 disabled:opacity-40"
+              >
+                다음 행
+              </button>
+            </>
+          )}
+        </div>
       </div>
       {windowError && <p className="text-[11px] text-red-600">{windowError}</p>}
       <div
@@ -922,7 +936,15 @@ function TableRenderer({ artifact, targetColumns = [] }: { artifact: Artifact; t
                   }}
                   title={col}
                 >
-                  <span className="truncate">{col}</span>
+                  {wrapHeaders ? (
+                    <span className="whitespace-normal leading-tight">
+                      {col.split('_').flatMap((part, i, arr) =>
+                        i < arr.length - 1 ? [part, '_', <wbr key={i} />] : [part]
+                      )}
+                    </span>
+                  ) : (
+                    <span className="truncate">{col}</span>
+                  )}
                 </div>
               )
             })}
