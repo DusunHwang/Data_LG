@@ -794,16 +794,25 @@ const MessageBubble = memo(({
   const artifactIds = Array.from(new Set(msg.artifact_ids ?? []))
   const hasArtifacts = artifactIds.length > 0
 
+  const HIDDEN_META_TYPES = new Set(['column_classification', 'subset_registry', 'subset_score_table'])
+
   const { sessionId } = useSessionStore()
   const cacheArtifact = useArtifactStore((state) => state.cacheArtifact)
-  
+
   // 아티팩트 개별 구독 (selector 사용으로 불필요한 리렌더링 방지)
-  const artifacts = useArtifactStore((state) => 
-    artifactIds.map(id => state.artifacts[id]).filter(Boolean) as import('@/types').Artifact[]
+  const artifacts = useArtifactStore((state) =>
+    artifactIds
+      .map(id => state.artifacts[id])
+      .filter(Boolean)
+      .filter((a) => !HIDDEN_META_TYPES.has(String((a as import('@/types').Artifact).data?.type ?? ''))) as import('@/types').Artifact[]
   )
   const cachedMap = useArtifactStore((state) => state.artifacts)
 
-  const isAllCached = artifacts.length === artifactIds.length
+  const isAllCached = artifactIds.every((id) => {
+    const a = cachedMap[id]
+    if (!a) return false
+    return true  // 숨겨진 타입도 "캐시됨"으로 간주해 스켈레톤 방지
+  })
   
   const lines = msg.content.split('\n').length
   const shouldToggle = lines > 3 || hasArtifacts
@@ -902,7 +911,11 @@ const MessageBubble = memo(({
       {!isUser && isExpanded && hasArtifacts && (
         <div className="mt-3 w-full max-w-full space-y-2">
           {artifactIds
-            .filter((id) => !cachedMap[id])
+            .filter((id) => {
+              if (cachedMap[id]) return false
+              return true
+            })
+            .filter((id) => !HIDDEN_META_TYPES.has(String((cachedMap[id] as import('@/types').Artifact | undefined)?.data?.type ?? '')))
             .slice(0, 3)
             .map((id) => (
               <div key={id} className="rounded-xl border border-gray-200 bg-white p-4 animate-pulse">

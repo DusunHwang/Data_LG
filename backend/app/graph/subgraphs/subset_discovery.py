@@ -857,7 +857,6 @@ def _save_subset_artifacts(
                 "feature_coverage": subset["feature_coverage"],
                 "mean_missingness": subset["mean_missingness"],
                 "target_completeness": subset["target_completeness"],
-                "cols": subset["cols"],
             })
 
         registry_df = pd.DataFrame(registry)
