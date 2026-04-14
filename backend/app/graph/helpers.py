@@ -368,7 +368,7 @@ def create_step_in_db(
     return step_id
 
 
-def dataframe_to_preview(df: pd.DataFrame, max_rows: int = 20, max_cols: int = 50) -> dict:
+def dataframe_to_preview(df: pd.DataFrame, max_rows: int = 50, max_cols: int = 50) -> dict:
     """DataFrame을 미리보기 JSON으로 변환
 
     표시용 columns / data 는 max_cols 이하로 제한하되,

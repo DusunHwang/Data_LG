@@ -29,6 +29,7 @@ class ArtifactPreviewResponse(BaseModel):
     name: str
     file_path: str | None = None
     preview_json: dict[str, Any] | None
+    meta: dict[str, Any] | None = None
 
     model_config = {"from_attributes": True}
 

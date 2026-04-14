@@ -308,39 +308,14 @@ interface ArtifactCacheState {
   clearArtifacts: () => void
 }
 
-const MAX_ARTIFACT_CACHE = 30
-const MAX_DATAFRAME_ARTIFACT_CACHE = 5
-
 export const useArtifactStore = create<ArtifactCacheState>((set) => ({
   artifacts: {},
   order: [],
   cacheArtifact: (artifact) =>
     set((state) => {
-      const nextArtifacts = { ...state.artifacts, [artifact.id]: artifact }
       const nextOrder = [artifact.id, ...state.order.filter((id) => id !== artifact.id)]
-
-      // 캐시 제한 초과 시 가장 오래된 항목 삭제
-      if (nextOrder.length > MAX_ARTIFACT_CACHE) {
-        const toRemove = nextOrder.pop()
-        if (toRemove && toRemove !== artifact.id) {
-          delete nextArtifacts[toRemove]
-        }
-      }
-
-      const dataframeIds = nextOrder.filter((id) => {
-        const item = nextArtifacts[id]
-        return item && ['dataframe', 'table', 'leaderboard', 'feature_importance'].includes(item.type)
-      })
-      for (const id of dataframeIds.slice(MAX_DATAFRAME_ARTIFACT_CACHE)) {
-        if (id !== artifact.id) {
-          delete nextArtifacts[id]
-          const index = nextOrder.indexOf(id)
-          if (index >= 0) nextOrder.splice(index, 1)
-        }
-      }
-
       return {
-        artifacts: nextArtifacts,
+        artifacts: { ...state.artifacts, [artifact.id]: artifact },
         order: nextOrder,
       }
     }),

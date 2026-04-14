@@ -108,7 +108,7 @@ const ArtifactNode = memo(function ArtifactNode({
     if (!artifact && sessionId) {
       artifactsApi.preview(sessionId, artifactId).then(cacheArtifact).catch(() => {})
     }
-  }, [artifactId, sessionId]) // artifact 제거: 로드 완료 후 재실행 불필요
+  }, [artifactId, sessionId, artifact]) // artifact 포함: 캐시 축출 시 재요청
 
   const isDataframe = artifact ? DF_TYPES.has(artifact.type) : false
   const label = artifact
@@ -261,7 +261,7 @@ const DatasetNode = memo(function DatasetNode({
     if (!artifact && sessionId) {
       artifactsApi.preview(sessionId, artifactId).then(cacheArtifact).catch(() => {})
     }
-  }, [artifactId, sessionId])
+  }, [artifactId, sessionId, artifact])
 
   const label = artifact
     ? artifact.name.replace(/\s*\[[^\]]+\]/g, '').trim().slice(0, 9)

@@ -322,6 +322,12 @@ function mapArtifactPreview(raw: Record<string, unknown>, sessionId: string): Ar
     }
   }
 
+  // meta.type → data.type (shouldDisplayArtifactInHistory 필터에서 사용)
+  const meta = (raw.meta ?? {}) as Record<string, unknown>
+  if (meta.type) {
+    data.type = String(meta.type)
+  }
+
   return {
     id: String(raw.id),
     session_id: sessionId,
