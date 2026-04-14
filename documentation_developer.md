@@ -13,6 +13,7 @@
 - baseline modeling, Decision Tree 임계값 분류, SHAP/simplify 처리
 - optimization wizard의 프론트엔드 단계, API, worker 처리
 - Null Importance, BCM 선학습, differential evolution, 수렴 판정
+- OFAT 일관성 분석: API 라우팅, 그룹 탐색 알고리즘, CI/Slope/p-value 계산, 차트 생성
 - 아티팩트 저장 구조와 결과 판정
 
 주요 관련 파일은 다음과 같다.
@@ -822,7 +823,186 @@ violation = abs(actual_sum - total)
 
 문장에 충분한 정보가 있는 단순 모델링/분류 요청은 가능한 한 UI target 미지정 실패로 끝나지 않도록 target inference와 threshold parser가 먼저 동작한다.
 
-## 21. 구현상 주의점
+## 21. OFAT 일관성 분석
+
+### 21.1 진입점과 흐름
+
+OFAT 분석은 메인 LangGraph 파이프라인을 거치지 않고 별도 API 엔드포인트와 RQ worker task로 처리된다.
+
+관련 파일:
+
+- `backend/app/api/v1/routes/analysis.py` — `POST /analysis/ofat`
+- `backend/app/schemas/analysis.py` — `OFATRequest`
+- `backend/app/db/models/job.py` — `JobType.ofat`
+- `backend/app/worker/tasks.py` — `run_ofat_task`
+- `frontend-react/src/components/chat/ChatPanel.tsx` — OFAT 버튼
+- `frontend-react/src/api/index.ts` — `analysisApi.ofat()`
+
+API 요청 스키마(`OFATRequest`):
+
+```text
+session_id: str
+branch_id: str
+target_columns: list[str]
+feature_columns: list[str]
+source_artifact_id: str | None  # 선택한 dataframe artifact (없으면 active dataset 사용)
+```
+
+API 핸들러는 `source_artifact_id`가 있으면 해당 artifact의 `file_path`를 dataset_path로 사용하고, 없으면 세션의 `active_dataset_id`를 사용한다. dataset_path는 `params`에 포함되어 worker로 전달된다.
+
+### 21.2 OFAT 그룹 탐색 알고리즘
+
+구현 위치: `run_ofat_task` 내부, `tasks.py`
+
+각 피처 변수 `x_col`에 대해 나머지 피처 컬럼(`other_cols = feat_cols - {x_col}`)을 기준으로 그룹을 만든다.
+
+그룹 키는 문자열 연결로 구성한다. 범주형 컬럼이 포함된 경우에도 안전하게 groupby하기 위해 pandas groupby 대신 직접 키를 만든다.
+
+```python
+def build_group_keys(df, cols):
+    return df[cols].astype(str).apply(lambda r: "\x00".join(r), axis=1)
+```
+
+그룹이 유효하려면 다음 두 조건을 모두 만족해야 한다.
+
+```text
+len(group) >= 2                      # 행이 2개 이상
+x_col.nunique(dropna=True) >= 2      # 해당 그룹에서 x_col 값이 2가지 이상
+```
+
+유효 그룹이 하나도 없는 피처는 분석 결과에서 제외된다. 전체 피처에 대해 유효 그룹이 없으면 ValueError를 발생시킨다.
+
+### 21.3 통계 지표 계산
+
+각 유효 그룹에 대해 `scipy.stats.linregress(xv, yv)`로 선형 회귀를 수행한다. 수치형 변환(`pd.to_numeric(errors="coerce")`)과 NaN 마스크 처리 후 적용한다.
+
+그룹 k에서 계산되는 값:
+
+```text
+slope_k         → linregress.slope
+sign_k          → +1 (slope > 0), -1 (slope < 0), 0 (slope = 0)
+n_k             → 유효 행 수
+```
+
+피처 단위 집계(전체 그룹에 대한 가중 평균):
+
+```text
+# 방향 일관성 지수 (Consistency Index)
+CI = sum(sign_k * n_k) / sum(n_k)
+
+# 가중 평균 기울기
+weighted_slope = sum(slope_k * n_k) / sum(n_k)
+```
+
+CI는 -1에서 +1 범위이다. +1이면 모든 그룹에서 양의 방향, -1이면 모든 그룹에서 음의 방향, 0이면 방향이 혼재함을 의미한다.
+
+### 21.4 풀링 회귀 p-value
+
+전체 그룹의 (xv, yv) 데이터를 하나로 합쳐 풀링 회귀를 수행한다.
+
+```python
+pooled_x = np.concatenate(all_xv)
+pooled_y = np.concatenate(all_yv)
+pool_res = scipy.stats.linregress(pooled_x, pooled_y)
+pv = pool_res.pvalue
+```
+
+유효 조건:
+
+```text
+len(pooled_x) >= 3 and pooled_x.std() > 0
+```
+
+조건을 만족하지 않거나 예외 발생 시 p-value는 `"n/a"`로 표시한다.
+
+p-value 포맷:
+
+```text
+pv < 0.001  → f"{pv:.2e}"   (예: 1.23e-05)
+pv >= 0.001 → f"{pv:.3f}"  (예: 0.042)
+```
+
+### 21.5 차트 생성
+
+타겟 컬럼별로 서브플롯 그리드를 만든다. 레이아웃 기준:
+
+```text
+n_cols_plot = min(3, n_valid_features)
+n_rows_plot = ceil(n_valid_features / n_cols_plot)
+fig_w = max(7.0, n_cols_plot * 5.5)
+fig_h = max(5.0, n_rows_plot * 4.8) + 0.6
+```
+
+서브플롯 제목 형식:
+
+```text
+{x_col}
+[+{pos_cnt}/-{neg_cnt}  CI={ci:+.2f}  Slope={weighted_slope:.3g}  p={p_str}]
+```
+
+각 그룹은 `matplotlib tab20` colormap에서 색상을 순환 할당한다 (`gid_i % 20`). 그룹 수가 12개 이하이면 범례를 표시한다.
+
+유효 그룹 수보다 서브플롯이 많으면 남은 axes는 `set_visible(False)`로 숨긴다.
+
+### 21.6 저장 아티팩트
+
+타겟 컬럼별로 다음 아티팩트를 저장한다.
+
+| 아티팩트 | 타입 | 파일 | 내용 |
+| --- | --- | --- | --- |
+| OFAT 분석 차트 | plot | `ofat_{safe_y}_{step_id}.png` | 전체 OFAT 서브플롯 차트 |
+| OFAT 상수 조건 요약 | dataframe | `ofat_summary_{step_id}.parquet` | 그룹별 고정 조건 및 그룹 크기 |
+
+요약 테이블 컬럼 구성:
+
+```text
+Target_Variable, Test_Variable, Group_ID, Group_Size,
+Fixed_{other_col_1}, Fixed_{other_col_2}, ...  (최대 15개 고정 컬럼)
+```
+
+고정 컬럼의 값은 해당 그룹에서 unique가 1개이면 그 값, 2개 이상이면 `"{첫번째값}…"` 형태로 표시한다.
+
+차트 artifact의 `preview_json`에는 base64 인코딩된 PNG가 `data_url` 형태로 포함된다.
+
+### 21.7 프론트엔드 진입점
+
+버튼 위치: 입력창 상단 quick-actions 행 (프로파일 분석 → Subset 발견 → **OFAT 분석** → 핵심인자 추출 → 인자 최소화 순서)
+
+비활성화 조건:
+
+```typescript
+targetColumns.length === 0 || featureColumns.length < 2
+```
+
+`handleOFAT` 콜백:
+
+```typescript
+analysisApi.ofat({
+  session_id: sessionId,
+  branch_id: branchId,
+  target_columns: targetColumns,
+  feature_columns: featureColumns,
+  source_artifact_id: targetDataframeArtifactId ?? undefined,
+})
+```
+
+응답으로 받은 `job_id`를 active job으로 설정해 진행 상태를 폴링한다.
+
+### 21.8 취소와 에러 처리
+
+worker 내부에서 `token.check()`를 주요 단계마다 호출해 취소 요청을 감지한다. 취소 시 `InterruptedError`를 발생시키고 job status를 `cancelled`로 업데이트한다.
+
+에러 코드:
+
+```text
+유효한 피처 컬럼 없음  → ValueError("유효한 피처 컬럼이 없습니다.")
+유효한 타겟 컬럼 없음  → ValueError("유효한 타겟 컬럼이 없습니다.")
+유효 OFAT 그룹 없음   → ValueError("유효한 OFAT 그룹을 찾을 수 없습니다...")
+```
+
+유효 OFAT 그룹이 없는 경우는 데이터에서 나머지 변수가 동일하게 고정된 행 쌍이 존재하지 않을 때 발생한다.
+
+## 22. 구현상 주의점
 
 - subset discovery는 통계적 클러스터링이 아니라 결측 구조 기반 subset discovery이다. 사용자 문서에서는 의미가 혼동되지 않도록 "결측 구조 기반 subset"으로 설명하는 것이 안전하다.
 - Decision Tree 임계값 분류는 원본 target column을 feature에서 제외한다. 그렇지 않으면 threshold label leakage가 발생한다.
@@ -831,3 +1011,6 @@ violation = abs(actual_sum - total)
 - BCM은 GPR expert를 포함하므로 최적화 직전에 매번 학습하지 않고 pretrain 단계에서 한 번 학습한 뒤 artifact로 넘긴다.
 - fixed-time optimization은 SciPy maxiter 자체가 아니라 callback의 elapsed time으로 종료된다.
 - custom convergence는 fixed-count와 fixed-time 모두에 적용된다.
+- OFAT는 LangGraph 파이프라인을 타지 않으므로 `classify_intent`나 `validate_preconditions`를 거치지 않는다. 입력 검증은 API 핸들러와 worker 내부에서만 수행한다.
+- OFAT groupby는 pandas groupby 대신 문자열 키 연결 방식을 사용한다. 범주형/object dtype 컬럼이 섞인 경우에도 안전하게 동작하기 위함이다.
+- OFAT 풀링 회귀의 p-value는 그룹 간 공분산 구조를 무시하므로 통계적으로 엄밀한 값이 아니다. 탐색적 참고 지표로만 활용해야 한다.

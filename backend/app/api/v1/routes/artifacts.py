@@ -89,30 +89,62 @@ async def get_artifact_window(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=error_response(ErrorCode.ARTIFACT_NOT_FOUND, ERROR_MESSAGES[ErrorCode.ARTIFACT_NOT_FOUND]),
         )
-    if not artifact.file_path:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=error_response(ErrorCode.ARTIFACT_NOT_FOUND, "아티팩트 파일을 찾을 수 없습니다."),
-        )
-
     try:
+        import math
+
         import pandas as pd
         import pyarrow.parquet as pq
 
-        parquet_file = pq.ParquetFile(artifact.file_path)
-        all_columns = parquet_file.schema.names
-        total_cols = len(all_columns)
-        total_rows = parquet_file.metadata.num_rows
-        selected_columns = all_columns[col_start:col_start + col_count]
-        if selected_columns:
-            df = pd.read_parquet(artifact.file_path, columns=selected_columns, engine="pyarrow")
-            window = df.iloc[row_start:row_start + row_count]
+        # file_path가 없으면 preview_json에서 fallback
+        if not artifact.file_path:
+            pj = artifact.preview_json or {}
+            all_columns = pj.get("all_columns") or pj.get("columns") or []
+            total_rows = pj.get("total_rows") or len(pj.get("data") or [])
+            total_cols = len(all_columns)
+            data_rows = pj.get("data") or []
+            selected_columns = all_columns[col_start:col_start + col_count]
+            sliced = data_rows[row_start:row_start + row_count]
+
+            def _records_to_matrix(records: list, cols: list) -> list:
+                return [
+                    [None if (isinstance(r.get(c), float) and math.isnan(r.get(c))) else r.get(c) for c in cols]
+                    for r in records
+                ]
+
+            return success_response({
+                "artifact_id": str(artifact_id),
+                "columns": list(selected_columns),
+                "rows": _records_to_matrix(sliced, selected_columns),
+                "total_rows": total_rows,
+                "total_cols": total_cols,
+                "row_start": row_start,
+                "col_start": col_start,
+                "preview_rows": len(sliced),
+                "preview_cols": len(selected_columns),
+            })
+
+        if artifact.file_path.endswith(".csv"):
+            df_full = pd.read_csv(artifact.file_path)
+            all_columns = list(df_full.columns)
+            total_cols = len(all_columns)
+            total_rows = len(df_full)
+            selected_columns = all_columns[col_start:col_start + col_count]
+            window = df_full[selected_columns].iloc[row_start:row_start + row_count]
         else:
-            window = pd.DataFrame()
+            parquet_file = pq.ParquetFile(artifact.file_path)
+            all_columns = parquet_file.schema.names
+            total_cols = len(all_columns)
+            total_rows = parquet_file.metadata.num_rows
+            selected_columns = all_columns[col_start:col_start + col_count]
+            if selected_columns:
+                df = pd.read_parquet(artifact.file_path, columns=selected_columns, engine="pyarrow")
+                window = df.iloc[row_start:row_start + row_count]
+            else:
+                window = pd.DataFrame()
 
         def _to_matrix(df_: pd.DataFrame) -> list:
             return [
-                [None if (isinstance(v, float) and __import__("math").isnan(v)) else v for v in row]
+                [None if (isinstance(v, float) and math.isnan(v)) else v for v in row]
                 for row in df_.values.tolist()
             ]
 
