@@ -368,13 +368,22 @@ def create_step_in_db(
     return step_id
 
 
-def dataframe_to_preview(df: pd.DataFrame, max_rows: int = 20) -> dict:
-    """DataFrame을 미리보기 JSON으로 변환"""
-    preview_df = df.head(max_rows)
+def dataframe_to_preview(df: pd.DataFrame, max_rows: int = 20, max_cols: int = 50) -> dict:
+    """DataFrame을 미리보기 JSON으로 변환
+
+    표시용 columns / data 는 max_cols 이하로 제한하되,
+    전체 컬럼 목록(all_columns)과 전체 행/열 수(total_rows/total_cols)는
+    항상 원본 기준으로 유지한다. 실제 분석은 원본 데이터프레임을 그대로 사용한다.
+    """
+    display_cols = list(df.columns[:max_cols])
+    preview_df = df[display_cols].head(max_rows)
     return {
-        "columns": list(preview_df.columns),
+        "columns": display_cols,
         "all_columns": list(df.columns),
         "data": preview_df.to_dict(orient="records"),
         "total_rows": len(df),
         "total_cols": len(df.columns),
+        "col_start": 0,
+        "row_start": 0,
+        "is_truncated": len(df) > max_rows or len(df.columns) > max_cols,
     }
