@@ -387,19 +387,15 @@ export default function ArtifactCard({ artifact }: ArtifactCardProps) {
                   const isTarget = targetColumns.includes(col)
                   const selected = !isTarget && pendingY1Cols.includes(col)
                   const candidate = y1Candidates.find((c) => c.column === col)
-                  const dotColor = candidate?.recommendation === 'green'
-                    ? 'bg-green-500'
-                    : candidate?.recommendation === 'yellow'
-                    ? 'bg-yellow-400'
-                    : candidate
-                    ? 'bg-red-500'
-                    : ''
+                  const signal = candidate?.recommendation === 'green' ? '🟢'
+                    : candidate?.recommendation === 'yellow' ? '🟡'
+                    : candidate ? '🔴' : ''
                   return (
                     <button
                       onClick={() => togglePendingY1(col)}
                       disabled={isTarget}
                       title={candidate ? `y2와 상관계수: ${candidate.corr_with_y2}` : undefined}
-                      className={`flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs border transition-colors ${
+                      className={`rounded-full px-2.5 py-1 text-xs border transition-colors ${
                         isTarget
                           ? 'bg-gray-100 border-gray-200 text-gray-400 cursor-not-allowed'
                           : selected
@@ -407,7 +403,7 @@ export default function ArtifactCard({ artifact }: ArtifactCardProps) {
                           : 'bg-white border-gray-300 text-gray-600 hover:border-green-400 hover:text-green-700'
                       }`}
                     >
-                      {dotColor && <span className={`inline-block h-2 w-2 rounded-full shrink-0 ${dotColor}`} />}{col}
+                      {signal && <span className="mr-1">{signal}</span>}{col}
                       {isTarget && <span className="ml-1 opacity-50">(T)</span>}
                     </button>
                   )
