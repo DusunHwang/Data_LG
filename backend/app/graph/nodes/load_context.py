@@ -257,12 +257,16 @@ def load_session_context(state: GraphState) -> GraphState:
             dataset_path = branch_dataset_path
             logger.info("브랜치 dataset_path 오버라이드", path=branch_dataset_path)
 
+        branch_config_log = active_branch_data.get("config", {}) or {}
         logger.info(
             "세션 컨텍스트 로드 완료",
             session_id=session_id,
             has_dataset=bool(dataset_data),
             has_branch=bool(active_branch_data),
             recent_steps_count=len(recent_steps),
+            dataset_path=dataset_path,
+            branch_target_col=branch_config_log.get("target_column"),
+            state_target_col=state.get("target_column"),
         )
 
         return {

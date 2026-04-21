@@ -230,6 +230,10 @@ export interface JobResult {
   step_id?: string | null
   artifact_ids?: string[]
   intent?: string | null
+  /** ofat_no_groups intent 시 조건 완화 재시도에 필요한 원본 파라미터 */
+  ofat_target_columns?: string[]
+  ofat_feature_columns?: string[]
+  ofat_source_artifact_id?: string | null
 }
 
 // ─── Chat ────────────────────────────────────────────────────────────────────
@@ -244,6 +248,14 @@ export interface ChatMessage {
   job_id?: string
   timestamp: string
   targetDataframeId?: string   // 이 질문이 요청한 데이터프레임 artifact id
+  /** OFAT 그룹 없음 결과 메시지에 조건 완화 버튼 표시 여부 */
+  ofat_relaxation_available?: boolean
+  /** 조건 완화 버튼 클릭 시 재요청에 사용할 원본 OFAT 파라미터 */
+  ofat_relaxation_params?: {
+    target_columns: string[]
+    feature_columns: string[]
+    source_artifact_id?: string
+  }
 }
 
 export interface HistoryEntry {

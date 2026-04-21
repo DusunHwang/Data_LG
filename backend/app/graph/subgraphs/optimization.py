@@ -81,12 +81,18 @@ def run_optimization_subgraph(state: GraphState) -> GraphState:
     if not dataset_path:
         return {**state, "error_code": "NO_DATASET", "error_message": "데이터셋 경로를 찾을 수 없습니다."}
 
+    logger.info("최적화 시작", target_col=target_col, branch_id=branch_id)
+
     if not target_col:
         return {**state, "error_code": "NO_TARGET", "error_message": "타겟 컬럼이 지정되지 않았습니다."}
 
     try:
         # 1. 챔피언 모델 컨텍스트 로드
         champion_info = _load_champion_for_optimization(branch_id)
+        if champion_info:
+            logger.info("챔피언 모델 컨텍스트 로드", model_run_id=champion_info.get("model_run_id"), n_features=len(champion_info.get("feature_names", [])))
+        else:
+            logger.info("챔피언 모델 없음 — 전체 컬럼으로 피처 구성")
 
         # 데이터 로드
         df = load_dataframe(dataset_path)
@@ -115,12 +121,14 @@ def run_optimization_subgraph(state: GraphState) -> GraphState:
                     X[col] = X[col].fillna("__missing__")
 
         y = df.loc[X.index, target_col].fillna(df[target_col].median())
+        logger.info("최적화 데이터 준비 완료", n_rows=len(X), n_features=len(X.columns), n_categorical=len(categorical_features))
 
         check_cancellation(state)
         state = update_progress(state, 25, "최적화", "탐색 공간 분석 중...")
 
         # 2. 탐색 공간 결정
         search_space, use_grid, n_dims = _determine_search_space(user_message)
+        logger.info("탐색 공간 결정", optimizer="grid_search" if use_grid else "optuna", n_dims=n_dims, params=list(search_space.keys()))
 
         state = update_progress(
             state, 30, "최적화",
@@ -145,7 +153,9 @@ def run_optimization_subgraph(state: GraphState) -> GraphState:
         logger.info(
             "최적화 완료",
             optimizer="Grid" if use_grid else "Optuna",
-            best_score=opt_result.get("best_score"),
+            best_score=round(opt_result.get("best_score", 0), 4),
+            n_trials=opt_result.get("n_trials"),
+            best_params=opt_result.get("best_params"),
         )
 
         return {
@@ -251,6 +261,7 @@ def _run_grid_search(
             })
 
             if score < best_score:
+                logger.info("Grid Search 최선 갱신", trial=i, rmse=round(score, 4), params=trial_params)
                 best_score = score
                 best_params = trial_params
                 best_model = model

@@ -773,6 +773,197 @@ def _update_optimization_sync(
         conn.close()
 
 
+# ─── OFAT 헬퍼 ───────────────────────────────────────────────────────────────
+
+def _find_valid_ofat_groups(
+    df,
+    feat_cols: list[str],
+    tgt_cols: list[str],
+) -> tuple[dict, list[dict]]:
+    """
+    x 변수별로 유효한 OFAT 그룹을 탐색한다.
+
+    Returns
+    -------
+    valid_ofat : {x_col: {group_id: group_df}}
+    summary_rows : OFAT 상수 조건 요약 행 목록
+    """
+    def _build_keys(df_, cols):
+        return df_[cols].astype(str).apply(lambda r: "\x00".join(r), axis=1)
+
+    valid_ofat: dict = {}
+    summary_rows: list[dict] = []
+
+    for x_col in feat_cols:
+        other_cols = [c for c in feat_cols if c != x_col]
+        if not other_cols:
+            continue
+
+        keys = _build_keys(df, other_cols)
+        groups_map: dict = {}
+        for idx, k in keys.items():
+            groups_map.setdefault(k, []).append(int(idx))
+
+        valid_groups: dict = {}
+        for k, idxs in groups_map.items():
+            if len(idxs) < 2:
+                continue
+            gdf = df.loc[idxs]
+            if gdf[x_col].nunique(dropna=True) < 2:
+                continue
+            valid_groups[k] = gdf
+
+        if not valid_groups:
+            continue
+
+        valid_ofat[x_col] = {}
+        for gid_idx, (k, gdf) in enumerate(valid_groups.items()):
+            group_id = f"G{gid_idx + 1}"
+            valid_ofat[x_col][group_id] = gdf.reset_index(drop=True)
+
+            fixed_vals: dict = {}
+            for oc in other_cols[:15]:
+                uniq = gdf[oc].dropna().unique()
+                if len(uniq) == 0:
+                    fixed_vals[oc] = "(결측)"
+                elif len(uniq) == 1:
+                    fixed_vals[oc] = str(uniq[0])
+                else:
+                    fixed_vals[oc] = f"{uniq[0]}…"
+
+            for y_col in tgt_cols:
+                row: dict = {
+                    "Target_Variable": y_col,
+                    "Test_Variable": x_col,
+                    "Group_ID": group_id,
+                    "Group_Size": len(gdf),
+                }
+                row.update({f"Fixed_{oc}": v for oc, v in fixed_vals.items()})
+                summary_rows.append(row)
+
+    return valid_ofat, summary_rows
+
+
+def _count_valid_ofat_groups(df, feat_cols: list[str]) -> int:
+    """feat_cols 기준 유효 OFAT 그룹 총 수 (빠른 집계용)."""
+    valid_ofat, _ = _find_valid_ofat_groups(df, feat_cols, [])
+    return sum(len(g) for g in valid_ofat.values())
+
+
+def _compute_interference_scores(df, feat_cols: list[str]) -> list[dict]:
+    """
+    변수별 간섭 점수 계산.
+
+    각 변수를 제거했을 때 생기는 유효 OFAT 그룹 수 증가량(delta_g)과
+    카디널리티 비율을 기반으로 제거 우선순위를 매긴다.
+
+    Returns : delta_g 내림차순 정렬된 dict 리스트
+    """
+    import pandas as pd
+
+    n_rows = max(len(df), 1)
+    scores = []
+    for col in feat_cols:
+        remaining = [c for c in feat_cols if c != col]
+        delta_g = _count_valid_ofat_groups(df, remaining) if len(remaining) >= 2 else 0
+        n_unique = int(df[col].nunique())
+        card_ratio = n_unique / n_rows
+
+        near_zero_var = False
+        try:
+            if pd.api.types.is_numeric_dtype(df[col]):
+                v = df[col].var()
+                near_zero_var = bool(v is not None and not pd.isna(v) and float(v) < 1e-10)
+        except Exception:
+            pass
+
+        if near_zero_var:
+            reason = "분산≈0 (상수값)"
+        elif card_ratio > 0.5:
+            reason = "고카디널리티"
+        else:
+            reason = "그룹 분절"
+
+        scores.append({
+            "column": col,
+            "n_unique": n_unique,
+            "cardinality_ratio": round(card_ratio, 4),
+            "delta_g": delta_g,
+            "near_zero_var": near_zero_var,
+            "reason": reason,
+        })
+
+    # 우선순위: 분산≈0 > delta_g 높음 > 카디널리티 높음
+    scores.sort(key=lambda x: (not x["near_zero_var"], -x["delta_g"], -x["cardinality_ratio"]))
+    return scores
+
+
+def _greedy_prune_features(
+    df,
+    feat_cols: list[str],
+    max_prune_ratio: float = 0.5,
+) -> tuple[list[str], list[str], list[dict]]:
+    """
+    유효 OFAT 그룹이 생길 때까지 변수를 greedy하게 제거한다.
+
+    C안 제한: 원래 피처 수의 50% 초과 제거 시 중단.
+
+    Returns
+    -------
+    remaining  : 제거 후 남은 피처 목록
+    pruned     : 제거된 피처 목록
+    report     : 제거 이력 (표 형태)
+    """
+    n_orig = len(feat_cols)
+    max_prune = max(1, int(n_orig * max_prune_ratio))
+    remaining = list(feat_cols)
+    pruned: list[str] = []
+    report: list[dict] = []
+
+    for step in range(max_prune):
+        if len(remaining) < 2:
+            break
+        if _count_valid_ofat_groups(df, remaining) > 0:
+            break
+
+        scores = _compute_interference_scores(df, remaining)
+        if not scores:
+            break
+
+        best = scores[0]
+        col_to_remove = best["column"]
+
+        # 제거 전 실제 값 샘플 수집 (최대 8개, 결측 제외)
+        raw_vals = df[col_to_remove].dropna().unique()
+        sample_vals = sorted(
+            [str(v) for v in raw_vals[:50]],  # 정렬을 위해 50개까지 수집
+            key=lambda s: s,
+        )[:8]
+        sample_str = ", ".join(sample_vals)
+        if best["n_unique"] > 8:
+            sample_str += f" … (총 {best['n_unique']}종)"
+
+        remaining.remove(col_to_remove)
+        pruned.append(col_to_remove)
+        report.append({
+            "제거 순서": step + 1,
+            "제거 변수": col_to_remove,
+            "고유값 수": best["n_unique"],
+            "카디널리티 비율": f"{best['cardinality_ratio'] * 100:.1f}%",
+            "완화 후 예상 그룹 수": best["delta_g"],
+            "제거 이유": best["reason"],
+            "해당 변수의 값 범위": sample_str or "(모두 결측)",
+            "완화 의미": (
+                f"'{col_to_remove}' 값이 달라도 같은 그룹으로 묶음 "
+                f"— 이 변수는 고정 조건 판단에서 제외됨"
+            ),
+        })
+
+    return remaining, pruned, report
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+
 def run_ofat_task(
     job_run_id: str,
     session_id: str,
@@ -781,6 +972,7 @@ def run_ofat_task(
     target_columns: list[str],
     feature_columns: list[str],
     source_artifact_id: str | None = None,
+    relaxed: bool = False,
 ) -> dict:
     """OFAT(One-Factor-at-a-Time) 일관성 분석 작업"""
     reporter = ProgressReporter(job_run_id)
@@ -832,73 +1024,19 @@ def run_ofat_task(
         token.check()
 
         # --- OFAT 그룹 탐색 ---
-        # categorical 포함 groupby를 위해 문자열 변환 키 사용
-        def build_group_keys(df_: pd.DataFrame, cols: list[str]) -> pd.Series:
-            return df_[cols].astype(str).apply(lambda r: "\x00".join(r), axis=1)
+        valid_ofat, summary_rows = _find_valid_ofat_groups(df, feat_cols, tgt_cols)
 
-        valid_ofat: dict[str, dict[str, pd.DataFrame]] = {}
-        summary_rows: list[dict] = []
-
-        for x_col in feat_cols:
-            other_cols = [c for c in feat_cols if c != x_col]
-            if not other_cols:
-                continue
-
-            keys = build_group_keys(df, other_cols)
-            groups_map: dict[str, list[int]] = {}
-            for idx, k in keys.items():
-                groups_map.setdefault(k, []).append(int(idx))
-
-            valid_groups: dict[str, pd.DataFrame] = {}
-            for k, idxs in groups_map.items():
-                if len(idxs) < 2:
-                    continue
-                gdf = df.loc[idxs]
-                if gdf[x_col].nunique(dropna=True) < 2:
-                    continue
-                valid_groups[k] = gdf
-
-            if not valid_groups:
-                continue
-
-            valid_ofat[x_col] = {}
-            for gid_idx, (k, gdf) in enumerate(valid_groups.items()):
-                group_id = f"G{gid_idx + 1}"
-                valid_ofat[x_col][group_id] = gdf.reset_index(drop=True)
-
-                # 고정 조건 (최대 15컬럼)
-                fixed_vals: dict[str, str] = {}
-                for oc in other_cols[:15]:
-                    uniq = gdf[oc].dropna().unique()
-                    fixed_vals[oc] = str(uniq[0]) if len(uniq) == 1 else f"{uniq[0]}…"
-
-                for y_col in tgt_cols:
-                    row: dict = {
-                        "Target_Variable": y_col,
-                        "Test_Variable": x_col,
-                        "Group_ID": group_id,
-                        "Group_Size": len(gdf),
-                    }
-                    row.update({f"Fixed_{oc}": v for oc, v in fixed_vals.items()})
-                    summary_rows.append(row)
-
-        if not valid_ofat:
-            raise ValueError(
-                "유효한 OFAT 그룹을 찾을 수 없습니다. "
-                "나머지 변수가 동일하게 고정된 상태에서 해당 변수만 달라지는 행 쌍이 존재하지 않습니다."
-            )
-
-        reporter.update(30, "지표 계산 및 시각화 중...")
-        token.check()
-
+        # --- DB 연결 및 step 생성 (그룹 유무에 관계없이 먼저 준비) ---
         plot_dir = get_artifact_dir(session_id, "plot")
         df_dir = get_artifact_dir(session_id, "dataframe")
         conn = get_sync_db_connection()
         created_ids: list[str] = []
         step_id = str(uuid_module.uuid4())
         now = datetime.now(timezone.utc)
+        pruned_cols: list[str] = []   # 조건 완화 시 채워짐
 
         cur = conn.cursor()
+        step_title = "OFAT 일관성 분석 (조건 완화)" if relaxed else "OFAT 일관성 분석"
         if branch_id:
             cur.execute(
                 """
@@ -910,17 +1048,133 @@ def run_ofat_task(
                 (
                     step_id,
                     branch_id,
-                    "OFAT 일관성 분석",
+                    step_title,
                     json.dumps({
                         "target_columns": tgt_cols,
                         "feature_columns": feat_cols,
                         "source_artifact_id": source_artifact_id,
+                        "relaxed": relaxed,
                     }),
                     json.dumps({"valid_features": list(valid_ofat.keys())}),
                     now,
                     now,
                 ),
             )
+
+        # --- 그룹 없음 처리 ---
+        if not valid_ofat:
+            if not relaxed:
+                # ── 진단 테이블 저장 후 조건 완화 유도 ──────────────────────
+                reporter.update(25, "변수 간섭 진단 중...")
+                scores = _compute_interference_scores(df, feat_cols)
+                diag_rows = [
+                    {
+                        "우선순위": i + 1,
+                        "변수명": s["column"],
+                        "고유값 수": s["n_unique"],
+                        "카디널리티 비율": f"{s['cardinality_ratio'] * 100:.1f}%",
+                        "완화 시 예상 그룹 수": s["delta_g"],
+                        "제거 이유": s["reason"],
+                    }
+                    for i, s in enumerate(scores)
+                ]
+                diag_df = pd.DataFrame(diag_rows)
+                diag_path = os.path.join(df_dir, f"ofat_diagnostic_{step_id}.parquet")
+                diag_df.to_parquet(diag_path, index=False)
+
+                art_id = save_artifact_to_db(
+                    conn, step_id, session_id,
+                    "dataframe", "OFAT 변수 간섭 진단",
+                    diag_path, "application/parquet",
+                    os.path.getsize(diag_path),
+                    dataframe_to_preview(diag_df, max_rows=50),
+                    {"type": "ofat_diagnostic"},
+                )
+                created_ids.append(art_id)
+                conn.commit()
+                conn.close()
+
+                top_candidates = ", ".join(s["column"] for s in scores[:3])
+                diagnostic_message = (
+                    f"유효한 OFAT 그룹을 찾을 수 없습니다.\n\n"
+                    f"현재 피처 {len(feat_cols)}개가 데이터를 너무 세밀하게 분절하여 "
+                    f"'나머지 변수 동일 + 해당 변수 다름' 조건을 만족하는 행 쌍이 없습니다.\n\n"
+                    f"제거 우선 후보: {top_candidates}\n\n"
+                    f"아래 진단표를 참고한 뒤 '조건 완화' 버튼을 눌러 자동 가지치기 후 재분석하세요."
+                )
+                result = {
+                    "status": "completed",
+                    "artifact_ids": created_ids,
+                    "message": diagnostic_message,
+                    "intent": "ofat_no_groups",
+                    "ofat_target_columns": tgt_cols,
+                    "ofat_feature_columns": feat_cols,
+                    "ofat_source_artifact_id": source_artifact_id,
+                }
+                update_job_status_sync(
+                    job_run_id, "completed", 100,
+                    "OFAT 그룹 없음 — 조건 완화 필요", result=result,
+                )
+                clear_progress(job_run_id)
+                return result
+
+            else:
+                # ── 조건 완화: greedy pruning 후 재탐색 ─────────────────────
+                reporter.update(20, "조건 완화: 변수 가지치기 중...")
+                remaining, pruned_cols, prune_report = _greedy_prune_features(df, feat_cols)
+
+                can_continue = len(remaining) >= 2 and _count_valid_ofat_groups(df, remaining) > 0
+                if not can_continue:
+                    # 최대 제거 후에도 그룹 없음
+                    conn.commit()
+                    conn.close()
+                    pruned_str = ", ".join(pruned_cols) if pruned_cols else "없음"
+                    remaining_str = ", ".join(remaining)
+                    msg = (
+                        f"조건 완화를 시도했으나 피처 수의 50%(최대 {len(pruned_cols)}개) 제거 후에도 "
+                        f"유효한 OFAT 그룹을 찾을 수 없습니다.\n\n"
+                        f"제거된 변수: {pruned_str}\n"
+                        f"남은 변수: {remaining_str}\n\n"
+                        f"피처 구성을 다시 검토하거나 변수 수를 줄여 주세요."
+                    )
+                    result = {
+                        "status": "completed",
+                        "artifact_ids": [],
+                        "message": msg,
+                        "intent": "ofat_no_groups",
+                        "ofat_target_columns": tgt_cols,
+                        "ofat_feature_columns": feat_cols,
+                        "ofat_source_artifact_id": source_artifact_id,
+                    }
+                    update_job_status_sync(
+                        job_run_id, "completed", 100,
+                        "OFAT 조건 완화 실패 — 그룹 없음", result=result,
+                    )
+                    clear_progress(job_run_id)
+                    return result
+
+                # pruning 성공 → 제거 보고서 아티팩트 저장
+                reporter.update(28, "가지치기 보고서 저장 중...")
+                prune_df = pd.DataFrame(prune_report)
+                prune_path = os.path.join(df_dir, f"ofat_pruning_report_{step_id}.parquet")
+                prune_df.to_parquet(prune_path, index=False)
+                prune_art_id = save_artifact_to_db(
+                    conn, step_id, session_id,
+                    "dataframe", "OFAT 조건 완화 — 제거 변수 보고서",
+                    prune_path, "application/parquet",
+                    os.path.getsize(prune_path),
+                    dataframe_to_preview(prune_df, max_rows=50),
+                    {"type": "ofat_pruning_report", "pruned_columns": pruned_cols},
+                )
+                created_ids.append(prune_art_id)
+
+                # 제거된 피처로 재탐색
+                feat_cols = remaining
+                valid_ofat, summary_rows = _find_valid_ofat_groups(df, feat_cols, tgt_cols)
+                reporter.update(30, f"조건 완화 완료 ({len(pruned_cols)}개 제거) — 시각화 중...")
+
+        else:
+            reporter.update(30, "지표 계산 및 시각화 중...")
 
         valid_x_cols = list(valid_ofat.keys())
         n_valid = len(valid_x_cols)
@@ -1067,13 +1321,34 @@ def run_ofat_task(
         conn.commit()
         conn.close()
 
+        if relaxed and pruned_cols:
+            # 제거 내역을 변수별로 상세 서술
+            prune_detail_lines = []
+            for row in prune_report:
+                prune_detail_lines.append(
+                    f"  • {row['제거 변수']} ({row['제거 이유']}) — "
+                    f"값 범위: {row['해당 변수의 값 범위']}"
+                )
+            prune_detail = "\n".join(prune_detail_lines)
+
+            completion_message = (
+                f"조건 완화 적용 완료 — {len(pruned_cols)}개 변수를 고정 조건에서 제외하고 OFAT 분석을 수행했습니다.\n\n"
+                f"[제외된 변수 — 이 값들의 차이는 무시하고 같은 그룹으로 묶었습니다]\n"
+                f"{prune_detail}\n\n"
+                f"분석에 사용된 변수 ({len(feat_cols)}개): {', '.join(feat_cols)}\n\n"
+                f"유효 변수 {len(valid_x_cols)}개 / 타겟 {len(tgt_cols)}개 / 차트 {len(tgt_cols)}개 생성\n"
+                f"상세 제거 이력은 아래 '조건 완화 — 제거 변수 보고서' 테이블을 참고하세요."
+            )
+        else:
+            completion_message = (
+                f"OFAT 분석 완료 — 유효 변수 {len(valid_x_cols)}개 / "
+                f"타겟 {len(tgt_cols)}개 / 차트 {len(tgt_cols)}개 생성"
+            )
+
         result = {
             "status": "completed",
             "artifact_ids": created_ids,
-            "message": (
-                f"OFAT 분석 완료 — 유효 변수 {len(valid_x_cols)}개 / "
-                f"타겟 {len(tgt_cols)}개 / 차트 {len(tgt_cols)}개 생성"
-            ),
+            "message": completion_message,
             "intent": "ofat_analysis",
         }
         update_job_status_sync(job_run_id, "completed", 100, "OFAT 분석 완료", result=result)

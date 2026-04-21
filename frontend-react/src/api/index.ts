@@ -432,6 +432,7 @@ export const analysisApi = {
     target_columns: string[]
     feature_columns: string[]
     source_artifact_id?: string
+    relaxed?: boolean
   }): Promise<AnalyzeResponse> => {
     const res = await http.post<ApiSuccess<AnalyzeResponse>>('/analysis/ofat', req)
     return unwrap(res)

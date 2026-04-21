@@ -126,6 +126,7 @@ def run_eda_subgraph(state: GraphState) -> GraphState:
         # 1. 데이터셋 로드
         df = load_dataframe(dataset_path)
         n_rows, n_cols = df.shape
+        logger.info("EDA 데이터 로드", n_rows=n_rows, n_cols=n_cols, target_col=state.get("target_column"), retry_count=state.get("retry_count", 0))
 
         check_cancellation(state)
 
@@ -230,8 +231,12 @@ def run_eda_subgraph(state: GraphState) -> GraphState:
             )
 
             if not sandbox_result["success"]:
-                sandbox_error = sandbox_result.get("error", "알 수 없는 오류")
+                sandbox_error = sandbox_result.get("error") or sandbox_result.get("stderr", "")[:300] or "알 수 없는 오류"
                 logger.warning("EDA 코드 실행 실패, 기본 분석으로 폴백", error=sandbox_error)
+            else:
+                n_output_files = len(sandbox_result.get("output_files", {}))
+                logger.info("EDA 샌드박스 실행 성공", n_output_files=n_output_files,
+                            stdout_preview=sandbox_result.get("stdout", "")[:100])
                 used_fallback = True
                 sandbox_result = _run_basic_eda(df, dataset_path)
 
@@ -595,7 +600,7 @@ def _fix_data_loader(code: str) -> str:
     import re
     # pd.read_csv(...), pd.read_excel(...), pd.read_json(...) 등 모두 교체
     fixed = re.sub(
-        r"pd\.read_(?:csv|excel|json|table|fwf)\s*\([^)]*\)",
+        r"pd\.read_(?:csv|excel|json|table|fwf|parquet)\s*\([^)]*\)",
         "pd.read_parquet('data.parquet')",
         code,
     )

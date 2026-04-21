@@ -88,6 +88,8 @@ def run_modeling_subgraph(state: GraphState) -> GraphState:
                     "error_message": f"타겟 컬럼 '{target_col}'이(가) 데이터셋에 없습니다."}
 
         target_series = df[target_col].dropna()
+        logger.info("모델링 시작", target_col=target_col, n_rows=len(df), n_cols=len(df.columns),
+                    target_missing=int(df[target_col].isna().sum()), target_dtype=str(df[target_col].dtype))
         if not pd.api.types.is_numeric_dtype(target_series):
             return {**state, "error_code": "NON_NUMERIC_TARGET",
                     "error_message": f"타겟 컬럼 '{target_col}'이(가) 수치형이 아닙니다."}
@@ -113,6 +115,7 @@ def run_modeling_subgraph(state: GraphState) -> GraphState:
         if full_data_features is None:
             return {**state, "error_code": "NO_TRAINING_DATA",
                     "error_message": "훈련 가능한 데이터가 없습니다."}
+        logger.info("피처 매트릭스 구성 완료", n_features=len(feature_names), n_train_rows=len(full_data_features))
 
         training_datasets = [{
             "name": "전체 데이터",
@@ -131,6 +134,10 @@ def run_modeling_subgraph(state: GraphState) -> GraphState:
                 result = _train_lgbm(
                     td["X"], td["y"], td["name"], td["feature_names"], td.get("subset_no")
                 )
+                logger.info("모델 훈련 완료", name=td["name"],
+                            val_rmse=round(result.get("val_rmse", 0), 4),
+                            val_r2=round(result.get("val_r2", 0), 4),
+                            n_estimators=result.get("n_estimators"))
                 model_results.append(result)
             except Exception as e:
                 logger.warning("모델 훈련 실패", dataset_name=td["name"], error=str(e))

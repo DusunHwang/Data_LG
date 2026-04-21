@@ -63,6 +63,8 @@ def run_shap_simplify_subgraph(state: GraphState) -> GraphState:
     if not dataset_path:
         return {**state, "error_code": "NO_DATASET", "error_message": "데이터셋 경로를 찾을 수 없습니다."}
 
+    logger.info("SHAP 분석 시작", target_col=target_col, branch_id=branch_id)
+
     if not target_col:
         return {**state, "error_code": "NO_TARGET", "error_message": "타겟 컬럼이 지정되지 않았습니다."}
 
@@ -79,6 +81,7 @@ def run_shap_simplify_subgraph(state: GraphState) -> GraphState:
             source_artifact_id,
         )
         if not champion_info:
+            logger.warning("챔피언 모델 없음", target_col=target_col, branch_id=branch_id)
             return {**state, "error_code": "NO_CHAMPION_MODEL",
                     "error_message": "챔피언 모델을 찾을 수 없습니다. 먼저 모델링을 실행하세요."}
 
@@ -86,6 +89,7 @@ def run_shap_simplify_subgraph(state: GraphState) -> GraphState:
         feature_names = champion_info["feature_names"]
         categorical_features = champion_info.get("categorical_features", [])
         model_run_id = champion_info.get("model_run_id")
+        logger.info("챔피언 모델 로드 완료", model_name=champion_info.get("model_name"), n_features=len(feature_names), model_run_id=model_run_id)
 
         check_cancellation(state)
         state = update_progress(state, 25, "SHAP_분석", "SHAP 데이터셋 구성 중...")
@@ -93,6 +97,7 @@ def run_shap_simplify_subgraph(state: GraphState) -> GraphState:
         # 2. 데이터셋 로드 및 피처 매트릭스 구성
         df = load_dataframe(dataset_path)
         df_clean = df.dropna(subset=[target_col]).copy()
+        logger.info("SHAP 데이터 로드", total_rows=len(df), clean_rows=len(df_clean), n_missing=len(df)-len(df_clean))
 
         # 피처 준비
         X = _prepare_features_for_shap(df_clean, feature_names, categorical_features)
@@ -121,6 +126,9 @@ def run_shap_simplify_subgraph(state: GraphState) -> GraphState:
             "feature": feature_names if len(feature_names) == len(mean_abs_shap) else X_shap.columns.tolist(),
             "mean_abs_shap": mean_abs_shap,
         }).sort_values("mean_abs_shap", ascending=False).reset_index(drop=True)
+        logger.info("SHAP 피처 중요도 계산 완료",
+                    top5=feature_importance.head(5)["feature"].tolist(),
+                    top5_shap=feature_importance.head(5)["mean_abs_shap"].round(4).tolist())
 
         check_cancellation(state)
         state = update_progress(state, 60, "SHAP_분석", "단순화 모델 평가 중...")
@@ -129,6 +137,10 @@ def run_shap_simplify_subgraph(state: GraphState) -> GraphState:
         simplification_results = _evaluate_top_k_features(
             X, y, feature_importance, model, target_col
         )
+        for k, res in simplification_results.items():
+            logger.info("top-k 평가 결과", k=k,
+                        rmse=round(res.get("val_rmse", 0), 4),
+                        drop_ratio=round(res.get("drop_ratio", 0), 4))
 
         check_cancellation(state)
         state = update_progress(state, 80, "SHAP_분석", "SHAP 결과 저장 중...")
@@ -140,7 +152,7 @@ def run_shap_simplify_subgraph(state: GraphState) -> GraphState:
             dataset, target_col, model_run_id, state
         )
 
-        logger.info("SHAP 분석 완료", n_features=len(feature_importance))
+        logger.info("SHAP 분석 완료", n_features=len(feature_importance), n_artifacts=len(artifact_ids.get("artifact_ids", [])))
 
         return {
             **state,

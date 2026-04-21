@@ -19,6 +19,7 @@ from app.graph.subgraphs import (
     create_dataframe,
     eda,
     followup,
+    inverse_optimize,
     modeling,
     optimization,
     profile,
@@ -78,6 +79,9 @@ def route_to_subgraph(state: GraphState) -> GraphState:
 
         elif intent == "optimization":
             return optimization.run_optimization_subgraph(state)
+
+        elif intent == "inverse_optimization":
+            return inverse_optimize.run_inverse_optimize_subgraph(state)
 
         elif intent in ("followup_dataframe", "followup_plot", "followup_model", "branch_replay"):
             return followup.run_followup_subgraph(state)

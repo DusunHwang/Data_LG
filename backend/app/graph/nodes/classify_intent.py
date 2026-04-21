@@ -1,9 +1,9 @@
 """인텐트 분류 노드 - vLLM 기반 사용자 의도 파악"""
 
 import asyncio
-from typing import Optional
+from typing import Any, Optional, Union
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from app.core.logging import get_logger
 from app.graph.helpers import update_progress
@@ -22,6 +22,7 @@ VALID_INTENTS = [
     "shap_analysis",
     "simplify_model",
     "optimization",
+    "inverse_optimization",
     "general_question",
 ]
 
@@ -48,6 +49,7 @@ MODE_TO_INTENT = {
     "simplify": "simplify_model",
     "simplify_model": "simplify_model",
     "optimization": "optimization",
+    "inverse_optimization": "inverse_optimization",
     "followup_dataframe": "followup_dataframe",
     "followup_plot": "followup_plot",
     "followup_model": "followup_model",
@@ -61,6 +63,13 @@ class IntentClassification(BaseModel):
     confidence: float = Field(ge=0.0, le=1.0, description="신뢰도 (0~1)")
     reasoning: str = Field(description="분류 이유 (한국어)")
     suggested_target: Optional[str] = Field(default=None, description="제안된 타겟 컬럼 (있는 경우)")
+
+    @field_validator("suggested_target", mode="before")
+    @classmethod
+    def coerce_list_to_str(cls, v: Any) -> Optional[str]:
+        if isinstance(v, list):
+            return v[0] if v else None
+        return v
 
 
 INTENT_SYSTEM_PROMPT = """/no_think
@@ -76,6 +85,7 @@ INTENT_SYSTEM_PROMPT = """/no_think
 - shap_analysis: SHAP 피처 중요도 분석 ("인자 최소화", "인자를 최소화해줘" 포함)
 - simplify_model: 모델 단순화 (적은 피처로 비슷한 성능)
 - optimization: 하이퍼파라미터 최적화 (Grid Search 또는 Optuna)
+- inverse_optimization: 역최적화 — 모델을 이용해 목표값을 최대화/최소화하는 입력 조건(피처 값) 탐색 ("목표값을 최대화하는 입력 조건", "최적 입력 조합", "어떤 조건에서 Y가 최대", "Y를 최소화하는 파라미터" 등)
 - general_question: 일반 질문 또는 위 인텐트에 해당하지 않는 경우
 
 중요 구분 규칙:
@@ -85,6 +95,8 @@ INTENT_SYSTEM_PROMPT = """/no_think
 - "데이터셋 만들어줘", "필터링해줘", "추출해줘", "서브셋", "조건에 맞는 행", "파생 변수", "새 컬럼 추가" 등 데이터프레임 결과물을 요청하면 → create_dataframe
 - create_dataframe은 시각화 없이 데이터프레임 자체가 결과물인 경우
 - 이전 결과를 "이게 뭔지 설명해줘", "이 차트의 의미는?" 처럼 해석만 요청해도 → eda 또는 general_question으로 처리
+- "목표값을 최대화/최소화하는 입력 조건", "최적 입력 조합", "어떤 파라미터 조합이 Y를 최대로" → inverse_optimization
+- "하이퍼파라미터 최적화", "Grid Search", "Optuna", "튜닝" → optimization (하이퍼파라미터 탐색)
 """
 
 
@@ -224,9 +236,13 @@ def _keyword_classify(message: str) -> str:
     # 핵심인자 추출 → 모델링 (create_dataframe "추출" 키워드보다 먼저 체크)
     if any(w in msg for w in ["핵심인자", "핵심 인자", "중요 인자", "중요한 인자"]):
         return "baseline_modeling"
-    # 인자 최소화 → shap (optimization "최적화"와 구분)
-    if any(w in msg for w in ["인자 최소화", "인자최소화", "인자를 최소화"]):
+    # shap/중요도 → create_dataframe "보여줘" 보다 먼저 체크
+    if any(w in msg for w in ["shap", "인자 최소화", "인자최소화", "인자를 최소화", "중요도", "피처 중요"]):
         return "shap_analysis"
+    if any(w in msg for w in ["목표값을 최대화", "목표값을 최소화", "최대화하는 입력", "최소화하는 입력", "입력 조건", "최적 입력", "최적 조건", "최적 파라미터 조합"]):
+        return "inverse_optimization"
+    if any(w in msg for w in ["최대화", "목표값 최소화", "목표값", "최적화", "optuna", "grid", "튜닝", "hyperparameter"]):
+        return "optimization"
     if any(w in msg for w in ["프로파일", "요약", "profile", "overview", "컬럼"]):
         return "dataset_profile"
     if any(w in msg for w in ["만들어", "생성", "추출", "필터", "filter", "조건", "파생", "서브 데이터", "sub data", "새 컬럼", "제거한", "출력", "보여줘", "보여 줘", "전체 데이터", "데이터 출력", "데이터 보여"]):
@@ -237,8 +253,4 @@ def _keyword_classify(message: str) -> str:
         return "subset_discovery"
     if any(w in msg for w in ["모델링", "모델", "훈련", "train", "lgbm", "lightgbm"]):
         return "baseline_modeling"
-    if any(w in msg for w in ["shap", "중요도", "피처", "최소화"]):
-        return "shap_analysis"
-    if any(w in msg for w in ["최적화", "optuna", "grid", "튜닝", "hyperparameter"]):
-        return "optimization"
     return "general_question"

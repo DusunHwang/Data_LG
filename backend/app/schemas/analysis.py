@@ -40,3 +40,4 @@ class OFATRequest(BaseModel):
     target_columns: list[str] = Field(..., description="타겟 컬럼 목록")
     feature_columns: list[str] = Field(..., description="피처 컬럼 목록")
     source_artifact_id: str | None = Field(None, description="분석 대상 데이터프레임 아티팩트 ID")
+    relaxed: bool = Field(False, description="조건 완화 모드 — 그룹 없음 시 변수 가지치기 후 재분석")

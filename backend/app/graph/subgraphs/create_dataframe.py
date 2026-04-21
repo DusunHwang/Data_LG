@@ -196,8 +196,13 @@ def run_create_dataframe_subgraph(state: GraphState) -> GraphState:
 
         # 2차 시도도 실패한 경우 폴백: 원본 데이터셋이라도 출력 (사용자 경험 보전)
         used_fallback = False
+        if sandbox_result["success"]:
+            n_output = len(sandbox_result.get("output_files", {}))
+            logger.info("create_dataframe 실행 성공", n_output_files=n_output,
+                        stdout_preview=sandbox_result.get("stdout", "")[:100])
         if not sandbox_result["success"]:
-            logger.warning("create_dataframe 최종 실패, 원본 데이터 폴백")
+            logger.warning("create_dataframe 최종 실패, 원본 데이터 폴백",
+                           stderr=sandbox_result.get("stderr", "")[:300])
             used_fallback = True
             # 원본 데이터를 result_1.parquet으로 복사하여 최소한의 결과 제공
             work_dir = sandbox_result.get("work_dir")
@@ -323,7 +328,7 @@ def _fix_data_loader(code: str) -> str:
     """잘못된 데이터 로더 교체"""
     import re
     return re.sub(
-        r"pd\.read_(?:csv|excel|json|table|fwf)\s*\([^)]*\)",
+        r"pd\.read_(?:csv|excel|json|table|fwf|parquet)\s*\([^)]*\)",
         "pd.read_parquet('data.parquet')",
         code,
     )

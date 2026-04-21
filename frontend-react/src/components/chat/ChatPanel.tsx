@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useCallback, useMemo, memo } from 'react'
-import { Send, ChevronDown, ChevronRight, Zap, BarChart2, BrainCircuit, Target, ChevronsUpDown, FlaskConical, X, GitBranch, Activity } from 'lucide-react'
+import { Send, ChevronDown, ChevronRight, Zap, BarChart2, BrainCircuit, Target, ChevronsUpDown, FlaskConical, X, GitBranch, Activity, SlidersHorizontal } from 'lucide-react'
 import { analysisApi, artifactsApi } from '@/api'
 import { useChatStore, useSessionStore, useArtifactStore, genId } from '@/store'
 import type { ChatMessage } from '@/types'
@@ -225,6 +225,43 @@ export default function ChatPanel({
     }
   }, [sessionId, branchId, currentBranchId, sending, activeJobId, targetColumns, featureColumns, targetDataframeArtifactId, addMessage, setActiveJob])
 
+  const handleOFATRelaxed = useCallback(async (params: {
+    target_columns: string[]
+    feature_columns: string[]
+    source_artifact_id?: string
+  }) => {
+    if (!sessionId || !branchId || sending || activeJobId) return
+
+    addMessage(currentBranchId, {
+      id: genId(),
+      role: 'user',
+      content: `OFAT 조건 완화 재분석 — 타겟: ${params.target_columns.join(', ')} / 피처: ${params.feature_columns.length}개 (자동 가지치기 적용)`,
+      timestamp: new Date().toISOString(),
+    })
+    setSending(true)
+
+    try {
+      const result = await analysisApi.ofat({
+        session_id: sessionId,
+        branch_id: branchId,
+        target_columns: params.target_columns,
+        feature_columns: params.feature_columns,
+        source_artifact_id: params.source_artifact_id,
+        relaxed: true,
+      })
+      setActiveJob(currentBranchId, result.job_id)
+    } catch (err) {
+      addMessage(currentBranchId, {
+        id: genId(),
+        role: 'assistant',
+        content: `오류: ${err instanceof Error ? err.message : '조건 완화 분석 요청 실패'}`,
+        timestamp: new Date().toISOString(),
+      })
+    } finally {
+      setSending(false)
+    }
+  }, [sessionId, branchId, currentBranchId, sending, activeJobId, addMessage, setActiveJob])
+
   // 외부에서 입력 삽입 (질문 템플릿 클릭/더블클릭)
   useEffect(() => {
     // text가 있을 때만 동작하도록 guard
@@ -328,6 +365,17 @@ export default function ChatPanel({
           artifact_ids: job.result.artifact_ids ?? [],
           timestamp: new Date().toISOString(),
         }
+
+        // OFAT 그룹 없음 → 조건 완화 버튼 활성화
+        if (job.result.intent === 'ofat_no_groups') {
+          assistantMsg.ofat_relaxation_available = true
+          assistantMsg.ofat_relaxation_params = {
+            target_columns: job.result.ofat_target_columns ?? [],
+            feature_columns: job.result.ofat_feature_columns ?? [],
+            source_artifact_id: job.result.ofat_source_artifact_id ?? undefined,
+          }
+        }
+
         addMessage(currentBranchId, assistantMsg)
 
         const shouldAutoAdoptDataframe = job.result.intent === 'create_dataframe'
@@ -544,12 +592,30 @@ export default function ChatPanel({
         {renderedMessages.map((msg) => {
           const isExpanded = expandedMsgs.has(msg.id)
           return (
-            <MessageBubble
-              key={msg.id}
-              msg={msg}
-              isExpanded={isExpanded}
-              onToggle={() => toggleMsg(msg.id)}
-            />
+            <div key={msg.id} className="w-full">
+              <MessageBubble
+                msg={msg}
+                isExpanded={isExpanded}
+                onToggle={() => toggleMsg(msg.id)}
+              />
+              {msg.ofat_relaxation_available && msg.ofat_relaxation_params && (
+                <div className="mt-2 ml-1">
+                  <button
+                    onClick={() => handleOFATRelaxed(msg.ofat_relaxation_params!)}
+                    disabled={!!(sending || activeJobId)}
+                    title="변수 자동 가지치기 후 OFAT 재분석"
+                    className={`flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-medium transition-colors ${
+                      sending || activeJobId
+                        ? 'border-gray-200 text-gray-400 cursor-not-allowed opacity-50'
+                        : 'border-violet-300 text-violet-700 hover:border-violet-400 hover:bg-violet-50'
+                    }`}
+                  >
+                    <SlidersHorizontal className="h-3 w-3" />
+                    조건 완화
+                  </button>
+                </div>
+              )}
+            </div>
           )
         })}
 

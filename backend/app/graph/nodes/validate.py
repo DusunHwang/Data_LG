@@ -15,6 +15,7 @@ DATASET_REQUIRED_INTENTS = {
     "shap_analysis",
     "simplify_model",
     "optimization",
+    "inverse_optimization",
     "followup_dataframe",
     "followup_plot",
     "followup_model",
@@ -26,6 +27,7 @@ TARGET_REQUIRED_INTENTS = {
     "shap_analysis",
     "simplify_model",
     "optimization",
+    "inverse_optimization",
 }
 
 

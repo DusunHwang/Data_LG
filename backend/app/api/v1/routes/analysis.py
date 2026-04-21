@@ -240,6 +240,7 @@ async def run_ofat(
             body.target_columns,
             body.feature_columns,
             body.source_artifact_id,
+            body.relaxed,
             job_id=str(job_run.id),
         )
         job_run.rq_job_id = rq_job.id
