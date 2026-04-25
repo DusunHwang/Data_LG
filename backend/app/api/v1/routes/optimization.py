@@ -669,9 +669,12 @@ async def run_constrained_inverse_optimization(
             "categorical_encoders": artifact_metadata.get("categorical_encoders", {}),
             "model_kind": artifact_metadata.get("type", "baseline_model"),
             "target_column": artifact_metadata.get("target_column") or champion_model.target_column or target_col or "",
-            "dataset_path": _first_existing_path(
-                artifact_metadata.get("dataset_path"),
-                champion_model.dataset_path,
+            "dataset_path": next(
+                (p for p in [
+                    artifact_metadata.get("dataset_path"),
+                    champion_model.dataset_path,
+                ] if _path_exists(p)),
+                None,
             ),
             "is_hierarchical": is_hier,
             "stage1_model_paths": artifact_metadata.get("stage1_model_paths") if is_hier else None,
@@ -703,16 +706,19 @@ async def run_constrained_inverse_optimization(
             "y1_columns": info.get("y1_columns"),
         })
 
-    # 데이터셋: 모델이 학습된 데이터셋 우선 사용
-    dataset_path = _first_existing_path(
-        source_artifact.file_path if source_artifact and source_artifact.file_path else None,
-        opt_info.get("dataset_path"),
+    # 데이터셋: 실제로 존재하는 경로만 사용 (삭제된 아티팩트 경로 방지)
+    dataset_path = next(
+        (p for p in [
+            source_artifact.file_path if source_artifact and source_artifact.file_path else None,
+            opt_info.get("dataset_path"),
+        ] if _path_exists(p)),
+        None,
     )
     if not dataset_path:
         session_obj = await validate_user_session(session_id, current_user.id, db)
         dataset_repo = DatasetRepository(db)
         dataset = await dataset_repo.get(session_obj.active_dataset_id)
-        dataset_path = dataset.file_path if dataset else None
+        dataset_path = dataset.file_path if dataset and _path_exists(dataset.file_path) else None
     if not dataset_path:
         raise HTTPException(status_code=400, detail=error_response("NO_DATASET", "데이터셋이 없습니다."))
 
