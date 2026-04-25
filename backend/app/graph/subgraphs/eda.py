@@ -233,12 +233,12 @@ def run_eda_subgraph(state: GraphState) -> GraphState:
             if not sandbox_result["success"]:
                 sandbox_error = sandbox_result.get("error") or sandbox_result.get("stderr", "")[:300] or "알 수 없는 오류"
                 logger.warning("EDA 코드 실행 실패, 기본 분석으로 폴백", error=sandbox_error)
+                used_fallback = True
+                sandbox_result = _run_basic_eda(df, dataset_path)
             else:
                 n_output_files = len(sandbox_result.get("output_files", {}))
                 logger.info("EDA 샌드박스 실행 성공", n_output_files=n_output_files,
                             stdout_preview=sandbox_result.get("stdout", "")[:100])
-                used_fallback = True
-                sandbox_result = _run_basic_eda(df, dataset_path)
 
         check_cancellation(state)
         state = update_progress(state, 75, "EDA", "EDA 결과 저장 중...")

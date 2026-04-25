@@ -14,7 +14,11 @@ logger = get_logger(__name__)
 
 
 def _suppress_pandasai_file_logging() -> None:
-    """pandasai가 CWD에 쓰는 파일 로그 핸들러를 제거한다."""
+    """pandasai가 CWD에 쓰는 파일 로그 핸들러를 제거하고,
+    새로 생성되는 FileHandler도 /tmp로 리다이렉트한다."""
+    import tempfile
+
+    # 이미 등록된 핸들러 제거
     for name in ("pandasai", "pandasai.helpers.logger"):
         lg = logging.getLogger(name)
         for h in lg.handlers[:]:
@@ -24,6 +28,16 @@ def _suppress_pandasai_file_logging() -> None:
                 except Exception:
                     pass
                 lg.removeHandler(h)
+
+    # SmartDataframe/Agent 초기화 시 새로 생성되는 FileHandler도 패치
+    _orig_init = logging.FileHandler.__init__
+
+    def _patched_init(self, filename, *args, **kwargs):
+        if "pandasai.log" in str(filename):
+            filename = os.path.join(tempfile.gettempdir(), "pandasai.log")
+        _orig_init(self, filename, *args, **kwargs)
+
+    logging.FileHandler.__init__ = _patched_init
 
 
 # ---------------------------------------------------------------------------
