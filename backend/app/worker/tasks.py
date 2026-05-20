@@ -95,7 +95,7 @@ def run_analysis_task(
     target_column: str | None = None,
     context: dict | None = None,
 ) -> dict:
-    """분석 작업 실행 (LangGraph 기반)"""
+    """분석 작업 실행 (smolagents 기반)."""
     reporter = ProgressReporter(job_run_id)
     token = CancellationToken(job_run_id)
 
@@ -105,8 +105,7 @@ def run_analysis_task(
 
         token.check()
 
-        # LangGraph 분석 그래프 실행
-        from app.graph.main import run_analysis_graph
+        from app.agent.runner import run_analysis_agent as _run_analysis
 
         # job_run 레코드에서 user_id 조회
         from app.worker.job_runner import get_sync_db_connection
@@ -154,7 +153,7 @@ def run_analysis_task(
                 sel_art_id,
             )
             
-            return run_analysis_graph(
+            return _run_analysis(
                 job_run_id=job_run_id,
                 session_id=session_id,
                 user_id=user_id or "",

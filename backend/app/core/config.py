@@ -47,8 +47,14 @@ class Settings(BaseSettings):
     # vLLM
     vllm_endpoint_small: str = "http://your-vllm-server/v1"
     vllm_model_small: str = "Qwen/Qwen3-30B-A3B-FP8"
-    vllm_temperature: float = 0.1
+    vllm_temperature: float = 0.0
     vllm_max_tokens: int = 4096
+
+    # Agent runtime (Phase 6에서 smolagents 기본 전환)
+    agent_runtime: Literal["langgraph", "smolagents"] = "smolagents"
+    agent_max_steps: int = 12
+    agent_executor_max_print_length: int = 2000
+    agent_planning_interval: int | None = 4
 
     # 아티팩트 / 데이터셋 경로
     artifact_store_root: str = "./data/artifacts"

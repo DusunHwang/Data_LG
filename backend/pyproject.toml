@@ -19,10 +19,6 @@ dependencies = [
     # Auth
     "python-jose[cryptography]>=3.3.0",
     "passlib[bcrypt]>=1.7.4",
-    # LangGraph / LangChain
-    "langgraph>=0.1.0",
-    "langchain-openai>=0.1.0",
-    "langchain-core>=0.2.0",
     # Data / ML
     "pandas>=2.2.0",
     "pyarrow>=16.0.0",
@@ -46,8 +42,9 @@ dependencies = [
     "httpx>=0.27.0",
     "aiofiles>=23.2.1",
     "python-dateutil>=2.9.0",
-    # PandasAI
-    "pandasai>=1.5.0",
+    # smolagents (OpenAIModel은 openai 패키지 필요)
+    "smolagents>=1.25.0",
+    "openai>=1.40.0",
 ]
 
 [project.optional-dependencies]
