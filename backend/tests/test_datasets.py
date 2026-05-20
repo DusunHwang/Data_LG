@@ -21,12 +21,17 @@ class TestBuiltinDatasets:
         data = response.json()
         assert data["success"] is True
         items = data["data"]
-        assert len(items) == 4
         keys = [item["key"] for item in items]
-        assert "manufacturing_regression" in keys
-        assert "instrument_measurement" in keys
-        assert "general_tabular_regression" in keys
-        assert "large_sampling_regression" in keys
+        for expected in (
+            "manufacturing_regression",
+            "instrument_measurement",
+            "general_tabular_regression",
+            "large_sampling_regression",
+            "wide_missingness_stress",
+            "mpea_alloy",
+        ):
+            assert expected in keys, f"내장 데이터셋 {expected} 누락"
+        assert len(items) >= 6
 
     def test_select_builtin_dataset(self, client, auth_headers, test_session_id):
         """내장 데이터셋 선택"""

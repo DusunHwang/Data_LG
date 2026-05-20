@@ -39,7 +39,7 @@ class TestColumnClassifier:
         from app.graph.subgraphs.subset_discovery import classify_columns
 
         df = make_manufacturing_df()
-        result = classify_columns(df, target_col="quality_score")
+        result = classify_columns(df, target_columns=["quality_score"])
 
         # 반환 구조 확인
         assert isinstance(result, dict)
@@ -56,7 +56,7 @@ class TestColumnClassifier:
             "b": range(100),            # 정상
             "target": range(100),       # 타겟
         })
-        result = classify_columns(df, target_col="target")
+        result = classify_columns(df, target_columns=["target"])
         if "a" in result:
             assert result["a"] in ("constant", "near_constant", "exclude_default")
 
@@ -69,7 +69,7 @@ class TestColumnClassifier:
             "normal": range(100),
             "target": range(100),
         })
-        result = classify_columns(df, target_col="target")
+        result = classify_columns(df, target_columns=["target"])
         if "mostly_missing" in result:
             assert result["mostly_missing"] in ("high_missing", "exclude_default")
 
@@ -113,7 +113,7 @@ class TestSubsetScoring:
         rows = list(range(100))
         cols = ["temp_01", "pressure_01", "quality_score"]
 
-        score = score_subset(df, rows, cols, target_col="quality_score")
+        score = score_subset(df, rows, cols, target_columns=["quality_score"])
         assert isinstance(score, float)
         assert 0.0 <= score <= 1.0
 
@@ -122,7 +122,7 @@ class TestSubsetScoring:
         from app.graph.subgraphs.subset_discovery import score_subset
 
         df = make_manufacturing_df(n=100)
-        score = score_subset(df, [], list(df.columns), target_col="quality_score")
+        score = score_subset(df, [], list(df.columns), target_columns=["quality_score"])
         assert score == 0.0
 
 
@@ -136,26 +136,28 @@ class TestSubsetDiscoveryPipeline:
             classify_columns,
             generate_subset_candidates,
             score_subset_candidates,
-            select_top_subsets,
+            select_top_k,
         )
 
         df = make_manufacturing_df(n=500)
-        target_col = "quality_score"
+        target_columns = ["quality_score"]
 
-        col_classification = classify_columns(df, target_col=target_col)
-        missing_structure = analyze_missing_structure(df)
+        col_classification = classify_columns(df, target_columns=target_columns)
+        missing_structure = analyze_missing_structure(df, col_classification=col_classification)
 
         # 후보 생성
-        candidates = generate_subset_candidates(df, col_classification, missing_structure, target_col=target_col)
+        candidates = generate_subset_candidates(
+            df, col_classification, missing_structure, target_columns=target_columns
+        )
         assert isinstance(candidates, list)
         assert len(candidates) > 0
 
         # 점수화
-        scored = score_subset_candidates(df, candidates, target_col=target_col)
+        scored = score_subset_candidates(df, candidates, target_columns=target_columns)
         assert all("score" in c for c in scored)
 
         # 상위 5개 선택
-        top_k = select_top_subsets(scored, k=5)
+        top_k = select_top_k(scored, k=5)
         assert len(top_k) <= 5
 
     def test_subset_has_required_fields(self):
@@ -167,9 +169,11 @@ class TestSubsetDiscoveryPipeline:
         )
 
         df = make_manufacturing_df(n=200)
-        col_classification = classify_columns(df, target_col="quality_score")
-        missing_structure = analyze_missing_structure(df)
-        candidates = generate_subset_candidates(df, col_classification, missing_structure, target_col="quality_score")
+        col_classification = classify_columns(df, target_columns=["quality_score"])
+        missing_structure = analyze_missing_structure(df, col_classification=col_classification)
+        candidates = generate_subset_candidates(
+            df, col_classification, missing_structure, target_columns=["quality_score"]
+        )
 
         for c in candidates:
             assert "row_indices" in c or "rows" in c or "name" in c
